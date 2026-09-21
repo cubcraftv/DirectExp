@@ -1,0 +1,84 @@
+# DirectExp
+
+Experimental Fabric-delivered backend project that adds a native DirectX 11
+rendering backend to Minecraft snapshot builds on Windows, targeting
+feature level 10.1 devices at minimum.
+
+This is a structural sibling of `MetalExp` (the same approach applied to
+Apple's Metal API on macOS): rather than patching Mojang's OpenGL/Vulkan
+renderer, `DirectExp` replaces the graphics-API setting, overrides startup
+backend negotiation, and implements a first-class `DxBackend` against the
+same Blaze3D backend boundary (`GpuBackend` / `GpuDeviceBackend` /
+`GpuSurfaceBackend` / `CommandEncoderBackend` / `RenderPassBackend`).
+
+**Status: Milestone 1 (bootstrap) scaffold, plus a Milestone-2-start native
+capability probe. Not a working renderer yet.** See
+`docs/plans/2026-09-20-directexp-bootstrap-plan.md` for exactly what's real
+vs. stubbed, and its Progress Log for session-to-session history.
+
+## Target
+
+| | |
+|---|---|
+| Minecraft version | `26.2-snapshot-1` (tracks the `MetalExp` reference project) |
+| Fabric Loader | `0.19.0` |
+| Fabric Loom | `1.15-SNAPSHOT` |
+| Java | 25 |
+| Graphics API | DirectX 11, feature level **10.1 minimum** (10.0 devices are rejected, not silently downgraded) |
+| Platform | Windows only |
+
+## Why feature level 10.1, not just "DirectX 11"
+
+DirectX 11 *devices* can be created at several feature levels (9.1 through
+11.1), which mostly determine which older/newer GPU generations are
+supported, not which D3D11 API surface is used. This project uses the
+D3D11 API throughout but floors hardware support at feature level 10.1 --
+broader than requiring "true" 11.0/11.1 hardware, while still ruling out
+the oldest (10.0/9.x) tier. See the design spec's Goals section for the
+full rationale.
+
+## Repository layout
+
+```
+src/main    - Fabric entrypoint, backend-agnostic bootstrap/config/diagnostics, bridge interfaces
+src/client  - client-only entrypoint, DxBackend + Blaze3D backend implementations, settings UI, mixins
+shared/     - reserved for cross-cutting model types (currently a placeholder)
+native/     - Win32 + D3D11/DXGI native bridge (C++, built via CMake, Windows-only)
+docs/       - design spec, bootstrap plan + progress log, research notes
+```
+
+## Building
+
+```
+./gradlew build
+```
+
+`build` also runs `buildNativeWindowsBridge`, which is a Windows-only task
+(`onlyIf { isWindows }`) that shells out to `cmake`. On any other OS it's a
+no-op so the Java side still builds and tests fine. See `native/README.md`
+for the exact local toolchain requirements (CMake + MSVC or clang-cl +
+Windows SDK).
+
+```
+./gradlew test
+```
+
+Unit tests are OS-independent and do not require the native toolchain.
+
+## Author / license
+
+Author: `cubcraftv`. MIT licensed (see `LICENSE`). Private repository for
+now; see the design spec's Product Positioning section if that changes.
+
+## Multi-session workflow
+
+This project is worked on across multiple sessions/agents. Before doing
+anything else in a new session:
+
+1. Read `AGENTS.md` (working agreement, non-goals, where this diverges from MetalExp)
+2. Read `docs/plans/2026-09-20-directexp-bootstrap-plan.md`'s Progress Log
+   (bottom of the file) for what the last session actually finished
+3. Read `docs/specs/2026-09-20-directexp-design.md` for anything touching
+   architecture
+
+Update the Progress Log before ending your own session.

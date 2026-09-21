@@ -1,0 +1,17 @@
+{
+	"required": true,
+	"package": "dev.cubcraftv.directexp.client.mixin",
+	"compatibilityLevel": "JAVA_25",
+	"client": [
+		"ClientBootstrapMixin",
+		"MinecraftBackendNegotiationMixin",
+		"VideoSettingsRestartWarningMixin",
+		"VideoSettingsDisplayOptionsMixin"
+	],
+	"injectors": {
+		"defaultRequire": 1
+	},
+	"overwrites": {
+		"requireAnnotations": true
+	}
+}

@@ -1,0 +1,7 @@
+{
+	"directexp.options.graphicsApi": "Graphics API (DirectExp)",
+	"directexp.options.graphicsApi.tooltip": "Select the backend DirectExp will negotiate at startup.",
+	"directexp.options.graphicsApi.directx": "DirectX",
+	"directexp.options.graphicsApi.vulkan": "Vulkan",
+	"directexp.options.graphicsApi.opengl": "OpenGL"
+}

@@ -1,0 +1,185 @@
+plugins {
+	id 'net.fabricmc.fabric-loom' version "${loom_version}"
+	id 'maven-publish'
+}
+
+version = project.mod_version
+group = project.maven_group
+def junitJupiterVersion = '5.10.0'
+def isWindows = System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("windows")
+def nativeBuildDir = layout.buildDirectory.dir("native")
+def nativeBridgeOutput = layout.buildDirectory.file("native/directexp_native.dll")
+def nativeBridgeSources = fileTree("${project.projectDir}/native/src") {
+	include("*.cpp")
+}
+def nativeBridgeHeaders = fileTree("${project.projectDir}/native/src") {
+	include("*.h")
+}
+
+base {
+	archivesName = project.mod_id
+}
+
+repositories {
+	mavenCentral()
+}
+
+loom {
+	splitEnvironmentSourceSets()
+
+	mods {
+		"${project.mod_id}" {
+			sourceSet sourceSets.main
+			sourceSet sourceSets.client
+		}
+	}
+}
+
+dependencies {
+	minecraft "com.mojang:minecraft:${project.minecraft_version}"
+	implementation "net.fabricmc:fabric-loader:${project.loader_version}"
+	implementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
+	testImplementation "org.junit.jupiter:junit-jupiter-api:${junitJupiterVersion}"
+	testRuntimeOnly "org.junit.jupiter:junit-jupiter-engine:${junitJupiterVersion}"
+	testRuntimeOnly "org.junit.platform:junit-platform-launcher:1.10.0"
+}
+
+processResources {
+	inputs.property "version", project.version
+	inputs.property "mod_id", project.mod_id
+	inputs.property "mod_name", project.mod_name
+
+	filesMatching("fabric.mod.json") {
+		expand(
+			"version": inputs.properties.version,
+			"mod_id": inputs.properties.mod_id,
+			"mod_name": inputs.properties.mod_name
+		)
+	}
+}
+
+tasks.withType(JavaCompile).configureEach {
+	it.options.release = 25
+}
+
+// Native bridge build.
+//
+// Unlike MetalExp (which shells out to `xcrun clang` directly), the DirectX
+// 11 bridge is built through CMake so the task works whether the developer
+// has plain MSVC (Developer Command Prompt / vswhere-discoverable Build
+// Tools) or clang-cl on PATH. This task requires:
+//   - CMake >= 3.25 on PATH
+//   - A working MSVC (or clang-cl) toolchain on PATH, i.e. run Gradle from
+//     a "Developer Command Prompt for VS" or an environment where vcvars
+//     has already been sourced.
+// See native/README.md for the exact local setup steps.
+tasks.register("configureNativeWindowsBridge", Exec) {
+	onlyIf { isWindows }
+	inputs.files(nativeBridgeSources)
+	inputs.files(nativeBridgeHeaders)
+	inputs.file("${project.projectDir}/native/CMakeLists.txt")
+	outputs.dir(nativeBuildDir)
+	workingDir project.projectDir
+
+	doFirst {
+		nativeBuildDir.get().asFile.mkdirs()
+	}
+
+	commandLine([
+		"cmake",
+		"-S", "native",
+		"-B", nativeBuildDir.get().asFile.absolutePath,
+		"-DCMAKE_BUILD_TYPE=Release",
+		// Explicit generator instead of relying on CMake's Windows default
+		// (which falls back to "NMake Makefiles" and assumes an MSVC
+		// Developer Command Prompt environment). Ninja works identically
+		// whether the discovered compiler is MSVC's cl.exe (from a
+		// Developer Command Prompt) or MinGW-w64's gcc/g++ (e.g. MSYS2
+		// UCRT64) -- either way, requires `ninja` on PATH. See
+		// native/README.md for both setups.
+		"-G", "Ninja"
+	])
+}
+
+tasks.register("buildNativeWindowsBridge", Exec) {
+	onlyIf { isWindows }
+	dependsOn(tasks.named("configureNativeWindowsBridge"))
+	inputs.files(nativeBridgeSources)
+	inputs.files(nativeBridgeHeaders)
+	outputs.file(nativeBridgeOutput)
+	workingDir project.projectDir
+
+	commandLine([
+		"cmake",
+		"--build", nativeBuildDir.get().asFile.absolutePath,
+		"--config", "Release"
+	])
+
+	doLast {
+		// Ninja (our explicit generator, see configureNativeWindowsBridge)
+		// is single-config, so the DLL lands directly under the build dir.
+		// Still check the MSVC-multi-config-style Release/ subfolder too,
+		// in case someone overrides the generator locally to something
+		// like "Visual Studio 17 2022".
+		def flatDll = nativeBridgeOutput.get().asFile
+		def candidates = [
+			nativeBuildDir.get().file("directexp_native.dll").asFile,
+			nativeBuildDir.get().dir("Release").file("directexp_native.dll").asFile
+		]
+		def builtDll = candidates.find { it.exists() }
+
+		if (builtDll != null && builtDll != flatDll) {
+			flatDll.parentFile.mkdirs()
+			builtDll.copyTo(flatDll, true)
+			return
+		}
+		if (!flatDll.exists()) {
+			logger.warn("directexp_native.dll was not found after the native build; check native/README.md.")
+		}
+	}
+}
+
+test {
+	useJUnitPlatform()
+	// Deliberately not wired to the native build: unit tests must run on
+	// any OS (including CI on Linux/macOS) without a DirectX toolchain.
+	// Native integration tests live under a separate, Windows-only task
+	// once the bridge has real entrypoints to probe.
+}
+
+java {
+	withSourcesJar()
+
+	sourceCompatibility = JavaVersion.VERSION_25
+	targetCompatibility = JavaVersion.VERSION_25
+}
+
+jar {
+	inputs.property "projectName", project.name
+
+	from("LICENSE") {
+		rename { "${it}_${project.name}" }
+	}
+}
+
+tasks.named("build") {
+	dependsOn(tasks.named("buildNativeWindowsBridge"))
+}
+
+tasks.named("runClient") {
+	if (isWindows) {
+		dependsOn(tasks.named("buildNativeWindowsBridge"))
+		systemProperty("directexp.nativeLibraryPath", nativeBridgeOutput.get().asFile.absolutePath)
+	}
+}
+
+publishing {
+	publications {
+		create("mavenJava", MavenPublication) {
+			from components.java
+		}
+	}
+
+	repositories {
+	}
+}
