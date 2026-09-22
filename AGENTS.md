@@ -93,11 +93,20 @@ Build the project in these major slices:
 8. Rendering viability for menu, world entry, resize, and shutdown
 
 Do not skip directly to broad renderer work if the previous layer is still
-fake or only half-wired. As of this scaffold, slices 1-3 are wired end to
-end (config -> plan -> mixin override -> settings UI), slice 4 exists as
-compiling stub classes implementing the real Blaze3D backend interfaces but
-backed by CPU-side placeholder storage (same shape MetalExp used at its own
-bootstrap stage), and slice 5 has only a capability probe, no swap chain yet.
+fake or only half-wired. Current status (see docs/plans's Progress Log for
+exact dates and build-verification status): slices 1-3 are wired end to end
+(config -> plan -> mixin override -> settings UI) and build-verified.
+Slice 4 exists as compiling stub classes implementing the real Blaze3D
+backend interfaces but backed by CPU-side placeholder storage (same shape
+MetalExp used at its own bootstrap stage). Slice 5 has a build-verified
+general capability probe plus a real (but not yet compiled/verified) swap
+chain lifecycle -- device/context/flip-model `IDXGISwapChain1`, resize,
+CPU-upload blit, present, release -- reachable end to end through
+`DxBackend` -> `DxBackendBootstrapContext` -> `DxSurfaceLease`. GPU-texture-
+backed resources (slice 6/Milestone 3) are not started: `createTexture2D`
+et al. are still default-throw stubs, and `DxTexture` silently falls back
+to the CPU blit path when they're unavailable, which is why the CPU path
+being real is enough to reach a presenting window before slice 6 exists.
 
 ## Git And PR Rules
 

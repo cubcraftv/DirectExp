@@ -24,12 +24,15 @@ not a substitute for hands-on verification.
    HLSL output against Mojang's actual current-line shaders (once available
    from the decompiled/source reference used for the Vulkan path), the same
    way MetalExp's research doc validated the MSL translation path.
-4. **DXGI swap chain model.** Decide between the legacy bit-blit swap effect
-   and `DXGI_SWAP_EFFECT_FLIP_DISCARD` / `FLIP_SEQUENTIAL`; flip-model swap
-   chains are strongly preferred on modern Windows for both performance and
-   because the legacy blt model is on a slow deprecation path, but flip
-   model has its own constraints (buffer count, format restrictions) worth
-   confirming against the feature-level-10.1 floor.
+4. **DXGI swap chain model.** ~~Decide between~~ **Decided (pending
+   real-world validation): `DXGI_SWAP_EFFECT_FLIP_DISCARD` via
+   `IDXGIFactory2::CreateSwapChainForHwnd`**, implemented in
+   `native/src/directexp_bridge_surface.cpp`. Flip-model swap chains are
+   strongly preferred on modern Windows for both performance and because
+   the legacy blt model is on a slow deprecation path. Still needs
+   confirming on real feature-level-10.1-tier hardware: whether any such
+   GPU/driver combination rejects `FLIP_DISCARD` and needs a legacy-blt
+   fallback path added.
 5. **Resize handling.** `IDXGISwapChain::ResizeBuffers` requires releasing
    every view/resource derived from the swap chain's back buffer first.
    Confirm the exact object lifetime discipline needed so `DxSurfaceBackend`

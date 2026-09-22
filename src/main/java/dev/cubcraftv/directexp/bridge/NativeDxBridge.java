@@ -1,10 +1,21 @@
 package dev.cubcraftv.directexp.bridge;
 
+import java.nio.ByteBuffer;
 import java.util.Arrays;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Supplier;
 
 public final class NativeDxBridge implements DxBridge {
 	private static final NativeDxBridge INSTANCE = new NativeDxBridge();
+
+	// D3D11's immediate-context model means there is no real object to
+	// create here yet -- see directexp_bridge_surface.cpp's file header for
+	// why createCommandContext/submitCommandContext/releaseCommandContext
+	// stay Java-only no-ops for now. This counter just hands out distinct,
+	// non-zero handles so callers can't mistake "no context" (0) for a live
+	// one, without needing a native round-trip.
+	private static final AtomicLong NEXT_COMMAND_CONTEXT_HANDLE = new AtomicLong(1);
 
 	private NativeDxBridge() {
 	}
@@ -15,14 +26,95 @@ public final class NativeDxBridge implements DxBridge {
 
 	@Override
 	public DxBridgeProbe probe() {
+		return runProbe(NativeDxBridge::probe0);
+	}
+
+	@Override
+	public DxBridgeProbe probeSurface(long win32WindowHandle) {
+		return runProbe(() -> probeSurface0(win32WindowHandle));
+	}
+
+	@Override
+	public DxHostSurfaceBootstrap bootstrapSurface(long win32WindowHandle) {
+		DxBridgeLoadResult loadResult = NativeDxBridgeLoader.ensureLoaded();
+		if (!loadResult.isLoaded()) {
+			DxBridgeProbe unloaded = fromLoadResult(loadResult);
+			return new DxHostSurfaceBootstrap(0L, 0, 0, 1.0, unloaded.detail(), unloaded.missingCapabilities(), false, false);
+		}
+
+		try {
+			NativeDxBridgeSurfaceBootstrapResult nativeResult = bootstrapSurface0(win32WindowHandle);
+			return fromNativeBootstrapResult(nativeResult);
+		} catch (UnsatisfiedLinkError error) {
+			return new DxHostSurfaceBootstrap(
+				0L, 0, 0, 1.0,
+				error.getMessage() == null ? "DirectX bridge native surface bootstrap entrypoint is missing." : error.getMessage(),
+				List.of("native_bootstrap_surface_entrypoint"),
+				true,
+				false
+			);
+		} catch (RuntimeException error) {
+			return new DxHostSurfaceBootstrap(
+				0L, 0, 0, 1.0,
+				error.getMessage() == null ? "DirectX bridge native surface bootstrap failed." : error.getMessage(),
+				List.of("native_bootstrap_surface_runtime"),
+				true,
+				true
+			);
+		}
+	}
+
+	@Override
+	public void configureSurface(long nativeSurfaceHandle, int width, int height, boolean vsync) {
+		configureSurface0(nativeSurfaceHandle, width, height, vsync);
+	}
+
+	@Override
+	public void acquireSurface(long nativeSurfaceHandle) {
+		acquireSurface0(nativeSurfaceHandle);
+	}
+
+	@Override
+	public long createCommandContext() {
+		return NEXT_COMMAND_CONTEXT_HANDLE.getAndIncrement();
+	}
+
+	@Override
+	public void submitCommandContext(long nativeCommandContextHandle) {
+		// No native work to flush yet -- see the class-level comment on
+		// NEXT_COMMAND_CONTEXT_HANDLE.
+	}
+
+	@Override
+	public void releaseCommandContext(long nativeCommandContextHandle) {
+	}
+
+	@Override
+	public void blitSurfaceRgba8(long nativeSurfaceHandle, ByteBuffer rgbaPixels, int width, int height) {
+		blitSurfaceRgba80(nativeSurfaceHandle, rgbaPixels, width, height);
+	}
+
+	@Override
+	public void presentSurface(long nativeSurfaceHandle) {
+		presentSurface0(nativeSurfaceHandle);
+	}
+
+	@Override
+	public void releaseSurface(long nativeSurfaceHandle) {
+		if (nativeSurfaceHandle == 0L) {
+			return;
+		}
+		releaseSurface0(nativeSurfaceHandle);
+	}
+
+	private DxBridgeProbe runProbe(Supplier<NativeDxBridgeProbeResult> nativeCall) {
 		DxBridgeLoadResult loadResult = NativeDxBridgeLoader.ensureLoaded();
 		if (!loadResult.isLoaded()) {
 			return fromLoadResult(loadResult);
 		}
 
 		try {
-			NativeDxBridgeProbeResult nativeResult = probe0();
-			return fromNativeResult(nativeResult);
+			return fromNativeResult(nativeCall.get());
 		} catch (UnsatisfiedLinkError error) {
 			return new DxBridgeProbe(
 				DxBridgeProbeStatus.NATIVE_ERROR,
@@ -117,5 +209,53 @@ public final class NativeDxBridge implements DxBridge {
 		);
 	}
 
+	private DxHostSurfaceBootstrap fromNativeBootstrapResult(NativeDxBridgeSurfaceBootstrapResult nativeResult) {
+		if (nativeResult == null) {
+			return new DxHostSurfaceBootstrap(
+				0L, 0, 0, 1.0,
+				"DirectX bridge native surface bootstrap returned no result.",
+				List.of("native_bootstrap_surface_result"),
+				true,
+				true
+			);
+		}
+
+		List<String> missingCapabilities = nativeResult.missingCapabilities() == null
+			? List.of()
+			: Arrays.asList(nativeResult.missingCapabilities());
+
+		long nativeSurfaceHandle = nativeResult.outcomeCode() == NativeDxBridgeSurfaceBootstrapResult.OUTCOME_READY
+			? nativeResult.nativeSurfaceHandle()
+			: 0L;
+
+		return new DxHostSurfaceBootstrap(
+			nativeSurfaceHandle,
+			nativeResult.drawableWidth(),
+			nativeResult.drawableHeight(),
+			nativeResult.dpiScale(),
+			nativeResult.detail(),
+			missingCapabilities,
+			true,
+			true
+		);
+	}
+
 	private static native NativeDxBridgeProbeResult probe0();
+
+	private static native NativeDxBridgeProbeResult probeSurface0(long win32WindowHandle);
+
+	private static native NativeDxBridgeSurfaceBootstrapResult bootstrapSurface0(long win32WindowHandle);
+
+	private static native void configureSurface0(long nativeSurfaceHandle, int width, int height, boolean vsync);
+
+	private static native void acquireSurface0(long nativeSurfaceHandle);
+
+	// Named with a trailing "0" (matching this file's other native method
+	// naming) rather than "blitSurfaceRgba8" to avoid a same-signature
+	// clash with the public override above that forwards to it.
+	private static native void blitSurfaceRgba80(long nativeSurfaceHandle, ByteBuffer rgbaPixels, int width, int height);
+
+	private static native void presentSurface0(long nativeSurfaceHandle);
+
+	private static native void releaseSurface0(long nativeSurfaceHandle);
 }

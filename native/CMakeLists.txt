@@ -5,8 +5,19 @@ project(DirectExpNative LANGUAGES CXX)
 find_package(JNI REQUIRED)
 
 add_library(directexp_native SHARED
+	src/directexp_common.cpp
 	src/directexp_bridge_probe.cpp
+	src/directexp_bridge_surface.cpp
 )
+
+# CMake's default shared-library naming differs by toolchain on Windows:
+# MSVC produces "directexp_native.dll", but MinGW-w64/GCC (e.g. MSYS2
+# UCRT64) follows the Unix convention and produces "libdirectexp_native.dll"
+# unless told otherwise. Force the bare name on both so it matches what
+# build.gradle's copy step looks for and what
+# NativeDxBridgeLoader.java's System.loadLibrary("directexp_native") call
+# expects (Java's loadLibrary never adds a "lib" prefix on Windows).
+set_target_properties(directexp_native PROPERTIES PREFIX "")
 
 target_include_directories(directexp_native PRIVATE
 	${JNI_INCLUDE_DIRS}

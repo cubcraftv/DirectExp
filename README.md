@@ -11,8 +11,12 @@ backend negotiation, and implements a first-class `DxBackend` against the
 same Blaze3D backend boundary (`GpuBackend` / `GpuDeviceBackend` /
 `GpuSurfaceBackend` / `CommandEncoderBackend` / `RenderPassBackend`).
 
-**Status: Milestone 1 (bootstrap) scaffold, plus a Milestone-2-start native
-capability probe. Not a working renderer yet.** See
+**Status: Milestones 1 and 2 complete and runtime-verified on Windows (MSYS2
+UCRT64) -- `./gradlew.bat runClient` reaches a real, presenting DirectX
+window (solid black; audio confirms the game is genuinely running).
+Milestone 3 (GPU-texture resources) has not started: every pixel currently
+goes through a CPU-upload fallback, which is why the window is black rather
+than showing real content.** See
 `docs/plans/2026-09-20-directexp-bootstrap-plan.md` for exactly what's real
 vs. stubbed, and its Progress Log for session-to-session history.
 
