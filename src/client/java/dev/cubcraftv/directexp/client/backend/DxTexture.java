@@ -2,18 +2,26 @@ package dev.cubcraftv.directexp.client.backend;
 
 import com.mojang.blaze3d.GpuFormat;
 import com.mojang.blaze3d.textures.GpuTexture;
+import dev.cubcraftv.directexp.DirectExpMod;
 import dev.cubcraftv.directexp.bridge.DxBridge;
 
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * CPU-side placeholder texture storage, with a best-effort attempt to also
- * create a native D3D11 texture handle through {@link DxBridge}. Since the
- * bridge's texture methods are still default-throw stubs at this milestone
- * (see DxBridge), {@link #hasNativeTextureHandle()} is always false today --
- * every texture lives entirely in the direct ByteBuffer storage below, the
- * same bootstrap-stage shape MetalExp's own MetalTexture started from.
+ * CPU-side texture storage, with a best-effort attempt to also create a
+ * real native D3D11 texture handle through {@link DxBridge} (Milestone 3:
+ * {@code createTexture2D}/{@code uploadTextureRgba8} are real
+ * {@link dev.cubcraftv.directexp.bridge.NativeDxBridge} calls now, not
+ * default-throw stubs). The attempt can still legitimately fail --
+ * {@link #hasNativeTextureHandle()} is false whenever no DirectX surface
+ * has been bootstrapped yet, or the native call otherwise throws -- in
+ * which case this class silently keeps using its CPU-side storage as a
+ * fallback (see {@link DxSurfaceBackend#blitFromTexture}, which is what
+ * actually branches on {@link #hasNativeTextureHandle()}) rather than
+ * failing outright -- the direct ByteBuffer storage below is always kept
+ * populated and correct regardless of whether the native handle exists.
  */
 final class DxTexture extends GpuTexture {
 	private final DxBridge dxBridge;
@@ -135,14 +143,36 @@ final class DxTexture extends GpuTexture {
 		return this.closed;
 	}
 
+	// Logged exactly once each way, not per-texture: with resource creation
+	// happening every frame for some texture types, per-call logging would
+	// spam the log without adding information beyond "which path is this
+	// bridge actually taking overall" -- which is the only thing this is
+	// for. See DxSurfaceBackend#blitFromTexture for where that path
+	// actually gets used; this only reports whether the *handle* exists.
+	private static final AtomicBoolean LOGGED_NATIVE_TEXTURE_SUCCESS = new AtomicBoolean(false);
+	private static final AtomicBoolean LOGGED_NATIVE_TEXTURE_FALLBACK = new AtomicBoolean(false);
+
 	private long createNativeTextureHandle(GpuFormat format, int width, int height, int depthOrLayers, int mipLevels) {
 		if (this.dxBridge == null || format != GpuFormat.RGBA8_UNORM || depthOrLayers != 1) {
 			return 0L;
 		}
 
 		try {
-			return this.dxBridge.createTexture2D(width, height, mipLevels);
+			long handle = this.dxBridge.createTexture2D(width, height, mipLevels);
+			if (handle != 0L && LOGGED_NATIVE_TEXTURE_SUCCESS.compareAndSet(false, true)) {
+				DirectExpMod.LOGGER.info(
+					"DirectExp: native GPU texture path active (first native texture created, {}x{}, {} mip levels).",
+					width, height, mipLevels
+				);
+			}
+			return handle;
 		} catch (UnsupportedOperationException | IllegalStateException error) {
+			if (LOGGED_NATIVE_TEXTURE_FALLBACK.compareAndSet(false, true)) {
+				DirectExpMod.LOGGER.warn(
+					"DirectExp: native GPU texture creation unavailable, using CPU-side fallback for all textures ({}).",
+					error.getMessage()
+				);
+			}
 			return 0L;
 		}
 	}
@@ -161,7 +191,11 @@ final class DxTexture extends GpuTexture {
 				getHeight(mipLevel)
 			);
 		} catch (UnsupportedOperationException | IllegalStateException ignored) {
-			// Native texture sync is optional until the bridge advertises the full path.
+			// Sync failures here are non-fatal: the CPU-side storage above
+			// is already correct and is what blitSurfaceRgba8 falls back to
+			// if hasNativeTextureHandle() is false, so a failed native
+			// upload just means this frame's blit takes the CPU path
+			// instead of the GPU one, not a correctness bug.
 		}
 	}
 }

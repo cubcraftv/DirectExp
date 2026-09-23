@@ -98,15 +98,17 @@ exact dates and build-verification status): slices 1-3 are wired end to end
 (config -> plan -> mixin override -> settings UI) and build-verified.
 Slice 4 exists as compiling stub classes implementing the real Blaze3D
 backend interfaces but backed by CPU-side placeholder storage (same shape
-MetalExp used at its own bootstrap stage). Slice 5 has a build-verified
-general capability probe plus a real (but not yet compiled/verified) swap
-chain lifecycle -- device/context/flip-model `IDXGISwapChain1`, resize,
-CPU-upload blit, present, release -- reachable end to end through
-`DxBackend` -> `DxBackendBootstrapContext` -> `DxSurfaceLease`. GPU-texture-
-backed resources (slice 6/Milestone 3) are not started: `createTexture2D`
-et al. are still default-throw stubs, and `DxTexture` silently falls back
-to the CPU blit path when they're unavailable, which is why the CPU path
-being real is enough to reach a presenting window before slice 6 exists.
+MetalExp used at its own bootstrap stage). Slice 5 (swap chain lifecycle --
+device/context/flip-model `IDXGISwapChain1`, resize, CPU-upload blit,
+present, release) is build-verified and runtime-verified, reachable end to
+end through `DxBackend` -> `DxBackendBootstrapContext` -> `DxSurfaceLease`.
+GPU-texture-backed resources (slice 6/Milestone 3 -- `createTexture2D` /
+`uploadTextureRgba8` / `blitSurfaceTexture` against a real
+`ID3D11Texture2D`) are implemented and now runtime-verified too: the
+`native GPU texture path active` diagnostic log line confirms textures
+upload to real GPU memory rather than falling back to `DxTexture`'s
+CPU-side path. Shader/pipeline work (slice 7/Milestone 4) has not started
+-- nothing issues real draw calls yet.
 
 ## Git And PR Rules
 

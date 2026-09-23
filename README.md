@@ -11,12 +11,12 @@ backend negotiation, and implements a first-class `DxBackend` against the
 same Blaze3D backend boundary (`GpuBackend` / `GpuDeviceBackend` /
 `GpuSurfaceBackend` / `CommandEncoderBackend` / `RenderPassBackend`).
 
-**Status: Milestones 1 and 2 complete and runtime-verified on Windows (MSYS2
+**Status: Milestones 1-3 complete and runtime-verified on Windows (MSYS2
 UCRT64) -- `./gradlew.bat runClient` reaches a real, presenting DirectX
-window (solid black; audio confirms the game is genuinely running).
-Milestone 3 (GPU-texture resources) has not started: every pixel currently
-goes through a CPU-upload fallback, which is why the window is black rather
-than showing real content.** See
+window, and the native GPU-texture path (real `ID3D11Texture2D`
+creation/upload and a GPU-to-GPU back-buffer blit) is confirmed active via
+the `native GPU texture path active` diagnostic log line, not just
+compiling. Milestone 4 (shader/pipeline core) has not started.** See
 `docs/plans/2026-09-20-directexp-bootstrap-plan.md` for exactly what's real
 vs. stubbed, and its Progress Log for session-to-session history.
 

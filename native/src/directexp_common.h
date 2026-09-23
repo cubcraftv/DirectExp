@@ -45,6 +45,30 @@ struct Surface {
 	bool vsync = false;
 };
 
+// Persistent state for one GPU texture created via createTexture2D0.
+// Allocated on the heap, handed back to Java as an opaque jlong, released
+// in releaseTexture0.
+struct Texture {
+	ID3D11Texture2D* texture = nullptr;
+	UINT width = 0;
+	UINT height = 0;
+	UINT mipLevels = 0;
+};
+
+// The device/context of the single surface currently bootstrapped, set by
+// bootstrapSurface0 and cleared by releaseSurface0 (directexp_bridge_surface.cpp).
+// Texture creation/upload (directexp_bridge_texture.cpp) has no
+// surface/device handle of its own to work with -- the DxBridge interface's
+// createTexture2D/uploadTextureRgba8 are deliberately surface-agnostic on
+// the Java side -- so it operates against whichever device is "active"
+// here. This assumes a single window/device for the whole process, which
+// matches every other part of this bridge (Win32HostSurfaceResolver
+// resolves exactly one window, DxBackendBootstrapContext bootstraps exactly
+// one surface). Revisit if/when multi-window support is ever a goal; it
+// currently is not (see AGENTS.md's Non-Goals).
+extern ID3D11Device* g_activeDevice;
+extern ID3D11DeviceContext* g_activeContext;
+
 // Plain-data result of attempting to create a D3D11 device at or above
 // DirectExp's feature level floor. Not a JNI type itself -- see
 // BuildProbeResult to turn this into a NativeDxBridgeProbeResult.
@@ -91,6 +115,20 @@ jobject BuildSurfaceBootstrapResult(
 // recent MSVC/Windows SDK and an older mingw-w64 import library that may
 // not export the symbol. Falls back to 1.0 if the API isn't available.
 double QueryDpiScaleForWindow(HWND hwnd);
+
+// Converts an opaque jlong handle to/from a heap-allocated pointer. Shared
+// between directexp_bridge_surface.cpp (Surface*) and
+// directexp_bridge_texture.cpp (Texture*) so both use the same
+// pointer<->jlong convention.
+template <typename T>
+T* HandleToPointer(jlong handle) {
+	return reinterpret_cast<T*>(static_cast<intptr_t>(handle));
+}
+
+template <typename T>
+jlong PointerToHandle(T* pointer) {
+	return static_cast<jlong>(reinterpret_cast<intptr_t>(pointer));
+}
 
 // Throws a java.lang.IllegalStateException with the given message. Callers
 // of a `void`-returning JNI method should `return;` immediately after

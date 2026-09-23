@@ -11,19 +11,19 @@ starting, and update it before ending a session.
 ## Milestone 1 Scope
 
 - [x] Fabric project scaffold (`build.gradle`, `gradle.properties`,
-      `settings.gradle`, split `main`/`client` source sets via Loom)
+  `settings.gradle`, split `main`/`client` source sets via Loom)
 - [x] `BackendKind` / `FailureMode` / `GraphicsApiPreference` config models
 - [x] `DirectExpConfig` + `DirectExpConfigStore` (properties-file backed,
-      same format as MetalExp's `metalexp.properties`)
+  same format as MetalExp's `metalexp.properties`)
 - [x] `BackendPlan` / `BackendPlanner` / `BackendNegotiationResolver` /
-      `BootstrapState`
+  `BootstrapState`
 - [x] `DirectExpMod` main entrypoint wiring config load -> plan -> bootstrap state
 - [x] `DiagnosticsSnapshot` / `DiagnosticsReporter` startup log line
 - [x] `DirectExpClient` client entrypoint logging the diagnostics snapshot
 - [x] `MinecraftBackendNegotiationMixin` overriding
-      `PreferredGraphicsApi.getBackendsToTry()` the same way MetalExp does
+  `PreferredGraphicsApi.getBackendsToTry()` the same way MetalExp does
 - [x] `VideoSettingsDisplayOptionsMixin` / `VideoSettingsRestartWarningMixin`
-      replacing the graphics API row in the video settings screen
+  replacing the graphics API row in the video settings screen
 - [x] `DirectExpGraphicsApiOptionFactory` / `DirectExpGraphicsApiSelectionState`
 - [x] `fabric.mod.json`, both mixin config files, `en_us.json` lang entries
 - [x] Unit tests for the backend-agnostic planning/config logic
@@ -31,52 +31,52 @@ starting, and update it before ending a session.
 ## Milestone 2: Native Surface Bring-Up
 
 - [x] `native/CMakeLists.txt` targeting a `directexp_native` shared library,
-      linking `d3d11` / `dxgi` on Windows (bare names, portable across MSVC
-      and MinGW-w64 -- see the comment in `CMakeLists.txt`). `d3dcompiler`
-      is deliberately not linked yet; nothing uses it until Milestone 4.
+  linking `d3d11` / `dxgi` on Windows (bare names, portable across MSVC
+  and MinGW-w64 -- see the comment in `CMakeLists.txt`). `d3dcompiler`
+  is deliberately not linked yet; nothing uses it until Milestone 4.
 - [x] `native/src/directexp_common.h` / `.cpp`: shared device-capability
-      probe logic (`RunDeviceCapabilityProbe`), JNI object builders, and
-      small portability helpers (DPI query via `GetProcAddress` so it links
-      on older mingw-w64 import libs too). Factored out so
-      `directexp_bridge_probe.cpp` and `directexp_bridge_surface.cpp` don't
-      duplicate the feature-level-gated device creation logic.
+  probe logic (`RunDeviceCapabilityProbe`), JNI object builders, and
+  small portability helpers (DPI query via `GetProcAddress` so it links
+  on older mingw-w64 import libs too). Factored out so
+  `directexp_bridge_probe.cpp` and `directexp_bridge_surface.cpp` don't
+  duplicate the feature-level-gated device creation logic.
 - [x] `native/src/directexp_bridge_probe.cpp`: `probe0` -- the general
-      system capability probe (temporary device, feature level 10.1 floor,
-      adapter identity for diagnostics). **Build-verified by the project
-      owner on MSYS2 UCRT64** as of this plan's most recent Progress Log
-      entry below.
+  system capability probe (temporary device, feature level 10.1 floor,
+  adapter identity for diagnostics). **Build-verified by the project
+  owner on MSYS2 UCRT64** as of this plan's most recent Progress Log
+  entry below.
 - [x] `native/src/directexp_bridge_surface.cpp`: real swap chain lifecycle --
-      `probeSurface0` (HWND validity + throwaway device check),
-      `bootstrapSurface0` (persistent device + immediate context +
-      flip-model `IDXGISwapChain1` via `CreateSwapChainForHwnd`,
-      `DXGI_MWA_NO_ALT_ENTER`), `configureSurface0` (`ResizeBuffers`, with
-      vsync flag stored), `acquireSurface0` (device-removed check only --
-      flip model doesn't need an explicit acquire), `blitSurfaceRgba80`
-      (CPU-side RGBA8 upload straight into the back buffer via
-      `UpdateSubresource`), `presentSurface0`, `releaseSurface0`.
-      **NOT YET build-verified** -- authored after the probe was confirmed
-      building, but not itself compiled by anyone yet. This should be the
-      very first thing the next Windows session checks.
+  `probeSurface0` (HWND validity + throwaway device check),
+  `bootstrapSurface0` (persistent device + immediate context +
+  flip-model `IDXGISwapChain1` via `CreateSwapChainForHwnd`,
+  `DXGI_MWA_NO_ALT_ENTER`), `configureSurface0` (`ResizeBuffers`, with
+  vsync flag stored), `acquireSurface0` (device-removed check only --
+  flip model doesn't need an explicit acquire), `blitSurfaceRgba80`
+  (CPU-side RGBA8 upload straight into the back buffer via
+  `UpdateSubresource`), `presentSurface0`, `releaseSurface0`.
+  **NOT YET build-verified** -- authored after the probe was confirmed
+  building, but not itself compiled by anyone yet. This should be the
+  very first thing the next Windows session checks.
 - [x] `DxBridge` / `NativeDxBridge` Java-side now has real (non-default)
-      overrides for `probeSurface`, `bootstrapSurface`, `configureSurface`,
-      `acquireSurface`, `blitSurfaceRgba8`, `presentSurface`,
-      `releaseSurface`. `createCommandContext` / `submitCommandContext` /
-      `releaseCommandContext` are intentionally still Java-only (no native
-      call) -- see the file-header comment in
-      `directexp_bridge_surface.cpp` for why that's correct for now, not a
-      shortcut: nothing currently reaches those calls because
-      `createTexture2D` is still a stub (see below).
+  overrides for `probeSurface`, `bootstrapSurface`, `configureSurface`,
+  `acquireSurface`, `blitSurfaceRgba8`, `presentSurface`,
+  `releaseSurface`. `createCommandContext` / `submitCommandContext` /
+  `releaseCommandContext` are intentionally still Java-only (no native
+  call) -- see the file-header comment in
+  `directexp_bridge_surface.cpp` for why that's correct for now, not a
+  shortcut: nothing currently reaches those calls because
+  `createTexture2D` is still a stub (see below).
 - [ ] **Not done yet**: GPU-texture-to-backbuffer blit
-      (`blitSurfaceTexture`), and therefore `createTexture2D` /
-      `uploadTextureRgba8` / `releaseTexture` staying as default-throw
-      stubs is a *deliberate, currently-harmless* gap -- `DxTexture` only
-      attempts `createTexture2D` best-effort and silently falls back to the
-      CPU path (`blitSurfaceRgba8`, which is real) when it's unavailable.
-      This means the surface pipeline should work end-to-end today purely
-      through the CPU path. Implementing the GPU path is Milestone 3 work,
-      not blocking.
+  (`blitSurfaceTexture`), and therefore `createTexture2D` /
+  `uploadTextureRgba8` / `releaseTexture` staying as default-throw
+  stubs is a *deliberate, currently-harmless* gap -- `DxTexture` only
+  attempts `createTexture2D` best-effort and silently falls back to the
+  CPU path (`blitSurfaceRgba8`, which is real) when it's unavailable.
+  This means the surface pipeline should work end-to-end today purely
+  through the CPU path. Implementing the GPU path is Milestone 3 work,
+  not blocking.
 - [ ] **Not done yet**: deferred-context / multithreaded command recording
-      (explicit later decision per the design spec).
+  (explicit later decision per the design spec).
 
 ## Explicit Non-Goals For This Scaffold
 
@@ -89,47 +89,158 @@ starting, and update it before ending a session.
 - No deferred-context / multithreaded command recording (explicit later
   decision per the design spec's Open Decisions)
 
-## Suggested Next Session's Scope: Milestone 3 (Resource Core)
+## Milestone 3: Resource Core (texture path)
 
-Milestones 1 and 2 are done. Per the design spec's milestone list, Milestone
-3 is buffers, textures, samplers, uploads, blit support, and basic frame
-lifecycle -- concretely, in priority order:
+- [x] `native/src/directexp_bridge_texture.cpp`: `createTexture2DNative`
+  (real `ID3D11Texture2D`, `D3D11_USAGE_DEFAULT` +
+  `D3D11_BIND_SHADER_RESOURCE`, `DXGI_FORMAT_R8G8B8A8_UNORM`),
+  `uploadTextureRgba8Native` (`UpdateSubresource` via
+  `D3D11CalcSubresource` for the right mip), `releaseTexture0`,
+  `blitSurfaceTexture0` (`CopyResource` GPU-to-GPU straight into the
+  swap chain back buffer).
+- [x] `g_activeDevice`/`g_activeContext` globals added to
+  `directexp_common.h`/`.cpp`, set in `bootstrapSurface0` and cleared in
+  `releaseSurface0` -- texture creation has no per-call device handle of
+  its own (matches `DxBridge`'s existing surface-agnostic
+  `createTexture2D`/`uploadTextureRgba8` signatures), so it operates
+  against whichever device is currently active. Single-window
+  assumption, consistent with the rest of the project.
+- [x] `NativeDxBridge` now has real (non-default) overrides for
+  `createTexture2D`, `uploadTextureRgba8`, `releaseTexture`,
+  `blitSurfaceTexture`. `DxTexture`'s existing best-effort
+  try/catch (written speculatively back when these were stubs) needed
+  no changes -- it now actually succeeds instead of always falling
+  back, which is exactly the seam it was designed for. Refreshed its
+  now-stale "still a stub" doc comments to describe the real behavior.
+- [ ] **Explicitly deferred, not a gap:** `nativeCommandContextHandle` stays
+  a Java-only sentinel counter (see `NativeDxBridge.java`'s
+  `NEXT_COMMAND_CONTEXT_HANDLE`), ignored on the native side. This is
+  the intended v1 shape per the design spec's Open Decisions (single
+  immediate context, no deferred contexts) -- not something to "fix"
+  without a concrete reason to adopt deferred contexts first.
+- [ ] **Not done yet:** no dimension/format mismatch check before
+  `CopyResource` -- if a texture's mip 0 doesn't match the current back
+  buffer size (e.g. stale after a resize), D3D11 silently skips the
+  copy (debug-layer warning only, not a crash) rather than DirectExp
+  catching it earlier with a clearer diagnostic.
+- [x] **Verified:** `directexp_bridge_texture.cpp` builds cleanly and the
+  native GPU-texture path is confirmed active at runtime -- the log
+  shows `DirectExp: native GPU texture path active...`, not the
+  CPU-fallback `native GPU texture creation unavailable...` line. See
+  the 2026-09-23 Progress Log entry and "Milestone 3: COMPLETE" below.
 
-1. **`createTexture2D` for real.** Implement the native entrypoint (new
-   `directexp_bridge_texture.cpp`, following the same pattern as
-   `directexp_bridge_surface.cpp`): create an `ID3D11Texture2D` with
-   `D3D11_USAGE_DEFAULT` and `D3D11_BIND_SHADER_RESOURCE`, format
-   `DXGI_FORMAT_R8G8B8A8_UNORM`, matching the `width`/`height`/`mipLevels`
-   already passed from `DxTexture`'s Java-side best-effort call. Wire the
-   matching `NativeDxBridge` override (currently absent -- `createTexture2D`
-   is still `DxBridge`'s default-throw stub, so `DxTexture` always falls
-   back to CPU today).
-2. **`uploadTextureRgba8` for real.** `ID3D11DeviceContext::UpdateSubresource`
-   into the right mip subresource (`D3D11CalcSubresource`), same technique
-   already used for `blitSurfaceRgba80`.
-3. **`releaseTexture`.** Release the `ID3D11Texture2D`, free the handle.
-4. **`blitSurfaceTexture`.** `CopyResource` from the GPU texture straight
-   into the swap chain back buffer -- replaces the CPU round-trip
-   (`blitSurfaceRgba8`) for anything Blaze3D marks as texture-backed, which
-   should be the common case once step 1 works. Note this needs a real
-   `nativeCommandContextHandle` value to mean something -- right now
-   `createCommandContext`/`submitCommandContext`/`releaseCommandContext`
-   are Java-only sentinel counters (see `NativeDxBridge.java`); decide
-   whether they stay that way (single immediate context, ignore the handle
-   value) or need to become real per-context state. The design spec's
-   Open Decisions section defers deferred-context/multithreading, so
-   "stay Java-only, ignore the handle" is the consistent choice unless
-   something concrete forces otherwise.
-5. **Verify visually, not just "it compiles/runs".** Once texture upload
-   works, the window should start showing Minecraft's actual title-screen
-   content (logo, buttons, background) instead of solid black. That's the
-   real Milestone 3 success signal -- a black window that doesn't crash is
-   not sufficient evidence the texture path works, since black is also
-   what the current CPU-fallback path already produces.
+- **2026-09-20** (Milestone 3 runtime result + diagnostic logging, same
+  day): `runClient` result: a brief purple/blue flash (Minecraft's earliest
+  loading screen, verified twice independently by the project owner across
+  two separate build locations) followed by a solid black main menu, no
+  crash. **This is the expected result at the current milestone boundary,
+  not a bug**: the loading-screen flash is just a color clear (works since
+  Milestone 2, doesn't need real draw calls), while the title screen's
+  logo/buttons/panorama require actual geometry to be drawn through the
+  render pipeline -- and `DxRenderPassBackend.draw()`/`drawIndexed()` are
+  still literal no-ops (explicitly `// TODO(Milestone 4)`). Nothing submits
+  real GPU draw work yet, so nothing beyond a clear color can appear,
+  regardless of whether Milestone 3's texture upload path is itself
+  working correctly. Added one-time (not per-frame) diagnostic logging in
+  `DxTexture.createNativeTextureHandle` -- `DirectExp: native GPU texture
+  path active...` on first success, `DirectExp: native GPU texture
+  creation unavailable, using CPU-side fallback...` on first failure -- so
+  future sessions can distinguish "Milestone 3's GPU path is engaged but
+  Milestone 4 doesn't exist yet" from "Milestone 3 is silently falling back
+  to CPU," which look visually identical right now. **Next session should
+  check the log for this line before assuming Milestone 3 needs more work.**
 
-Do not jump ahead to shader/pipeline work (Milestone 4) while resources are
-still not GPU-round-trip-verified -- this mirrors the discipline MetalExp's
-own `AGENTS.md` calls out explicitly.
+- **2026-09-23** (Milestone 3 GPU path verified): Checked the log per the
+  prior entry's instruction -- `DirectExp: native GPU texture path
+  active...` appears, not the CPU-fallback
+  `native GPU texture creation unavailable...` line. Confirms
+  `createTexture2DNative` / `uploadTextureRgba8Native` /
+  `blitSurfaceTexture0` are genuinely exercising real GPU-backed textures,
+  not silently falling back to `blitSurfaceRgba8`. Milestone 3 is complete.
+
+## Milestone 3: COMPLETE
+
+GPU-texture resource core (`ID3D11Texture2D` creation/upload, GPU-to-GPU
+back-buffer blit via `CopyResource`) is implemented and now
+runtime-verified: the `native GPU texture path active` diagnostic line
+confirms textures upload to real GPU memory rather than silently falling
+back to the CPU path. The title screen remains a black fill, which is
+still expected -- nothing issues real draw calls yet
+(`DxRenderPassBackend.draw()`/`drawIndexed()` are still no-ops); that's
+Milestone 4 work.
+
+## Milestone 4: Shader and Pipeline Core (planned, not started)
+
+Scope per the design spec: `GLSL -> SPIR-V -> HLSL` pipeline, reflection,
+layout mapping, first pipeline compile, first successful draw. This is a
+substantially bigger milestone than 1-3 combined; expect it to span
+several sessions on its own.
+
+This plan is adapted from `MetalExp`'s Shader/Toolchain Layer design
+(`docs/specs/2026-04-09-metalexp-design.md` and the `26.2` Vulkan/Metal
+research notes in the `MetalExp` reference repo). That project has not
+built this either -- it's a design-only precedent there too, not borrowed
+code. The pipeline is identical through SPIR-V; only the final translation
+target differs (HLSL instead of MSL), since `SPIRV-Cross` has a
+first-class HLSL backend alongside its MSL one.
+
+### Pipeline stages
+
+- [ ] **Source stage:** load Mojang's GLSL shader source from the game's
+  shader source path; apply the same preprocessing/define injection
+  the modern Vulkan path already uses, so DirectExp isn't inventing a
+  new shader front end.
+- [ ] **IR stage:** compile GLSL -> SPIR-V via `shaderc`, the same
+  compiler Mojang's own Vulkan backend already uses. SPIR-V is the
+  canonical intermediate representation for the first implementation
+  line.
+- [ ] **Reflection/binding stage:** reflect SPIR-V resources with
+  `SPIRV-Cross`, and combine that with Blaze3D's pipeline declarations
+  into an engine-owned resource layout model -- not raw SPIR-V
+  descriptor-set/binding semantics passed through untouched. Per
+  MetalExp's own note, this mapping step is the actual hard part, not
+  the translation step.
+- [ ] **HLSL emission stage:** translate SPIR-V -> HLSL via
+  `SPIRV-Cross`'s HLSL backend, compile the result via `D3DCompile`
+  (`d3dcompiler`, which `native/CMakeLists.txt` deliberately hasn't
+  linked yet -- this is the milestone that needs it, see Milestone 2's
+  checklist above), and build structures that map the engine-owned
+  layout model onto concrete D3D11 register slots (`b#`/`t#`/`s#`).
+
+### Binding model
+
+Use a flat, engine-managed slot map, not argument buffers or root
+signatures -- easier to debug, simpler deterministic diagnostics, lower
+first-version complexity. This is the same choice MetalExp made for its
+own binding model, and it fits DirectExp especially well since D3D11 has
+no argument-buffer or root-signature equivalent anyway (see AGENTS.md's
+"Binding model" divergence note) -- so it's a natural fit here, not a
+compromise.
+
+### Dependencies still to add
+
+- [ ] `shaderc` (GLSL -> SPIR-V)
+- [ ] `SPIRV-Cross` (reflection + SPIR-V -> HLSL)
+- [ ] link `d3dcompiler` in `native/CMakeLists.txt`
+
+### Success criterion for this milestone
+
+First real pipeline compile and first successful draw call, replacing
+`DxRenderPassBackend`'s current no-op `draw()`/`drawIndexed()`/
+`drawMultipleIndexed()`. Until a draw call lands, the window stays a black
+fill regardless of how correct the texture path is (see Milestone 3's
+note in Current Status above) -- don't mistake continued black output
+during this milestone for a texture-path regression.
+
+## Suggested Next Session's Scope
+
+The GPU-texture path is confirmed active (see Progress Log above), so
+Milestone 3's texture upload path genuinely works, not just compiles.
+Start Milestone 4 above. Re-read the design spec's Shader and Resource
+Binding Design section before starting rather than improvising the
+binding model, and treat the pipeline-stage breakdown above as the
+checklist to work through in order -- reflection/binding is the stage
+most likely to eat the most time, per MetalExp's own risk note.
 
 ## Progress Log
 
@@ -214,14 +325,15 @@ not a bug in what's implemented so far).
 
 ## Current Status (as of the last entry above)
 
-- **Runtime-verified on Windows (MSYS2 UCRT64):** Milestones 1 and 2 both
+- **Runtime-verified on Windows (MSYS2 UCRT64):** Milestones 1, 2, and 3 all
   confirmed working end to end: config -> plan -> negotiation -> settings UI
   -> `DxBackend` -> real D3D11 device/context -> flip-model swap chain ->
-  presenting window.
-- **Still entirely CPU-side:** every pixel currently goes through
-  `blitSurfaceRgba8` (CPU upload), because `createTexture2D` is still a
-  stub and `DxTexture` silently falls back to CPU storage. This was the
-  right call for reaching a presenting window quickly, but it's the reason
-  the window is black rather than showing anything -- nothing populates
-  that CPU buffer with real content yet, and even once something does, the
-  CPU round-trip is not the long-term performance path.
+  presenting window, with the GPU-texture path (`createTexture2DNative` /
+  `uploadTextureRgba8Native` / `blitSurfaceTexture0`) confirmed active via
+  the `native GPU texture path active` diagnostic line.
+- **Still black on screen, but that's Milestone 4's gap, not Milestone 3's:**
+  the window shows a black fill because `DxRenderPassBackend.draw()`/
+  `drawIndexed()` are still no-ops -- nothing issues real GPU draw work yet.
+  That's expected at this milestone boundary; it does not indicate the
+  texture upload/blit path is CPU-only, which the diagnostic line above
+  rules out.

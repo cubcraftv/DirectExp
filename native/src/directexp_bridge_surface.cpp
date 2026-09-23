@@ -211,6 +211,12 @@ Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_bootstrapSurface0(JNIEnv* env
 	surface->height = height;
 	surface->vsync = false;
 
+	// Milestone 3 (texture creation/upload, directexp_bridge_texture.cpp)
+	// operates against whichever device is "active" here -- see the
+	// g_activeDevice/g_activeContext comment in directexp_common.h.
+	g_activeDevice = device;
+	g_activeContext = context;
+
 	double dpiScale = QueryDpiScaleForWindow(hwnd);
 
 	return BuildSurfaceBootstrapResult(
@@ -343,6 +349,19 @@ Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_releaseSurface0(JNIEnv*, jcla
 	Surface* surface = ToSurface(nativeSurfaceHandle);
 	if (surface == nullptr) {
 		return;
+	}
+
+	if (g_activeDevice == surface->device) {
+		// See the g_activeDevice/g_activeContext comment in
+		// directexp_common.h. Any texture created against this device that
+		// outlives the surface is now orphaned (its handle stays valid
+		// until releaseTexture0 is called on it, but no new textures can be
+		// created until a new surface is bootstrapped) -- acceptable for
+		// the current single-window assumption, since releasing the
+		// surface means the game is shutting down or the backend is being
+		// torn down anyway.
+		g_activeDevice = nullptr;
+		g_activeContext = nullptr;
 	}
 
 	ReleaseSurfaceObjects(surface);

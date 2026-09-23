@@ -8,6 +8,7 @@ add_library(directexp_native SHARED
 	src/directexp_common.cpp
 	src/directexp_bridge_probe.cpp
 	src/directexp_bridge_surface.cpp
+	src/directexp_bridge_texture.cpp
 )
 
 # CMake's default shared-library naming differs by toolchain on Windows:

@@ -95,6 +95,29 @@ public final class NativeDxBridge implements DxBridge {
 	}
 
 	@Override
+	public long createTexture2D(int width, int height, int mipLevels) {
+		return createTexture2DNative(width, height, mipLevels);
+	}
+
+	@Override
+	public void uploadTextureRgba8(long nativeTextureHandle, int mipLevel, ByteBuffer rgbaPixels, int width, int height) {
+		uploadTextureRgba8Native(nativeTextureHandle, mipLevel, rgbaPixels, width, height);
+	}
+
+	@Override
+	public void releaseTexture(long nativeTextureHandle) {
+		if (nativeTextureHandle == 0L) {
+			return;
+		}
+		releaseTexture0(nativeTextureHandle);
+	}
+
+	@Override
+	public void blitSurfaceTexture(long nativeCommandContextHandle, long nativeSurfaceHandle, long nativeTextureHandle) {
+		blitSurfaceTexture0(nativeCommandContextHandle, nativeSurfaceHandle, nativeTextureHandle);
+	}
+
+	@Override
 	public void presentSurface(long nativeSurfaceHandle) {
 		presentSurface0(nativeSurfaceHandle);
 	}
@@ -258,4 +281,17 @@ public final class NativeDxBridge implements DxBridge {
 	private static native void presentSurface0(long nativeSurfaceHandle);
 
 	private static native void releaseSurface0(long nativeSurfaceHandle);
+
+	// Named "...Native"/"...0" rather than exactly matching the interface
+	// method names above (createTexture2D, uploadTextureRgba8) for the same
+	// signature-clash reason as blitSurfaceRgba80: a static native method
+	// and the public override that forwards to it can't share a name when
+	// their parameter lists are identical.
+	private static native long createTexture2DNative(int width, int height, int mipLevels);
+
+	private static native void uploadTextureRgba8Native(long nativeTextureHandle, int mipLevel, ByteBuffer rgbaPixels, int width, int height);
+
+	private static native void releaseTexture0(long nativeTextureHandle);
+
+	private static native void blitSurfaceTexture0(long nativeCommandContextHandle, long nativeSurfaceHandle, long nativeTextureHandle);
 }
