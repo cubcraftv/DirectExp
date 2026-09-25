@@ -7,7 +7,9 @@ version = project.mod_version
 group = project.maven_group
 def junitJupiterVersion = '5.10.0'
 def isWindows = System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("windows")
-def nativeBuildDir = layout.buildDirectory.dir("native")
+// Keep CMake/Ninja's dependency and object cache outside build/ so
+// `gradlew clean` does not force Shaderc and SPIRV-Tools to rebuild.
+def nativeBuildDir = layout.projectDirectory.dir(".gradle/native")
 def nativeBridgeOutput = layout.buildDirectory.file("native/directexp_native.dll")
 def nativeBridgeSources = fileTree("${project.projectDir}/native/src") {
 	include("*.cpp")
@@ -82,13 +84,13 @@ tasks.register("configureNativeWindowsBridge", Exec) {
 	workingDir project.projectDir
 
 	doFirst {
-		nativeBuildDir.get().asFile.mkdirs()
+		nativeBuildDir.asFile.mkdirs()
 	}
 
 	commandLine([
 		"cmake",
 		"-S", "native",
-		"-B", nativeBuildDir.get().asFile.absolutePath,
+		"-B", nativeBuildDir.asFile.absolutePath,
 		"-DCMAKE_BUILD_TYPE=Release",
 		// Explicit generator instead of relying on CMake's Windows default
 		// (which falls back to "NMake Makefiles" and assumes an MSVC
@@ -111,7 +113,7 @@ tasks.register("buildNativeWindowsBridge", Exec) {
 
 	commandLine([
 		"cmake",
-		"--build", nativeBuildDir.get().asFile.absolutePath,
+		"--build", nativeBuildDir.asFile.absolutePath,
 		"--config", "Release"
 	])
 
@@ -123,8 +125,8 @@ tasks.register("buildNativeWindowsBridge", Exec) {
 		// like "Visual Studio 17 2022".
 		def flatDll = nativeBridgeOutput.get().asFile
 		def candidates = [
-			nativeBuildDir.get().file("directexp_native.dll").asFile,
-			nativeBuildDir.get().dir("Release").file("directexp_native.dll").asFile
+			nativeBuildDir.file("directexp_native.dll").asFile,
+			nativeBuildDir.dir("Release").file("directexp_native.dll").asFile
 		]
 		def builtDll = candidates.find { it.exists() }
 
@@ -149,6 +151,10 @@ test {
 
 java {
 	withSourcesJar()
+
+	toolchain {
+		languageVersion = JavaLanguageVersion.of(25)
+	}
 
 	sourceCompatibility = JavaVersion.VERSION_25
 	targetCompatibility = JavaVersion.VERSION_25

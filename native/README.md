@@ -25,6 +25,12 @@ Current scope:
   - reports failure distinctly for "no D3D11 runtime", "no adapter
     reaching 10.1", and "device creation failed for another reason"
 - no swap chain, no window attachment, no command list/draw submission yet
+- (Milestone 4.1) `shaderc`/`SPIRV-Cross`/`d3dcompiler` linked, plus a
+  `JNI_OnLoad`-triggered smoke test (`directexp_shader_toolchain.cpp`) that
+  compiles one hardcoded GLSL string through `shaderc` to SPIR-V and
+  through SPIRV-Cross's `CompilerHLSL` to HLSL text, logging both -- not
+  yet wired to any real Mojang shader source, JNI entrypoint, or
+  `D3DCompile` call (see the Milestone 4 breakdown doc for what those need)
 
 ## Local build requirements
 
@@ -35,11 +41,28 @@ that already has that toolchain's tools on `PATH`** -- a plain PowerShell/
 cmd prompt has neither by default, which is why "NMake Makefiles" / "no
 such file" errors show up if you skip this.
 
+The CMake/Ninja build tree is kept in `.gradle/native`, outside Gradle's
+disposable `build/` directory. `./gradlew.bat clean` therefore removes the
+final DLL and Java outputs without discarding the compiled Shaderc, glslang,
+SPIRV-Tools, and native bridge objects. The next native build can reuse them.
+
 ### Option A: MSYS2 UCRT64 (MinGW-w64 GCC)
 
 ```
 pacman -S mingw-w64-ucrt-x86_64-toolchain mingw-w64-ucrt-x86_64-cmake mingw-w64-ucrt-x86_64-ninja
 ```
+
+Milestone 4 (shader toolchain) additionally needs `shaderc` and
+`SPIRV-Cross`, both available as prebuilt UCRT64 packages -- no need to
+build either from source:
+
+```
+pacman -S mingw-w64-ucrt-x86_64-shaderc mingw-w64-ucrt-x86_64-spirv-cross
+```
+
+`d3dcompiler` needs no separate package on either toolchain (see "Known
+toolchain-specific caveats" below) -- it's linked the same bare-name way
+`d3d11`/`dxgi` already are.
 
 Then run `./gradlew.bat build` from the **"MSYS2 UCRT64"** shell
 specifically (not the plain "MSYS2" shell, and not a separate PowerShell
@@ -81,10 +104,17 @@ message instead of a hardcoded-path failure.
 
 ## Known toolchain-specific caveats
 
-- **MinGW-w64 / UCRT64**: `d3dcompiler` is deliberately not linked yet (see
-  `CMakeLists.txt`) since nothing currently uses it and its import-library
-  situation differs from MSVC's. This will need to be resolved explicitly
-  when Milestone 4 (HLSL compilation) starts.
+- **MinGW-w64 / UCRT64**: `d3dcompiler` is now linked (Milestone 4.1) the
+  same bare-name way as `d3d11`/`dxgi` -- mingw-w64's CRT ships a generated
+  `.def` file for `d3dcompiler_47.dll` that produces a linkable import
+  library, so this needed no extra pacman package. **Runtime caveat**:
+  unlike `d3d11.dll`/`dxgi.dll`, `d3dcompiler_47.dll` is only guaranteed
+  preinstalled as an OS component on Windows 8.1 and later; on older
+  Windows it needs a separate redistributable.
+  `NativeDxBridgeLoader.checkD3DCompilerAvailability` (Java side) pre-checks
+  for this specific DLL before the native library load is even attempted,
+  so a missing copy reports `DxBridgeLoadStatus.DEPENDENCY_MISSING` with an
+  actionable message instead of a generic, confusing native-load failure.
 - **MSVC**: if `D3D11_CREATE_DEVICE_DEBUG` / the debug layer is needed
   later, confirm the "Graphics Tools" optional Windows feature is installed
   (see the open research question in `docs/research/`).

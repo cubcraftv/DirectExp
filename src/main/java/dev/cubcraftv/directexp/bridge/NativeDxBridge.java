@@ -170,12 +170,14 @@ public final class NativeDxBridge implements DxBridge {
 			case UNSUPPORTED_OS -> DxBridgeProbeStatus.UNSUPPORTED_OS;
 			case NOT_FOUND -> DxBridgeProbeStatus.LIBRARY_MISSING;
 			case LOAD_FAILED -> DxBridgeProbeStatus.LIBRARY_LOAD_FAILED;
+			case DEPENDENCY_MISSING -> DxBridgeProbeStatus.RUNTIME_DEPENDENCY_MISSING;
 			case LOADED -> DxBridgeProbeStatus.NATIVE_ERROR;
 		};
 
 		List<String> missingCapabilities = switch (loadResult.status()) {
 			case UNSUPPORTED_OS -> List.of("windows_host");
 			case NOT_FOUND, LOAD_FAILED -> List.of("native_directx_bridge_library");
+			case DEPENDENCY_MISSING -> List.of(loadResult.source());
 			case LOADED -> List.of("native_directx_bridge");
 		};
 

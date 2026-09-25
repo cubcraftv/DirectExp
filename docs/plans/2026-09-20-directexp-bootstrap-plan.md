@@ -169,7 +169,15 @@ still expected -- nothing issues real draw calls yet
 (`DxRenderPassBackend.draw()`/`drawIndexed()` are still no-ops); that's
 Milestone 4 work.
 
-## Milestone 4: Shader and Pipeline Core (planned, not started)
+## Milestone 4: Shader and Pipeline Core (in progress -- see sub-milestone breakdown)
+
+This milestone is now broken into sequential sub-milestones (4.1-4.6) in
+`docs/plans/2026-09-25-directexp-milestone4-breakdown.md`; that doc is the
+source of truth for per-stage scope and checklists going forward. Milestone
+4.1 (Native Shader Toolchain Bring-Up) has been authored -- see the
+Progress Log below for status. The pipeline-stage summary and dependency
+list immediately below are kept for context but are superseded by the
+breakdown doc's per-stage detail.
 
 Scope per the design spec: `GLSL -> SPIR-V -> HLSL` pipeline, reflection,
 layout mapping, first pipeline compile, first successful draw. This is a
@@ -219,9 +227,13 @@ compromise.
 
 ### Dependencies still to add
 
-- [ ] `shaderc` (GLSL -> SPIR-V)
-- [ ] `SPIRV-Cross` (reflection + SPIR-V -> HLSL)
-- [ ] link `d3dcompiler` in `native/CMakeLists.txt`
+- [x] `shaderc` (GLSL -> SPIR-V) -- linked in `native/CMakeLists.txt`
+  (Milestone 4.1), **authored but not build-verified** (see Progress Log)
+- [x] `SPIRV-Cross` (reflection + SPIR-V -> HLSL) -- linked in
+  `native/CMakeLists.txt` (Milestone 4.1), **authored but not
+  build-verified**
+- [x] link `d3dcompiler` in `native/CMakeLists.txt` -- done (Milestone
+  4.1), **authored but not build-verified**
 
 ### Success criterion for this milestone
 
@@ -323,6 +335,55 @@ this stage -- `DxTexture`'s backing storage is zero-initialized and nothing
 writes real pixel data into it yet (that's Milestone 3+ / actual rendering,
 not a bug in what's implemented so far).
 
+- **2026-09-25** (Milestone 4.1, authored in a non-Windows sandbox):
+  Implemented the checklist in
+  `docs/plans/2026-09-25-directexp-milestone4-breakdown.md`'s Milestone
+  4.1 section. `native/CMakeLists.txt` now links `shaderc_combined` and
+  `spirv-cross-hlsl`/`spirv-cross-glsl`/`spirv-cross-core`, plus
+  `d3dcompiler` (removing the old "deliberately not linked yet" comment);
+  `native/README.md` documents the two new MSYS2 UCRT64 pacman packages.
+  Added `native/src/directexp_shader_toolchain.{h,cpp}`: a smoke test that
+  compiles one hardcoded GLSL fragment shader through `shaderc` to SPIR-V,
+  then through SPIRV-Cross's `CompilerHLSL` to HLSL text, logging both via
+  stderr/`OutputDebugStringA`. No JNI entrypoint for it yet, per the
+  milestone's scope -- it runs automatically from a new `JNI_OnLoad` hook
+  (fires as soon as the JVM loads `directexp_native.dll`, no Java-side
+  change needed to trigger it). Also added the runtime-caveat diagnostic:
+  `d3dcompiler_47.dll` is only a guaranteed Windows 8.1+ OS component, and
+  since it's now statically linked, a missing copy would otherwise surface
+  as a generic, confusing native-load failure for the whole bridge DLL.
+  `NativeDxBridgeLoader.checkD3DCompilerAvailability` pre-checks for it at
+  its well-known `%SystemRoot%\System32` location before attempting
+  `System.loadLibrary`/`System.load` at all, reporting a new
+  `DxBridgeLoadStatus.DEPENDENCY_MISSING` / `DxBridgeProbeStatus.RUNTIME_DEPENDENCY_MISSING`
+  pair with an actionable message when it's absent. **Nothing in this
+  entry has been build-verified**: this session ran in a Linux sandbox
+  with no MSYS2/MSVC toolchain, `shaderc`, or `SPIRV-Cross` available, and
+  no JDK (`javac`) either, so not even the plain-Java bridge changes could
+  be compiled here -- only reviewed by hand against the existing style in
+  `directexp_common.{h,cpp}` and `directexp_bridge_probe.cpp`. A new test,
+  `NativeDxBridgeLoaderTest`, covers `checkD3DCompilerAvailability` in
+  isolation (it doesn't touch `System.loadLibrary`) but has likewise not
+  been run. **Next session on a Windows/MSYS2 UCRT64 machine should**:
+  install the two new pacman packages, run `./gradlew.bat test` first
+  (fast, no native build, confirms the Java-side changes at least compile
+  and the new test passes), then `./gradlew.bat build` and confirm the
+  Milestone 4.1 success criterion -- a log line showing GLSL going in and
+  HLSL text coming out, visible on `runClient` startup via console or
+  DebugView.
+- **2026-09-25** (Milestone 4.1 Windows build verification, same day):
+  On Windows 10 with MSYS2 UCRT64/GCC 16.2, the first CMake configure hit
+  Shaderc/glslang's broken install export: `SPIRV` and `glslang` referenced
+  `SPIRV-Tools-opt` without exporting it. Fixed this by disabling install
+  rules for the in-tree dependency build and disabling Shaderc's unused,
+  deprecated HLSL frontend; DirectExp accepts GLSL and uses SPIRV-Cross for
+  SPIR-V -> HLSL. CMake then configured successfully and the native build
+  produced `directexp_native.dll`. The CMake/Ninja tree was moved to
+  `.gradle/native` so `./gradlew.bat clean` preserves Shaderc, glslang,
+  SPIRV-Tools, and bridge object files; the cache path was reconfigured and
+  confirmed to survive `clean`. The GLSL -> SPIR-V -> HLSL startup log and
+  the Java test suite still need a fresh post-fix run.
+
 ## Current Status (as of the last entry above)
 
 - **Runtime-verified on Windows (MSYS2 UCRT64):** Milestones 1, 2, and 3 all
@@ -337,3 +398,11 @@ not a bug in what's implemented so far).
   That's expected at this milestone boundary; it does not indicate the
   texture upload/blit path is CPU-only, which the diagnostic line above
   rules out.
+- **Milestone 4.1 (shader toolchain bring-up) build-verified but not yet
+  runtime-smoke-verified:** the native configure/build and persistent cache
+  are confirmed on Windows/MSYS2 UCRT64, but the GLSL -> SPIR-V -> HLSL
+  startup log and Java test suite still need a fresh post-fix run. See the
+  2026-09-25 Progress Log entries and
+  `docs/plans/2026-09-25-directexp-milestone4-breakdown.md`. This does not
+  change the black-fill status above -- 4.1 is infrastructure wiring plus
+  a standalone smoke test, not a draw call.
