@@ -107,8 +107,12 @@ GPU-texture-backed resources (slice 6/Milestone 3 -- `createTexture2D` /
 `ID3D11Texture2D`) are implemented and now runtime-verified too: the
 `native GPU texture path active` diagnostic log line confirms textures
 upload to real GPU memory rather than falling back to `DxTexture`'s
-CPU-side path. Shader/pipeline work (slice 7/Milestone 4) has not started
--- nothing issues real draw calls yet.
+CPU-side path. Shader/pipeline work (slice 7/Milestone 4) is underway per
+`docs/plans/2026-09-25-directexp-milestone4-breakdown.md`'s sub-milestones
+(4.1 native toolchain bring-up and 4.2 source/preprocessing stage are
+authored; see that plan and the bootstrap plan's Progress Log for exact
+build/runtime-verification status of each) -- nothing issues real draw
+calls yet, and won't until 4.6.
 
 ## Git And PR Rules
 

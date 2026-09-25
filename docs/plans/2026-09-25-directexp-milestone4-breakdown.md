@@ -71,7 +71,8 @@ on this machine."
   new `DxBridgeLoadStatus.DEPENDENCY_MISSING`/
   `DxBridgeProbeStatus.RUNTIME_DEPENDENCY_MISSING`), since 4.1 has no new
   native JNI surface to hang this off yet; covered by
-  `NativeDxBridgeLoaderTest`, itself not yet run (no JDK in this sandbox).**
+  `NativeDxBridgeLoaderTest`, which passed with `./gradlew test` on
+  2026-09-26.**
 
 **Success criterion:** a build-verified log line showing GLSL source going
   in and HLSL text coming out, entirely inside `directexp_native`, with
@@ -92,23 +93,53 @@ Goal: get real Mojang GLSL shader source loaded and preprocessed the way
 the existing Vulkan path already does it, so later stages have real input
 instead of a hardcoded smoke-test string.
 
-- [ ] Locate and load shader source from the game's shader source path
-  (design spec's "Source Stage").
-- [ ] Apply the same preprocessing / `#define` injection the modern
+- [x] Locate and load shader source from the game's shader source path
+  (design spec's "Source Stage"). **`DxShaderSourceStage.loadStage` calls
+  `ShaderSource.get(id, type)` directly -- the same real Blaze3D lookup
+  the Vulkan path uses (`VulkanDevice.compileShader`) -- rather than
+  reinventing a source-lookup path.**
+- [x] Apply the same preprocessing / `#define` injection the modern
   Vulkan path already uses -- this needs to be confirmed against Mojang's
   actual source, not assumed; see the toolchain research notes' "still
-  genuinely unknown" section.
-- [ ] Normalize stage-specific input (vertex vs. fragment) before it's
-  handed to compilation.
-- [ ] Unit-testable in pure Java/JVM terms (no native call needed yet) --
+  genuinely unknown" section. **Confirmed, not assumed: decompiled the
+  `com.mojang.blaze3d.vulkan` package for this project's own Minecraft
+  version (`26.2-snapshot-1`) and found `VulkanDevice.compileShader` calls
+  `GlslPreprocessor.injectDefines(source, key.defines)` directly, keyed on
+  `(Identifier id, ShaderType type, ShaderDefines defines)`. DirectExp's
+  stage calls the identical real Mojang method via
+  `DxGlslDefinesInjector.mojangDefault()`, not a reimplementation. The
+  "still genuinely unknown" note above predates this decompile and can be
+  considered resolved.**
+- [x] Normalize stage-specific input (vertex vs. fragment) before it's
+  handed to compilation. **`DxShaderSourceStage.loadStage` is the single
+  code path both `ShaderType.VERTEX` and `ShaderType.FRAGMENT` go
+  through; the result is tagged with which stage it came from
+  (`DxPreprocessedShaderSource.type`) rather than the two stages having
+  separate, potentially-diverging handling.**
+- [x] Unit-testable in pure Java/JVM terms (no native call needed yet) --
   keep it that way so this stage doesn't require a Windows machine to
-  iterate on.
+  iterate on. **`DxShaderSourceStageTest` covers the ready path, both
+  missing-source paths, and stage normalization using a fake
+  `ShaderSource` and a fake `DxGlslDefinesInjector` -- no native call, no
+  real `ShaderDefines`/`GlslPreprocessor` instance, and no fully
+  registry-backed `RenderPipeline` needed (`DxShaderPipelineDescriptor`
+  carries only the three fields the stage actually needs). `build.gradle`
+  was extended so the `test` source set can compile against `client`
+  (needed since `ShaderSource`/`RenderPipeline` are client-only Blaze3D
+  types); this project's default `test` source set previously only saw
+  `main`.**
 
 **Success criterion:** for at least one representative Mojang shader
 (e.g. `position` or another simple current-line shader), DirectExp
 produces preprocessed GLSL source text that matches what the Vulkan path
 would compile, verified by comparison/log rather than by rendering
-anything yet.
+anything yet. **The unit-test gate passed with `./gradlew test` on
+2026-09-26, but the criterion still requires separately exercising
+`DxShaderSourceStage.load(RenderPipeline, ShaderSource)` against a real
+pipeline's `defaultShaderSource` on a live client to log/compare real
+preprocessed output for a representative shader like `core/position`.
+That live comparison remains outstanding; see the bootstrap plan's
+2026-09-26 Progress Log entry.**
 
 ---
 

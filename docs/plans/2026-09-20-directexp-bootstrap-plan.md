@@ -257,47 +257,6 @@ most likely to eat the most time, per MetalExp's own risk note.
 ## Progress Log
 
 Add an entry here at the end of every working session. Keep entries short;
-the checklists above are the source of truth for what's actually done.
-
-- **2026-09-20** (scaffolding session): Created the full Milestone 1 scaffold
-  plus a Milestone-2-start native probe, authored in a non-Windows sandbox
-  and ported/adapted from the `MetalExp` reference project in the same
-  workspace. Nothing has been compiled or run. Next session should start on
-  a Windows machine per "Suggested Next Session's Scope" above.
-- **2026-09-20** (toolchain fixup, same day): Project owner built on Windows
-  via IntelliJ + MSYS2 UCRT64 (`gcc`/`g++`/`cmake`/`ninja` added to system
-  `PATH`, `JAVA_HOME` + IntelliJ's Gradle JVM pointed at a JDK 25). Fixed
-  along the way: `--release 25` requires the compiler JDK itself to be 25+
-  (not just source/target compatibility settings); `writeToTexture(...,
-  NativeImage.Format, ...)` was missing a `height` parameter against the
-  real `CommandEncoderBackend` interface; CMake's default Windows generator
-  ("NMake Makefiles") assumes an MSVC Developer Command Prompt and doesn't
-  suit MinGW -- switched to an explicit `-G Ninja`; `d3d11.lib`-style
-  linking and `Microsoft::WRL::ComPtr` were MSVC-first choices, replaced
-  with bare CMake library names and manual `Release()` calls so MinGW-w64
-  works without extra dependencies. **`probe0` (the general capability
-  probe) built successfully after these fixes.**
-- **2026-09-20** (Milestone 2 surface lifecycle, same day): Implemented the
-  real swap chain path: `probeSurface0`, `bootstrapSurface0` (persistent
-  device + immediate context + flip-model `IDXGISwapChain1`),
-  `configureSurface0` (resize), `acquireSurface0` (device-removed check),
-  `blitSurfaceRgba80` (CPU RGBA8 upload into the back buffer),
-  `presentSurface0`, `releaseSurface0`. Refactored the probe's device-
-  creation logic into `directexp_common.h`/`.cpp` so it's shared instead of
-  duplicated. Wired real (non-default) `NativeDxBridge` overrides for all
-  of the above.
-- **2026-09-20** (Milestone 2 build fix, same day): `native/CMakeLists.txt`
-  build failed: `IDXGISwapChain1`, `IDXGIFactory2`, `DXGI_SWAP_CHAIN_DESC1`,
-  `DXGI_ALPHA_MODE_IGNORE`, `DXGI_SCALING_STRETCH` all undeclared, plus a
-  cascading `__uuidof(IDXGIFactory2)` failure. Root cause: those are all
-  declared in `<dxgi1_2.h>` (DXGI 1.2), and `directexp_common.h` only
-  included the base `<dxgi.h>`. One-line fix: added the `dxgi1_2.h`
-  include. **`native/src/*.cpp` now builds successfully on MSYS2 UCRT64.**
-  `DXGI_SWAP_EFFECT_FLIP_DISCARD` and `DXGI_MWA_NO_ALT_ENTER` were never
-  flagged as errors, confirming they're already visible via the base
-  `dxgi.h` on this mingw-w64 header version -- worth re-confirming if a
-  different mingw-w64/SDK version is ever used.
-
 - **2026-09-20** (native output naming fix, same day): `buildNativeWindowsBridge`
   warned `directexp_native.dll was not found after the native build`. Cause:
   CMake's default shared-library naming differs by toolchain on Windows --
@@ -381,8 +340,58 @@ not a bug in what's implemented so far).
   produced `directexp_native.dll`. The CMake/Ninja tree was moved to
   `.gradle/native` so `./gradlew.bat clean` preserves Shaderc, glslang,
   SPIRV-Tools, and bridge object files; the cache path was reconfigured and
-  confirmed to survive `clean`. The GLSL -> SPIR-V -> HLSL startup log and
-  the Java test suite still need a fresh post-fix run.
+  confirmed to survive `clean`. At that point, the GLSL -> SPIR-V -> HLSL
+  startup log and Java test suite still needed a fresh post-fix run; the
+  suite subsequently passed, as recorded in the 2026-09-26 entry below,
+  while the startup log remains outstanding.
+- **2026-09-26** (Milestone 4.2, authored in a non-Windows sandbox):
+  Implemented `docs/plans/2026-09-25-directexp-milestone4-breakdown.md`'s
+  Milestone 4.2 checklist (Source and Preprocessing Stage). New package
+  `dev.cubcraftv.directexp.client.shader`: `DxShaderSourceStage` loads raw
+  GLSL via `ShaderSource.get(id, type)` and preprocesses it via
+  `GlslPreprocessor.injectDefines`, normalizing vertex and fragment
+  through one code path. This session had `vulkan.zip` available -- a
+  decompiled `com.mojang.blaze3d.vulkan` package for this project's own
+  Minecraft version (`26.2-snapshot-1`) -- which resolved the shader
+  toolchain research notes' "still genuinely unknown" preprocessing
+  question by direct inspection of `VulkanDevice.compileShader` rather
+  than by assumption; see that file's section 4 and the updated Milestone
+  4.2 checklist for exactly what was confirmed. `DxShaderPipelineDescriptor`
+  and `DxGlslDefinesInjector` exist specifically so the stage's core logic
+  is unit-testable (`DxShaderSourceStageTest`) without a fully
+  registry-backed `RenderPipeline` or a real `ShaderDefines`/
+  `GlslPreprocessor` call -- see those classes' javadoc for why. Also
+  extended `build.gradle`'s `test` source set to see `client`'s output and
+  classpath, since this new code is necessarily client-only (it depends on
+  `ShaderSource`/`RenderPipeline`) but the milestone requires it stay
+  unit-testable without a Windows machine.
+  **At the time this entry was written, nothing had been build- or
+  test-verified**: this session had a JDK but no Fabric/Minecraft
+  dependencies reachable (no
+  network access to `maven.fabricmc.net` or Mojang's piston-meta from this
+  sandbox), so `./gradlew test` could not be run here, only reviewed by
+  hand against the decompiled Vulkan source and this repo's existing
+  `DxBridgeLoadResult`/`DxBridgeLoadStatus`-style conventions. In
+  particular, the exact shape of `ShaderSource` (whether it really is a
+  single-method `get(Identifier, ShaderType)` interface, as every call
+  site in the decompiled Vulkan source implies) has not been confirmed
+  against real Minecraft classes here. **The remaining verification is**
+  (per the Milestone 4.2 success criterion) to exercise
+  `DxShaderSourceStage.load(RenderPipeline, ShaderSource)` against a real
+  pipeline's `defaultShaderSource` for a representative shader (e.g.
+  `core/position`) and log/compare the preprocessed output against what
+  the Vulkan path produces for the same shader. The 2026-09-26 Progress
+  Log entry below records the subsequently passing test/build verification.
+
+- **2026-09-26** (Milestone 4.1/4.2 verification): `./gradlew test`
+  passed, confirming the Java changes and current unit tests compile and
+  pass. `./gradlew.bat buildNativeWindowsBridge --rerun-tasks` also passed
+  on Windows, rebuilding the native bridge and exercising its post-build
+  DLL copy. That copy had failed because the Groovy build script called
+  Kotlin's unavailable `File.copyTo()` extension; it now uses Java NIO
+  `Files.copy(..., REPLACE_EXISTING)`. These checks do not verify the 4.1
+  GLSL -> SPIR-V -> HLSL startup smoke log or 4.2's preprocessed output
+  against a live Mojang shader; those runtime checks remain outstanding.
 
 ## Current Status (as of the last entry above)
 
@@ -400,9 +409,16 @@ not a bug in what's implemented so far).
   rules out.
 - **Milestone 4.1 (shader toolchain bring-up) build-verified but not yet
   runtime-smoke-verified:** the native configure/build and persistent cache
-  are confirmed on Windows/MSYS2 UCRT64, but the GLSL -> SPIR-V -> HLSL
-  startup log and Java test suite still need a fresh post-fix run. See the
-  2026-09-25 Progress Log entries and
+  are confirmed on Windows/MSYS2 UCRT64, and the Java test suite passed on
+  2026-09-26. The GLSL -> SPIR-V -> HLSL startup log remains unverified.
+  See the 2026-09-26 Progress Log entry and
   `docs/plans/2026-09-25-directexp-milestone4-breakdown.md`. This does not
   change the black-fill status above -- 4.1 is infrastructure wiring plus
   a standalone smoke test, not a draw call.
+- **Milestone 4.2 (source/preprocessing stage) unit-tested; live shader
+  comparison outstanding:** `DxShaderSourceStage` and its supporting types
+  pass `./gradlew test` as of 2026-09-26. Real preprocessed output has not
+  yet been checked against the Vulkan path for a live shader. See the
+  2026-09-26 Progress Log entry above. This stage is not wired into
+  `DxDeviceBackend.precompilePipeline` yet -- that's later Milestone 4 work
+  (4.3+), once there's an IR stage for it to feed into.
