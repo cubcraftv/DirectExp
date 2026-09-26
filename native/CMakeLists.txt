@@ -9,6 +9,7 @@ add_library(directexp_native SHARED
 	src/directexp_bridge_probe.cpp
 	src/directexp_bridge_surface.cpp
 	src/directexp_bridge_texture.cpp
+	src/directexp_bridge_shader.cpp
 	src/directexp_shader_toolchain.cpp
 )
 

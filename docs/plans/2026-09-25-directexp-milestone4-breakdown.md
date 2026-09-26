@@ -76,9 +76,9 @@ on this machine."
 
 **Success criterion:** a build-verified log line showing GLSL source going
   in and HLSL text coming out, entirely inside `directexp_native`, with
-  nothing Minecraft-specific involved yet. **Build prerequisite met; the
-  runtime log criterion is not yet met** -- run the native smoke test through
-  `runClient` on Windows and capture the GLSL/SPIR-V/HLSL log. See
+  nothing Minecraft-specific involved yet. **Met on 2026-09-26:** Windows
+  `runClient` logged the GLSL input, 106 SPIR-V words, emitted HLSL, and the
+  successful GLSL -> SPIR-V -> HLSL round trip from `directexp_native`. See
 `docs/plans/2026-09-20-directexp-bootstrap-plan.md`'s 2026-09-25 Progress
 Log entry for exactly what a Windows session should check first.
 
@@ -152,22 +152,58 @@ shader source from 4.2, and make the GLSL -> SPIR-V step a real,
 JNI-exposed native call with proper error handling -- not just a proof
 that the library links.
 
-- [ ] Expose a native bridge call that takes preprocessed GLSL text (from
+- [x] Expose a native bridge call that takes preprocessed GLSL text (from
   4.2) and returns SPIR-V bytes (or a clear compilation error).
-- [ ] Surface `shaderc` compile errors (syntax errors, unsupported
+  **`directexp_bridge_shader.cpp`'s `compileGlslToSpirv0` JNI entrypoint,
+  reached from Java via `NativeDxBridge.compileGlslToSpirv` /
+  `DxBridge.compileGlslToSpirv`. The actual `shaderc` call was factored
+  out of Milestone 4.1's smoke test into a shared, reusable
+  `CompileGlslToSpirv` helper in `directexp_shader_toolchain.h/.cpp` (the
+  smoke test now calls it too, instead of duplicating the `shaderc` call
+  inline) rather than duplicated in the new file.**
+- [x] Surface `shaderc` compile errors (syntax errors, unsupported
   constructs) as structured diagnostics rather than a raw native
   exception -- this is the first stage where "the shader failed to
   compile" becomes a real, expected runtime case rather than a
-  can't-happen.
-- [ ] Cache/store SPIR-V per shader identity as a stepping stone toward
+  can't-happen. **`GlslToSpirvResult` never throws on a `shaderc` compile
+  failure; `BuildIrCompilationResult` turns it into a
+  `NativeDxIrCompilationResult` (`OUTCOME_COMPILE_ERROR` plus
+  `detail`/`numErrors`/`numWarnings` from `shaderc`'s own diagnostics),
+  and `DxBridge.compileGlslToSpirv`'s Java-side result
+  (`DxIrCompilationResult`) keeps `isCompileError()` distinct from a
+  bridge-level failure (library not loaded, entrypoint missing) via
+  `DxIrCompilationStatus`. `DxIrCompilationStage` (the actual pipeline-level
+  IR stage, in `client/shader`) keeps that same distinction one level up
+  as `VERTEX_COMPILE_FAILED`/`FRAGMENT_COMPILE_FAILED` vs.
+  `BRIDGE_UNAVAILABLE`.**
+- [x] Cache/store SPIR-V per shader identity as a stepping stone toward
   the pipeline cache keys 4.6 needs -- doesn't need to be the final cache
   design yet, just needs to exist so 4.4/4.5 aren't recompiling from
-  scratch on every call.
+  scratch on every call. **`DxSpirvCache`, keyed on `(Identifier, ShaderType,
+  preprocessedSource)` rather than just `(Identifier, ShaderType)` --
+  needed since the same shader identity can be preprocessed differently
+  under different `ShaderDefines` for different pipelines, matching how
+  the existing Vulkan path's own `VulkanDevice.ShaderCompilationKey`
+  includes defines, not just id/type. Deliberately unbounded and
+  never-invalidated; see that class's javadoc for why this is explicitly
+  a stepping stone and not meant to be extended toward 4.6's design.**
 
 **Success criterion:** the representative shader(s) from 4.2 compile to
 valid SPIR-V through the real native bridge call, with at least one
 deliberately-broken shader input exercised to confirm errors surface
-usefully instead of crashing.
+usefully instead of crashing. **Not yet verified against the real
+toolchain -- this session was authored in a Linux sandbox with no
+Windows/MSVC toolchain, `shaderc`, or `SPIRV-Cross` available (same
+constraint noted in 4.1's and 4.2's entries), so `./gradlew test` could
+run only the Java-side unit tests, not a real native compile.
+`DxIrCompilationStageTest` covers the shape of this checklist's second
+bullet with a fake `DxBridge` (a successful compile, a vertex compile
+error, a fragment compile error, a bridge-unavailable case, and two
+cache-hit/cache-miss cases) but that's necessarily a stand-in for real
+`shaderc` behavior, not a substitute for it. Exercising a real
+representative shader (and a real deliberately-broken one) through the
+actual native call on a live Windows client remains outstanding --
+see the bootstrap plan's Progress Log.**
 
 ---
 

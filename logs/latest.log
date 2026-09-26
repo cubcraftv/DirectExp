@@ -1,2 +1,5 @@
-[06:42:36] [Test worker/ERROR]: Couldn't find source for VERTEX shader (directexp:test/position) in pipeline test:pipeline
-[06:42:36] [Test worker/ERROR]: Couldn't find source for FRAGMENT shader (directexp:test/position) in pipeline test:pipeline
+[15:43:32] [Test worker/ERROR]: GLSL -> SPIR-V compilation failed for VERTEX shader (directexp:test/position) in pipeline test:pipeline: native library not loaded
+[15:43:32] [Test worker/ERROR]: GLSL -> SPIR-V compilation failed for VERTEX shader (directexp:test/position) in pipeline test:pipeline: syntax error at line 3
+[15:43:32] [Test worker/ERROR]: GLSL -> SPIR-V compilation failed for FRAGMENT shader (directexp:test/position) in pipeline test:pipeline: unsupported construct
+[15:43:32] [Test worker/ERROR]: Couldn't find source for VERTEX shader (directexp:test/position) in pipeline test:pipeline
+[15:43:32] [Test worker/ERROR]: Couldn't find source for FRAGMENT shader (directexp:test/position) in pipeline test:pipeline

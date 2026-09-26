@@ -31,6 +31,11 @@ Current scope:
   through SPIRV-Cross's `CompilerHLSL` to HLSL text, logging both -- not
   yet wired to any real Mojang shader source, JNI entrypoint, or
   `D3DCompile` call (see the Milestone 4 breakdown doc for what those need)
+- (Milestone 4.3) a real `compileGlslToSpirv0` JNI entrypoint
+  (`directexp_bridge_shader.cpp`) that compiles real, on-demand preprocessed
+  GLSL text (from 4.2) to SPIR-V via the same `shaderc` call 4.1's smoke
+  test uses, returning either the SPIR-V bytes or a structured compile
+  error -- still no `D3DCompile` call anywhere (that's Milestone 4.5)
 
 ## Local build requirements
 

@@ -393,6 +393,47 @@ not a bug in what's implemented so far).
   GLSL -> SPIR-V -> HLSL startup smoke log or 4.2's preprocessed output
   against a live Mojang shader; those runtime checks remain outstanding.
 
+- **2026-09-26** (Milestone 4.3 authored): implemented the IR stage's
+  three checklist items --
+  a real `compileGlslToSpirv0` JNI entrypoint
+  (`directexp_bridge_shader.cpp`) built on a `CompileGlslToSpirv` helper
+  factored out of 4.1's smoke test (which now calls it too, instead of
+  duplicating the `shaderc` call), structured compile-error diagnostics
+  end to end (`GlslToSpirvResult` -> `NativeDxIrCompilationResult` ->
+  `DxIrCompilationResult` -> `DxIrCompilationStageResult`, keeping a real
+  `shaderc` compile error distinct from a bridge-unavailable failure at
+  every layer), and a `DxSpirvCache` keyed on
+  `(Identifier, ShaderType, preprocessedSource)` so `DxIrCompilationStage`
+  doesn't recompile an unchanged shader on every call. **At the time this
+  entry was written, nothing had been build- or runtime-verified**: same
+  sandbox constraint as the 4.2 entry above (no Fabric/Minecraft
+  dependencies reachable, and additionally no MSYS2/MSVC Windows
+  toolchain, `shaderc`, or `SPIRV-Cross` available here at all), so
+  neither `./gradlew test` nor a native build could be run from this
+  session. `DxIrCompilationStageTest` exercises the Java-side orchestration
+  (ready path, vertex-compile-failure short-circuit, fragment-compile
+  failure, bridge-unavailable, and two cache-hit/cache-miss cases) against
+  a fake `DxBridge`, but that is necessarily a stand-in for real `shaderc`
+  behavior, reviewed by hand against this repo's existing
+  `DxBridgeProbe`/`DxShaderSourceStage` result-and-status conventions, not
+  a substitute for running it. **The remaining verification is** (per the
+  Milestone 4.3 success criterion) to run `./gradlew test` and
+  `./gradlew.bat buildNativeWindowsBridge` on a real Windows/MSYS2 UCRT64
+  machine, then exercise `compileGlslToSpirv0` against a representative
+  preprocessed shader from 4.2 (e.g. `core/position`) and at least one
+  deliberately-broken GLSL string, confirming the latter comes back as a
+  structured `COMPILE_ERROR` result rather than crashing or throwing.
+
+- **2026-09-26** (Milestone 4.1 runtime verification): `./gradlew.bat test`
+  and `./gradlew.bat build` passed. `./gradlew.bat runClient` reached the
+  DirectX backend on Windows and logged the complete native shader smoke
+  test: shaderc accepted the hardcoded GLSL, produced 106 SPIR-V words,
+  SPIRV-Cross emitted HLSL, and the GLSL -> SPIR-V -> HLSL round trip
+  succeeded inside `directexp_native`. The same run logged the native GPU
+  texture path as active. Milestone 4.1's runtime success criterion is now
+  met. The live 4.2 representative-source comparison and 4.3 real JNI
+  compilation/error exercise remain outstanding.
+
 ## Current Status (as of the last entry above)
 
 - **Runtime-verified on Windows (MSYS2 UCRT64):** Milestones 1, 2, and 3 all
@@ -407,11 +448,11 @@ not a bug in what's implemented so far).
   That's expected at this milestone boundary; it does not indicate the
   texture upload/blit path is CPU-only, which the diagnostic line above
   rules out.
-- **Milestone 4.1 (shader toolchain bring-up) build-verified but not yet
-  runtime-smoke-verified:** the native configure/build and persistent cache
-  are confirmed on Windows/MSYS2 UCRT64, and the Java test suite passed on
-  2026-09-26. The GLSL -> SPIR-V -> HLSL startup log remains unverified.
-  See the 2026-09-26 Progress Log entry and
+- **Milestone 4.1 (shader toolchain bring-up) runtime-verified:** the native
+  configure/build, persistent cache, and Java test suite are confirmed on
+  Windows/MSYS2 UCRT64, and `runClient` logged the complete GLSL -> SPIR-V
+  -> HLSL startup smoke test on 2026-09-26. See the 2026-09-26 Progress Log
+  entry and
   `docs/plans/2026-09-25-directexp-milestone4-breakdown.md`. This does not
   change the black-fill status above -- 4.1 is infrastructure wiring plus
   a standalone smoke test, not a draw call.
@@ -422,3 +463,12 @@ not a bug in what's implemented so far).
   2026-09-26 Progress Log entry above. This stage is not wired into
   `DxDeviceBackend.precompilePipeline` yet -- that's later Milestone 4 work
   (4.3+), once there's an IR stage for it to feed into.
+- **Milestone 4.3 (IR stage/real GLSL -> SPIR-V) Java-side build-verified,
+  native integration still outstanding:** `./gradlew.bat test` and
+  `./gradlew.bat build` pass, covering the structured result chain and
+  `DxSpirvCache`/`DxIrCompilationStage` unit tests. The real
+  `compileGlslToSpirv0` call has not yet been exercised against a
+  representative preprocessed shader or a deliberately broken GLSL input,
+  and this stage is not wired into
+  `DxDeviceBackend.precompilePipeline` either yet -- same reason as 4.2's
+  bullet above, now one stage further along.

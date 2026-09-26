@@ -109,10 +109,10 @@ GPU-texture-backed resources (slice 6/Milestone 3 -- `createTexture2D` /
 upload to real GPU memory rather than falling back to `DxTexture`'s
 CPU-side path. Shader/pipeline work (slice 7/Milestone 4) is underway per
 `docs/plans/2026-09-25-directexp-milestone4-breakdown.md`'s sub-milestones
-(4.1 native toolchain bring-up and 4.2 source/preprocessing stage are
-authored; see that plan and the bootstrap plan's Progress Log for exact
-build/runtime-verification status of each) -- nothing issues real draw
-calls yet, and won't until 4.6.
+(4.1 native toolchain bring-up, 4.2 source/preprocessing stage, and 4.3
+IR stage/real GLSL -> SPIR-V are authored; see that plan and the
+bootstrap plan's Progress Log for exact build/runtime-verification status
+of each) -- nothing issues real draw calls yet, and won't until 4.6.
 
 ## Git And PR Rules
 

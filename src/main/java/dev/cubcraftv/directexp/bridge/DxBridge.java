@@ -68,4 +68,29 @@ public interface DxBridge {
 
 	default void releaseSurface(long nativeSurfaceHandle) {
 	}
+
+	/**
+	 * Milestone 4.3 (IR Stage): compiles preprocessed GLSL source (as
+	 * produced by Milestone 4.2's {@code DxShaderSourceStage}) to SPIR-V
+	 * via {@code shaderc}, real and JNI-exposed rather than the 4.1 smoke
+	 * test's hardcoded string.
+	 *
+	 * <p>Unlike most of this interface's other native-backed methods, a
+	 * {@code shaderc} compile failure is not an exception here -- it's a
+	 * normal, expected result ({@link DxIrCompilationResult#isCompileError()}),
+	 * since real shader source can legitimately fail to compile (a syntax
+	 * error, an unsupported construct). Only a bridge-level problem
+	 * (library not loaded, native entrypoint missing) is reported as a
+	 * different, non-{@code READY} status; see {@link DxIrCompilationStatus}.
+	 *
+	 * @param shaderName debug name used only for {@code shaderc}'s own
+	 *                    error messages -- does not need to be a real
+	 *                    Mojang {@code Identifier}
+	 * @param glslSource  preprocessed GLSL source text (defines already
+	 *                    injected)
+	 * @param stageKind   which shader stage this source is for
+	 */
+	default DxIrCompilationResult compileGlslToSpirv(String shaderName, String glslSource, DxShaderStageKind stageKind) {
+		throw new UnsupportedOperationException("DirectX GLSL -> SPIR-V compilation is not implemented by this bridge yet.");
+	}
 }

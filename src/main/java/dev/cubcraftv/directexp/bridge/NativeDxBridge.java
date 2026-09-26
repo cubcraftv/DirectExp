@@ -130,6 +130,59 @@ public final class NativeDxBridge implements DxBridge {
 		releaseSurface0(nativeSurfaceHandle);
 	}
 
+	@Override
+	public DxIrCompilationResult compileGlslToSpirv(String shaderName, String glslSource, DxShaderStageKind stageKind) {
+		DxBridgeLoadResult loadResult = NativeDxBridgeLoader.ensureLoaded();
+		if (!loadResult.isLoaded()) {
+			return DxIrCompilationResult.bridgeUnavailable(irStatusFromLoadStatus(loadResult), loadResult.detail());
+		}
+
+		try {
+			NativeDxIrCompilationResult nativeResult = compileGlslToSpirv0(shaderName, glslSource, stageKind.nativeShaderKind());
+			return fromNativeIrResult(nativeResult);
+		} catch (UnsatisfiedLinkError error) {
+			return DxIrCompilationResult.bridgeUnavailable(
+				DxIrCompilationStatus.NATIVE_ERROR,
+				error.getMessage() == null ? "DirectX bridge native GLSL -> SPIR-V compile entrypoint is missing." : error.getMessage()
+			);
+		} catch (RuntimeException error) {
+			return DxIrCompilationResult.bridgeUnavailable(
+				DxIrCompilationStatus.NATIVE_ERROR,
+				error.getMessage() == null ? "DirectX bridge native GLSL -> SPIR-V compile failed." : error.getMessage()
+			);
+		}
+	}
+
+	private DxIrCompilationStatus irStatusFromLoadStatus(DxBridgeLoadResult loadResult) {
+		return switch (loadResult.status()) {
+			case UNSUPPORTED_OS -> DxIrCompilationStatus.UNSUPPORTED_OS;
+			case NOT_FOUND -> DxIrCompilationStatus.LIBRARY_MISSING;
+			case LOAD_FAILED -> DxIrCompilationStatus.LIBRARY_LOAD_FAILED;
+			case DEPENDENCY_MISSING -> DxIrCompilationStatus.RUNTIME_DEPENDENCY_MISSING;
+			case LOADED -> DxIrCompilationStatus.NATIVE_ERROR;
+		};
+	}
+
+	private DxIrCompilationResult fromNativeIrResult(NativeDxIrCompilationResult nativeResult) {
+		if (nativeResult == null) {
+			return DxIrCompilationResult.bridgeUnavailable(
+				DxIrCompilationStatus.NATIVE_ERROR,
+				"DirectX bridge native GLSL -> SPIR-V compile returned no result."
+			);
+		}
+
+		return switch (nativeResult.outcomeCode()) {
+			case NativeDxIrCompilationResult.OUTCOME_READY -> DxIrCompilationResult.ready(nativeResult.spirv());
+			case NativeDxIrCompilationResult.OUTCOME_COMPILE_ERROR -> DxIrCompilationResult.compileError(
+				nativeResult.detail(), nativeResult.numErrors(), nativeResult.numWarnings()
+			);
+			default -> DxIrCompilationResult.bridgeUnavailable(
+				DxIrCompilationStatus.NATIVE_ERROR,
+				nativeResult.detail() == null ? "DirectX bridge native GLSL -> SPIR-V compile failed." : nativeResult.detail()
+			);
+		};
+	}
+
 	private DxBridgeProbe runProbe(Supplier<NativeDxBridgeProbeResult> nativeCall) {
 		DxBridgeLoadResult loadResult = NativeDxBridgeLoader.ensureLoaded();
 		if (!loadResult.isLoaded()) {
@@ -296,4 +349,10 @@ public final class NativeDxBridge implements DxBridge {
 	private static native void releaseTexture0(long nativeTextureHandle);
 
 	private static native void blitSurfaceTexture0(long nativeCommandContextHandle, long nativeSurfaceHandle, long nativeTextureHandle);
+
+	// Named "...0" per this file's convention for a native method whose
+	// public-facing override (compileGlslToSpirv) has a different
+	// signature (DxShaderStageKind vs. this method's raw int) rather than
+	// a same-signature clash like blitSurfaceRgba80/createTexture2DNative.
+	private static native NativeDxIrCompilationResult compileGlslToSpirv0(String shaderName, String glslSource, int shaderStageKind);
 }
