@@ -434,6 +434,57 @@ not a bug in what's implemented so far).
   met. The live 4.2 representative-source comparison and 4.3 real JNI
   compilation/error exercise remain outstanding.
 
+- **2026-09-27** (Milestone 4.4 authored): implemented both of the
+  Reflection and Resource Layout Model's checklist halves. Native: a new
+  `directexp_shader_reflection.h/.cpp` reflects SPIR-V via SPIRV-Cross's
+  base `Compiler::get_shader_resources()`, exposed through a new
+  `reflectSpirv0` JNI entrypoint added to the existing
+  `directexp_bridge_shader.cpp` (kept in that file rather than a new
+  `directexp_bridge_reflection.cpp`, since both are pure-CPU-side shader
+  toolchain entrypoints with no device/surface dependency); GLSL's
+  combined `sampler2D` is reflected as a paired `SAMPLED_TEXTURE`+
+  `SAMPLER` entry under one engine name, anticipating the split 4.5's
+  `CompilerHLSL` will need to perform. Java: `DxBridge.reflectSpirv`/
+  `NativeDxBridge` (bridge package, mirroring `DxIrCompilationResult`'s
+  shape) and `DxReflectionStage` (`client/shader`, mirroring
+  `DxIrCompilationStage`'s per-stage short-circuit shape) reflect both
+  pipeline stages; `DxResourceLayoutBuilder` (pure Java, no native call)
+  then combines that with a `DxPipelineResourceDeclarations` (Blaze3D's
+  own `getSamplers()`/`getUniforms()`) into the engine-owned
+  `DxResourceLayout`, via a concrete, documented slot-assignment
+  algorithm: merge vertex+fragment reflections by `(kind, name)`, sort
+  each of the four `DxResourceKind` categories by name, assign `0`-based
+  slots per kind independently. Declared-vs-reflected mismatches are
+  logged, not treated as hard failures, per this milestone's own
+  "manually cross-checked, not yet exercised through an actual draw call"
+  success criterion. **At the time this entry was written, nothing had
+  been build- or runtime-verified against real SPIRV-Cross**: same
+  sandbox constraint as every 4.x entry above -- no MSYS2/MSVC Windows
+  toolchain, `shaderc`, or `SPIRV-Cross` available here, and additionally
+  no Fabric/Minecraft/Yarn sources or Maven Central access in this
+  session to confirm `RenderPipeline.getSamplers()`/`getUniforms()`/
+  `UniformDescription`'s exact shape against a decompile the way 4.2's
+  `GlslPreprocessor.injectDefines` call was (flagged explicitly on
+  `DxPipelineResourceDeclarations`'s javadoc as needing that confirmation
+  in a live session). What *was* verified in this session, in lieu of a
+  real `./gradlew test` run: all new and edited Java source (bridge
+  package plus `client/shader`) was compiled with a real `javac` against
+  hand-written stand-ins for the handful of external Minecraft/Blaze3D/
+  slf4j types it touches (`Identifier`, `ShaderType`, `RenderPipeline`,
+  `DirectExpMod.LOGGER`) -- confirming there are no Java-level type
+  errors even though the Gradle/Fabric Loom build itself couldn't run --
+  and `DxReflectionStageTest`/`DxResourceLayoutBuilderTest`'s 13 test
+  methods were run for real (not just compiled) against a small
+  hand-written JUnit-annotation-compatible runner, all passing. **The
+  remaining verification is** (per the Milestone 4.4 success criterion)
+  to run `./gradlew.bat test` and `./gradlew.bat buildNativeWindowsBridge`
+  on a real Windows/MSYS2 UCRT64 machine, then exercise `reflectSpirv0`
+  against a representative shader's real SPIR-V from 4.3 (e.g.
+  `core/position`) and manually cross-check the resulting
+  `DxResourceLayout` against that shader's source by eye, plus confirm
+  `RenderPipeline.getSamplers()`/`getUniforms()` against a real decompile
+  of `26.2-snapshot-1`.
+
 ## Current Status (as of the last entry above)
 
 - **Runtime-verified on Windows (MSYS2 UCRT64):** Milestones 1, 2, and 3 all
@@ -472,3 +523,16 @@ not a bug in what's implemented so far).
   and this stage is not wired into
   `DxDeviceBackend.precompilePipeline` either yet -- same reason as 4.2's
   bullet above, now one stage further along.
+- **Milestone 4.4 (reflection and resource layout model) authored,
+  compiled and unit-tested outside Gradle; native and live-decompile
+  verification outstanding:** `DxReflectionStage`/`DxResourceLayoutBuilder`
+  and their supporting bridge/client types compile cleanly under a real
+  `javac` and their 13 unit tests pass under a hand-written runner (this
+  session had no Fabric/Minecraft dependencies or Maven Central access to
+  run the real `./gradlew test`). The real `reflectSpirv0` call has not
+  been exercised against real SPIR-V, `RenderPipeline.getSamplers()`/
+  `getUniforms()` has not been confirmed against a decompile, and this
+  stage is not wired into `DxDeviceBackend.precompilePipeline` yet -- same
+  reason as 4.2/4.3's bullets above, now one stage further along. See the
+  2026-09-27 Progress Log entry above and
+  `docs/plans/2026-09-25-directexp-milestone4-breakdown.md`.

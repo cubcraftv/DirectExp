@@ -1,6 +1,7 @@
 package dev.cubcraftv.directexp.bridge;
 
 import java.nio.ByteBuffer;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicLong;
@@ -151,6 +152,73 @@ public final class NativeDxBridge implements DxBridge {
 				error.getMessage() == null ? "DirectX bridge native GLSL -> SPIR-V compile failed." : error.getMessage()
 			);
 		}
+	}
+
+	@Override
+	public DxSpirvReflectionResult reflectSpirv(byte[] spirv) {
+		DxBridgeLoadResult loadResult = NativeDxBridgeLoader.ensureLoaded();
+		if (!loadResult.isLoaded()) {
+			return DxSpirvReflectionResult.bridgeUnavailable(reflectionStatusFromLoadStatus(loadResult), loadResult.detail());
+		}
+
+		try {
+			NativeDxSpirvReflectionResult nativeResult = reflectSpirv0(spirv);
+			return fromNativeReflectionResult(nativeResult);
+		} catch (UnsatisfiedLinkError error) {
+			return DxSpirvReflectionResult.bridgeUnavailable(
+				DxSpirvReflectionStatus.NATIVE_ERROR,
+				error.getMessage() == null ? "DirectX bridge native SPIR-V reflection entrypoint is missing." : error.getMessage()
+			);
+		} catch (RuntimeException error) {
+			return DxSpirvReflectionResult.bridgeUnavailable(
+				DxSpirvReflectionStatus.NATIVE_ERROR,
+				error.getMessage() == null ? "DirectX bridge native SPIR-V reflection failed." : error.getMessage()
+			);
+		}
+	}
+
+	private DxSpirvReflectionStatus reflectionStatusFromLoadStatus(DxBridgeLoadResult loadResult) {
+		return switch (loadResult.status()) {
+			case UNSUPPORTED_OS -> DxSpirvReflectionStatus.UNSUPPORTED_OS;
+			case NOT_FOUND -> DxSpirvReflectionStatus.LIBRARY_MISSING;
+			case LOAD_FAILED -> DxSpirvReflectionStatus.LIBRARY_LOAD_FAILED;
+			case DEPENDENCY_MISSING -> DxSpirvReflectionStatus.RUNTIME_DEPENDENCY_MISSING;
+			case LOADED -> DxSpirvReflectionStatus.NATIVE_ERROR;
+		};
+	}
+
+	private DxSpirvReflectionResult fromNativeReflectionResult(NativeDxSpirvReflectionResult nativeResult) {
+		if (nativeResult == null) {
+			return DxSpirvReflectionResult.bridgeUnavailable(
+				DxSpirvReflectionStatus.NATIVE_ERROR,
+				"DirectX bridge native SPIR-V reflection returned no result."
+			);
+		}
+
+		return switch (nativeResult.outcomeCode()) {
+			case NativeDxSpirvReflectionResult.OUTCOME_READY -> DxSpirvReflectionResult.ready(resourcesFromNativeArrays(nativeResult));
+			case NativeDxSpirvReflectionResult.OUTCOME_REFLECTION_ERROR -> DxSpirvReflectionResult.reflectionError(nativeResult.detail());
+			default -> DxSpirvReflectionResult.bridgeUnavailable(
+				DxSpirvReflectionStatus.NATIVE_ERROR,
+				nativeResult.detail() == null ? "DirectX bridge native SPIR-V reflection failed." : nativeResult.detail()
+			);
+		};
+	}
+
+	private List<DxReflectedResource> resourcesFromNativeArrays(NativeDxSpirvReflectionResult nativeResult) {
+		String[] names = nativeResult.resourceNames();
+		int[] kinds = nativeResult.resourceKinds();
+		int[] sizes = nativeResult.resourceSizeBytes();
+
+		if (names == null || kinds == null || sizes == null) {
+			return List.of();
+		}
+
+		List<DxReflectedResource> resources = new ArrayList<>(names.length);
+		for (int i = 0; i < names.length; i++) {
+			resources.add(new DxReflectedResource(names[i], DxResourceKind.fromNativeCode(kinds[i]), sizes[i]));
+		}
+		return resources;
 	}
 
 	private DxIrCompilationStatus irStatusFromLoadStatus(DxBridgeLoadResult loadResult) {
@@ -355,4 +423,12 @@ public final class NativeDxBridge implements DxBridge {
 	// signature (DxShaderStageKind vs. this method's raw int) rather than
 	// a same-signature clash like blitSurfaceRgba80/createTexture2DNative.
 	private static native NativeDxIrCompilationResult compileGlslToSpirv0(String shaderName, String glslSource, int shaderStageKind);
+
+	// Milestone 4.4: reflects one shader stage's SPIR-V. Named "...0" per
+	// this file's convention for a native method whose public-facing
+	// override (reflectSpirv) has the same parameter list here (no
+	// same-signature clash actually applies, since the interface method
+	// itself is only ever called through this class), kept for
+	// consistency with compileGlslToSpirv0's naming.
+	private static native NativeDxSpirvReflectionResult reflectSpirv0(byte[] spirv);
 }

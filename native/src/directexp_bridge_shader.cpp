@@ -1,5 +1,6 @@
-// DirectExp native bridge - GLSL -> SPIR-V compilation entrypoint
-// (Milestone 4.3: IR Stage).
+// DirectExp native bridge - shader compile/reflect entrypoints
+// (Milestone 4.3: IR Stage; Milestone 4.4: Reflection and Resource
+// Layout Model).
 //
 // Scope: this is the JNI surface Milestone 4.1 deliberately deferred (see
 // directexp_shader_toolchain.h/.cpp) -- a real, on-demand compile call that
@@ -15,6 +16,16 @@
 // directexp_bridge_probe.cpp, directexp_bridge_surface.cpp,
 // directexp_bridge_texture.cpp).
 //
+// Milestone 4.4 adds `reflectSpirv0` alongside `compileGlslToSpirv0`
+// rather than a new directexp_bridge_reflection.cpp: both are
+// pure-CPU-side "shader toolchain" JNI entrypoints with no device/surface
+// involvement, and reflection's real logic (ReflectSpirv/
+// BuildReflectionResult) lives in the new, separate
+// directexp_shader_reflection.h/.cpp -- kept apart from
+// directexp_shader_toolchain.h/.cpp since reflection is SPIRV-Cross-only
+// work with no `shaderc` call in it, not because it belongs in a
+// different bridge file.
+//
 // No device/context/surface involvement here at all -- unlike
 // directexp_bridge_texture.cpp, shader compilation via `shaderc` and
 // `SPIRV-Cross` is pure CPU-side work with no dependency on
@@ -22,8 +33,9 @@
 // works even before any DirectX surface has been bootstrapped.
 //
 // No D3DCompile call here either -- HLSL emission and D3D bytecode
-// compilation are Milestone 4.5's job, once Milestone 4.4 has produced the
-// resource layout model this stage's SPIR-V output feeds into.
+// compilation are Milestone 4.5's job, once Milestone 4.4's resource
+// layout model (produced Java-side, from this file's reflection output)
+// exists to feed it.
 //
 // NOTE ON VERIFICATION: this file has not been compiled by the authoring
 // agent (a Linux sandbox without an MSVC/Windows SDK toolchain, shaderc, or
@@ -35,6 +47,7 @@
 // mirrors the `native` method declarations in NativeDxBridge.java.
 
 #include "directexp_shader_toolchain.h"
+#include "directexp_shader_reflection.h"
 
 #ifdef _WIN32
 
@@ -96,10 +109,51 @@ Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_compileGlslToSpirv0(
 	return BuildIrCompilationResult(env, compileResult);
 }
 
+// Milestone 4.4: reflects one shader stage's compiled SPIR-V (from
+// compileGlslToSpirv0 above) via SPIRV-Cross. Stage-agnostic -- unlike
+// compileGlslToSpirv0, there is no `shaderStageKind` parameter, since
+// resource classification (ClassifyAndCollect in
+// directexp_shader_reflection.cpp) depends only on the SPIR-V itself, not
+// on which stage it came from; the Java-side caller
+// (DxReflectionStage in client/shader) is what keeps vertex/fragment
+// results distinct.
+extern "C" JNIEXPORT jobject JNICALL
+Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_reflectSpirv0(
+	JNIEnv* env, jclass, jbyteArray spirvBytes
+) {
+	if (spirvBytes == nullptr) {
+		SpirvReflectionResult failure;
+		failure.success = false;
+		failure.errorMessage = "reflectSpirv0 requires non-null SPIR-V bytes.";
+		return BuildReflectionResult(env, failure);
+	}
+
+	jsize byteLength = env->GetArrayLength(spirvBytes);
+	if (byteLength < 0 || byteLength % static_cast<jsize>(sizeof(uint32_t)) != 0) {
+		SpirvReflectionResult failure;
+		failure.success = false;
+		failure.errorMessage = "reflectSpirv0 received a SPIR-V byte array whose length is not a positive multiple of 4.";
+		return BuildReflectionResult(env, failure);
+	}
+
+	std::vector<uint32_t> spirv(static_cast<size_t>(byteLength) / sizeof(uint32_t));
+	if (!spirv.empty()) {
+		env->GetByteArrayRegion(spirvBytes, 0, byteLength, reinterpret_cast<jbyte*>(spirv.data()));
+	}
+
+	SpirvReflectionResult reflectionResult = ReflectSpirv(spirv);
+	return BuildReflectionResult(env, reflectionResult);
+}
+
 #else // !_WIN32
 
 extern "C" JNIEXPORT jobject JNICALL
 Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_compileGlslToSpirv0(JNIEnv*, jclass, jstring, jstring, jint) {
+	return nullptr;
+}
+
+extern "C" JNIEXPORT jobject JNICALL
+Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_reflectSpirv0(JNIEnv*, jclass, jbyteArray) {
 	return nullptr;
 }
 

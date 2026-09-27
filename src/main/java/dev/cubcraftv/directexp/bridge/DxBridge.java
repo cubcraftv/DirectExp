@@ -93,4 +93,33 @@ public interface DxBridge {
 	default DxIrCompilationResult compileGlslToSpirv(String shaderName, String glslSource, DxShaderStageKind stageKind) {
 		throw new UnsupportedOperationException("DirectX GLSL -> SPIR-V compilation is not implemented by this bridge yet.");
 	}
+
+	/**
+	 * Milestone 4.4 (Reflection and Resource Layout Model): reflects one
+	 * shader stage's compiled SPIR-V (as produced by
+	 * {@link #compileGlslToSpirv}) via SPIRV-Cross, returning the
+	 * constant buffers, sampled textures, samplers, and structured
+	 * buffers it declares.
+	 *
+	 * <p>Deliberately stage-agnostic (unlike {@link #compileGlslToSpirv},
+	 * there is no {@code DxShaderStageKind} parameter): resource
+	 * classification depends only on the SPIR-V itself, not on which
+	 * stage it came from. The caller ({@code DxReflectionStage} in
+	 * {@code client.shader}) is what keeps vertex/fragment results
+	 * distinct.
+	 *
+	 * <p>Like {@link #compileGlslToSpirv}, a SPIRV-Cross reflection
+	 * failure is not an exception here -- it is a normal, expected
+	 * result ({@link DxSpirvReflectionResult#isReflectionError()}). Only
+	 * a bridge-level problem (library not loaded, native entrypoint
+	 * missing) is reported as a different, non-{@code READY} status; see
+	 * {@link DxSpirvReflectionStatus}.
+	 *
+	 * @param spirv raw SPIR-V words, as bytes, from a
+	 *              {@link DxIrCompilationResult#spirv()} that was
+	 *              {@link DxIrCompilationResult#isReady()}
+	 */
+	default DxSpirvReflectionResult reflectSpirv(byte[] spirv) {
+		throw new UnsupportedOperationException("DirectX SPIR-V reflection is not implemented by this bridge yet.");
+	}
 }

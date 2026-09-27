@@ -216,25 +216,99 @@ the actual hard part (not the translation step) by both the design spec
 and MetalExp's own precedent. Treat schedule estimates for this
 sub-milestone with more suspicion than the others.
 
-- [ ] Reflect SPIR-V resources (constant buffers, sampled textures,
-  samplers, structured buffers) via SPIRV-Cross.
-- [ ] Combine reflection output with Blaze3D's pipeline declarations into
+- [x] Reflect SPIR-V resources (constant buffers, sampled textures,
+  samplers, structured buffers) via SPIRV-Cross. **New
+  `directexp_shader_reflection.h/.cpp` (kept separate from
+  `directexp_shader_toolchain.h/.cpp`: reflection is SPIRV-Cross-only work
+  with no `shaderc` call in it), exposed via a new `reflectSpirv0` JNI
+  entrypoint added to the existing `directexp_bridge_shader.cpp` (a
+  pure-CPU-side "shader toolchain" entrypoint, same as
+  `compileGlslToSpirv0`, so it did not need its own bridge file). Uses
+  SPIRV-Cross's base `spirv_cross::Compiler::get_shader_resources()` --
+  not `CompilerReflection` (a different, JSON-dump tool) and not
+  `CompilerHLSL` (needed only once 4.5 starts) -- per the toolchain
+  research notes. GLSL's combined `sampler2D` is reflected as *two*
+  entries under the same engine name (one `SAMPLED_TEXTURE`, one
+  `SAMPLER`), anticipating the split `CompilerHLSL` will need to perform
+  in 4.5 anyway. Java side: `DxBridge.reflectSpirv`/`NativeDxBridge`
+  (bridge package) plus `DxReflectionStage` (`client/shader`), mirroring
+  `DxIrCompilationStage`'s shape (structured `REFLECTION_ERROR`, distinct
+  from bridge-unavailable statuses; per-stage `VERTEX_REFLECTION_FAILED`/
+  `FRAGMENT_REFLECTION_FAILED`).**
+- [x] Combine reflection output with Blaze3D's pipeline declarations into
   an **engine-owned** resource layout model -- explicitly not raw SPIR-V
   descriptor-set/binding semantics passed through untouched (design
   spec's Shader and Resource Binding Design section is authoritative
-  here; re-read it before improvising).
-- [ ] Layout model must distinguish at minimum: constant buffers (`b#`),
+  here; re-read it before improvising). **`DxResourceLayoutBuilder`
+  (`client/shader`), pure Java with no native call -- takes a
+  `DxPipelineReflection` (both stages' reflected resources, kept separate
+  per stage until merged here) and a `DxPipelineResourceDeclarations`
+  (Blaze3D's own `pipeline.getSamplers()`/`pipeline.getUniforms()`) and
+  produces a `DxResourceLayout`. The declared-vs-reflected cross-check is
+  diagnostic-only (logged, not a hard failure) -- see that class's javadoc
+  for why an automated hard failure would be premature before a live
+  shader has actually been run through this path. `DxResourceLayoutEntry`
+  never carries SPIR-V's own descriptor-set/binding decorations forward;
+  its `slot` is entirely this project's own assignment (see next bullet).
+  **Caveat:** `RenderPipeline.getSamplers()`/`getUniforms()` and
+  `UniformDescription`'s shape are used on the same confidence basis as
+  4.2's existing `getVertexShader()`/`getFragmentShader()`/
+  `getShaderDefines()`/`getLocation()` calls, but -- unlike 4.2's
+  `GlslPreprocessor.injectDefines` call, which was confirmed against a
+  real decompile -- this specific pair of accessors has not been checked
+  against a decompile of `26.2-snapshot-1` in this session (no
+  Minecraft/Yarn sources or network access to fetch them were available).
+  Confirm in a live session before leaning on it beyond the diagnostic
+  cross-check `DxResourceLayoutBuilder` uses it for today.**
+- [x] Layout model must distinguish at minimum: constant buffers (`b#`),
   sampled-texture SRVs (`t#`), samplers (`s#`, separate from textures --
   D3D11 doesn't have GL's combined sampler model), and structured/typed
-  buffers where needed.
-- [ ] Decide and document how the flat engine-managed slot map (the
+  buffers where needed. **`DxResourceKind` (bridge package, shared with
+  the client layer): `CONSTANT_BUFFER`, `SAMPLED_TEXTURE`, `SAMPLER`,
+  `STRUCTURED_BUFFER`. `DxResourceLayout` exposes a filtered view per kind
+  (`constantBuffers()`/`sampledTextures()`/`samplers()`/
+  `structuredBuffers()`) plus `find(name)`.**
+- [x] Decide and document how the flat engine-managed slot map (the
   binding model choice shared with MetalExp) actually assigns slot
   numbers -- this is a concrete algorithm, not just a philosophy, and
   needs to be written down since 4.5 depends on it being deterministic.
+  **Documented on `DxResourceLayoutBuilder`: (1) merge the vertex and
+  fragment stage's reflected resources by `(kind, name)` identity, marking
+  a resource used in both stages as one entry with both
+  `usedInVertexStage`/`usedInFragmentStage` set; (2) within each
+  `DxResourceKind`, sort the merged resources by name via ordinary
+  `String.compareTo` (SPIR-V's own resource enumeration order is not a
+  stable contract, so this -- not that -- is what makes slot assignment
+  deterministic across recompiles); (3) assign slot numbers as each
+  resource's `0`-based index within that sorted, per-kind list --
+  constant buffers, sampled textures, samplers, and structured buffers
+  each get independent `0`-based numbering, matching D3D11's own separate
+  `b#`/`t#`/`s#`/`u#` register spaces. A same-named resource reflected
+  with two different sizes across stages (should not happen for a shared
+  `cbuffer` declaration, but not structurally prevented) is logged as a
+  warning, with the vertex stage's size winning, rather than failing the
+  build.**
 
 **Success criterion:** for the representative shader(s), the layout model
 produced matches what a human reading the shader source would expect
 (manually cross-checked, not yet exercised through an actual draw call).
+**Not yet exercised against a real shader or a real draw call -- same
+Linux-sandbox constraint as 4.1/4.2/4.3 (no Windows/MSVC toolchain,
+`shaderc`, or `SPIRV-Cross` available to this session). `DxReflectionStageTest`
+and `DxResourceLayoutBuilderTest` (both pure JVM, no native call) cover
+the stage's shape with fake reflected resources -- a successful
+two-stage reflection, a vertex/fragment reflection error each stopping
+the pipeline, a bridge-unavailable case, deterministic per-kind slot
+ordering, cross-stage merging (both a shared resource and a
+single-stage-only one), the combined-sampler split producing matching
+`SAMPLED_TEXTURE`/`SAMPLER` entries, all four resource kinds being
+distinguished, and declared/reflected mismatches not blocking the build
+-- but that's necessarily a stand-in for real SPIRV-Cross output on a
+real shader, not a substitute for it. Running an actual representative
+shader's real SPIR-V through `reflectSpirv0` on a live Windows client, and
+manually cross-checking the resulting `DxResourceLayout` against the
+shader source by eye, remains outstanding -- see the bootstrap plan's
+Progress Log.**
 
 ---
 
