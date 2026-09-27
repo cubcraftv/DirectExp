@@ -1,6 +1,7 @@
 package dev.cubcraftv.directexp.bridge;
 
 import java.nio.ByteBuffer;
+import java.util.List;
 
 /**
  * Java-side surface for calling into the native D3D11/DXGI bridge.
@@ -121,5 +122,50 @@ public interface DxBridge {
 	 */
 	default DxSpirvReflectionResult reflectSpirv(byte[] spirv) {
 		throw new UnsupportedOperationException("DirectX SPIR-V reflection is not implemented by this bridge yet.");
+	}
+
+	/**
+	 * Milestone 4.5 (HLSL Emission and D3D Compilation): translates one
+	 * shader stage's compiled SPIR-V to HLSL via SPIRV-Cross, targeting
+	 * Shader Model 5.0, then compiles that HLSL to D3D11 shader bytecode
+	 * via {@code D3DCompile}. Each resource in {@code resourceSlots} is
+	 * forced to the exact register Milestone 4.4's
+	 * {@code DxResourceLayoutBuilder} assigned it, rather than letting
+	 * SPIRV-Cross choose registers on its own -- see
+	 * {@code directexp_shader_hlsl.cpp}'s {@code ApplyResourceBindings}
+	 * for exactly how.
+	 *
+	 * <p>Unlike {@link #reflectSpirv}, this call needs
+	 * {@code stageKind}: the target shader profile ({@code vs_5_0} vs
+	 * {@code ps_5_0}) and the resource binding's own SPIR-V execution
+	 * model depend on which stage this is.
+	 *
+	 * <p>A SPIRV-Cross emission failure or a {@code D3DCompile} failure
+	 * are each a normal, expected result here, not an exception -- see
+	 * {@link DxHlslCompilationResult#isEmissionError()}/
+	 * {@link DxHlslCompilationResult#isCompileError()}. Only a
+	 * bridge-level problem (library not loaded, native entrypoint
+	 * missing) is reported as a different, non-{@code READY} status; see
+	 * {@link DxHlslCompilationStatus}.
+	 *
+	 * @param shaderName    used only for {@code D3DCompile}'s own
+	 *                      {@code pSourceName} diagnostic parameter, the
+	 *                      same role {@link #compileGlslToSpirv}'s
+	 *                      {@code shaderName} plays for {@code shaderc}
+	 * @param spirv         raw SPIR-V words, as bytes, from a
+	 *                      {@link DxIrCompilationResult#spirv()} that was
+	 *                      {@link DxIrCompilationResult#isReady()}
+	 * @param stageKind     which shader stage this SPIR-V is for
+	 * @param resourceSlots this stage's resources and the concrete
+	 *                      register each should be forced to, from
+	 *                      Milestone 4.4's resource layout model
+	 */
+	default DxHlslCompilationResult emitAndCompileHlsl(
+		String shaderName,
+		byte[] spirv,
+		DxShaderStageKind stageKind,
+		List<DxResourceSlotAssignment> resourceSlots
+	) {
+		throw new UnsupportedOperationException("DirectX HLSL emission/compilation is not implemented by this bridge yet.");
 	}
 }

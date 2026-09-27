@@ -485,6 +485,87 @@ not a bug in what's implemented so far).
   `RenderPipeline.getSamplers()`/`getUniforms()` against a real decompile
   of `26.2-snapshot-1`.
 
+- **2026-09-27 (later same day)** (Milestone 4.5 authored): implemented
+  all four of "HLSL Emission and D3D Compilation"'s checklist items.
+  Native: a new `directexp_shader_hlsl.h/.cpp` (third toolchain-concern
+  file, alongside `directexp_shader_toolchain.h/.cpp` for `shaderc` and
+  `directexp_shader_reflection.h/.cpp` for SPIRV-Cross reflection)
+  translates SPIR-V to HLSL via `CompilerHLSL` (`shader_model = 50`) and
+  compiles it via `D3DCompile` -- the first `D3DCompile` call anywhere in
+  this project -- exposed through a new `emitAndCompileHlsl0` JNI
+  entrypoint added to `directexp_bridge_shader.cpp`. Each resource in
+  Milestone 4.4's `DxResourceLayout` is forced into the emitted HLSL as an
+  explicit register via SPIRV-Cross's `add_hlsl_resource_binding`, keyed
+  on each resource's own SPIR-V `(stage, desc_set, binding)` decorations
+  (looked up via `get_decoration`) rather than by name -- a combined GLSL
+  `sampler2D` (reflected in 4.4 as two same-named entries) is merged back
+  into one `HLSLResourceBinding` with both its SRV and Sampler register
+  set. Small 4.4 refactor along the way: the resource-naming fallback
+  (`ResourceName`) moved out of `directexp_shader_reflection.cpp` into a
+  new shared `directexp_shader_resource_naming.h`, since 4.5 needs to
+  derive the exact same name for the exact same resource to look up its
+  slot assignment, and a second, independently-written copy risked
+  drifting out of sync with the first. Java: `DxResourceSlotAssignment`/
+  `DxHlslCompilationStatus`/`DxHlslCompilationResult`/
+  `NativeDxHlslCompilationResult` (bridge package) and
+  `DxHlslModule`/`DxHlslPipelineModules`/`DxHlslCompilationStageStatus`/
+  `DxHlslCompilationStageResult`/`DxHlslCompilationStage` (`client/shader`,
+  mirroring `DxReflectionStage`'s per-stage short-circuit shape, but with
+  two failure statuses per stage instead of one, since emission and
+  compilation can each fail independently). Also fixed a real bug surfaced
+  while wiring 4.5 to 4.4: `DxResourceLayout.find(String)` was ambiguous
+  for a combined sampler's two same-named entries; added a kind-aware
+  `find(String, DxResourceKind)` overload (old one kept, now documented as
+  ambiguous for that case) and used it throughout 4.5's own code.
+  **Verification note, and what made this session different from every
+  4.x session before it:** this sandbox reached
+  `raw.githubusercontent.com` and fetched SPIRV-Cross's real, current
+  upstream `spirv_hlsl.hpp`/`spirv_cross.hpp`/`spirv_common.hpp`/`spirv.hpp`
+  directly from `https://github.com/KhronosGroup/SPIRV-Cross`, and checked
+  `HLSLResourceBinding`'s exact field names, `CompilerHLSL::Options`,
+  `add_hlsl_resource_binding`'s signature, `set_hlsl_options`, the
+  `ExecutionModel`/`Decoration` enums' actual namespace (`spv::`, *not*
+  `spirv_cross::` -- a real mistake caught and fixed during this session
+  by that check, not merely a hypothetical one), and `Resource`/
+  `ShaderResources`/`get_decoration`/`get_declared_struct_size`'s
+  signatures (the last two also retroactively confirming 4.4's existing
+  reflection code, written before this check, is correct) against that
+  real header rather than against recollection. `D3DCompile`'s own
+  signature was not fetched during authoring (Microsoft's Win32 headers
+  aren't on GitHub the way SPIRV-Cross is); it was instead independently
+  confirmed later the same day when the person driving this session
+  pasted Microsoft's official documented signature and it was checked
+  argument-by-argument against the actual call in
+  `directexp_shader_hlsl.cpp` -- all eleven parameters (order and type)
+  matched exactly, no code changes needed. What was *not* possible here, same as every
+  other 4.x entry: an actual MSYS2/MSVC/`D3DCompile` compile, or running a
+  real shader's SPIR-V through this path. Java-side compile/test
+  verification followed the same procedure as 4.4's entry above: all new
+  and edited Java compiled cleanly under a real `javac` against the same
+  hand-written external-type stand-ins, and all 19 tests across
+  `DxReflectionStageTest`/`DxResourceLayoutBuilderTest`/
+  `DxHlslCompilationStageTest` (13 carried over from 4.4, 6 new) passed
+  under the same hand-written runner. **Remaining verification** (per the
+  4.5 success criterion): a real Windows/MSYS2 build, running a
+  representative shader's real SPIR-V through `emitAndCompileHlsl0`, and
+  confirming the resulting HLSL/bytecode by eye (or via `D3DReflect`)
+  against the 4.4 layout it was given.
+
+- **2026-09-27 (addendum to the "(later same day)" 4.5 entry above):**
+  the person driving this session pasted Microsoft's official documented
+  `D3DCompile` signature. Checked argument-by-argument against the actual
+  call in `directexp_shader_hlsl.cpp`: all eleven parameters (`pSrcData`,
+  `SrcDataSize`, `pSourceName`, `pDefines`, `pInclude`, `pEntrypoint`,
+  `pTarget`, `Flags1`, `Flags2`, `ppCode`, `ppErrorMsgs`), in that order,
+  with matching types -- confirmed exact, no code changes needed. Updated
+  that entry above and the 4.5 checklist's success-criterion note (in
+  `docs/plans/2026-09-25-directexp-milestone4-breakdown.md`) to say this
+  was independently confirmed rather than "not similarly re-checked". This
+  closes the one specific gap that entry flagged in how `D3DCompile` was
+  verified (SPIRV-Cross's API already had upstream-header confirmation);
+  it does not change the entry's other conclusion that nothing has
+  actually been compiled or run on a real Windows/MSVC toolchain yet.
+
 ## Current Status (as of the last entry above)
 
 - **Runtime-verified on Windows (MSYS2 UCRT64):** Milestones 1, 2, and 3 all
@@ -535,4 +616,18 @@ not a bug in what's implemented so far).
   stage is not wired into `DxDeviceBackend.precompilePipeline` yet -- same
   reason as 4.2/4.3's bullets above, now one stage further along. See the
   2026-09-27 Progress Log entry above and
+  `docs/plans/2026-09-25-directexp-milestone4-breakdown.md`.
+- **Milestone 4.5 (HLSL emission and D3D compilation) authored, compiled
+  and unit-tested outside Gradle; native verification outstanding:**
+  `DxHlslCompilationStage` and its supporting bridge/native types compile
+  cleanly under a real `javac`/(recollection-independent, upstream-checked)
+  read of SPIRV-Cross's real headers, and 19 unit tests across all three
+  of 4.4/4.5's stage test classes pass under a hand-written runner. The
+  real `emitAndCompileHlsl0` call -- SPIRV-Cross HLSL emission followed by
+  the project's first ever `D3DCompile` call -- has not been exercised
+  against real SPIR-V, and this stage is not wired into
+  `DxDeviceBackend.precompilePipeline` yet -- same reason as every 4.x
+  bullet above, now one stage further along, one milestone item (4.6)
+  short of Milestone 4's actual finish line. See the "2026-09-27 (later
+  same day)" Progress Log entry above and
   `docs/plans/2026-09-25-directexp-milestone4-breakdown.md`.

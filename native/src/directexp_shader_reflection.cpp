@@ -7,6 +7,7 @@
 // whether a later session has build/runtime-verified it since.
 
 #include "directexp_shader_reflection.h"
+#include "directexp_shader_resource_naming.h"
 #include "directexp_common.h"
 
 #include <jni.h>
@@ -23,21 +24,15 @@ namespace directexp {
 
 namespace {
 
-// SPIRV-Cross's `Resource::name` is already the GLSL source name in the
-// common case, but it can legitimately come back empty (SPIR-V compiled
-// with debug info stripped, or a resource the source never named
-// explicitly). Rather than hand an empty string into the engine-owned
-// layout model -- which uses resource names as map keys
-// (DxResourceLayoutBuilder) -- fall back to a stable name derived from
-// the resource's own SPIR-V id. This deliberately does not call
-// SPIRV-Cross's own `get_fallback_name` (a `CompilerGLSL`-only member,
-// not present on the base `Compiler` class this file uses).
-std::string ResourceName(const spirv_cross::Resource& resource) {
-	if (!resource.name.empty()) {
-		return resource.name;
-	}
-	return "spirv_resource_" + std::to_string(resource.id);
-}
+// NOTE: the resource-naming fallback used to live here as a local
+// `ResourceName` helper. Milestone 4.5 needs to derive the exact same
+// name for the exact same resource (to look up its engine-assigned
+// register slot), so it was pulled out into the shared
+// directexp_shader_resource_naming.h (`SpirvResourceName`) both files now
+// include, rather than risk the two independently-written fallbacks
+// drifting apart. This deliberately does not call SPIRV-Cross's own
+// `get_fallback_name` (a `CompilerGLSL`-only member, not present on the
+// base `Compiler` class this file uses).
 
 void ClassifyAndCollect(
 	spirv_cross::Compiler& compiler,
@@ -48,7 +43,7 @@ void ClassifyAndCollect(
 ) {
 	for (const spirv_cross::Resource& resource : resources) {
 		SpirvResource entry;
-		entry.name = ResourceName(resource);
+		entry.name = SpirvResourceName(resource);
 		entry.kind = kind;
 		entry.sizeBytes = includeSize
 			? static_cast<uint32_t>(compiler.get_declared_struct_size(compiler.get_type(resource.base_type_id)))
@@ -84,7 +79,7 @@ SpirvReflectionResult ReflectSpirv(const std::vector<uint32_t>& spirv) {
 		// name SPIRV-Cross gives each half is a 4.5 concern, not this
 		// stage's.
 		for (const spirv_cross::Resource& image : resources.sampled_images) {
-			std::string name = ResourceName(image);
+			std::string name = SpirvResourceName(image);
 			result.resources.push_back(SpirvResource{name, SpirvResourceKind::SampledTexture, 0});
 			result.resources.push_back(SpirvResource{name, SpirvResourceKind::Sampler, 0});
 		}

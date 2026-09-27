@@ -317,22 +317,95 @@ Progress Log.**
 **Depends on:** 4.4 (needs the layout model to map SPIR-V bindings to
 concrete D3D11 register slots).
 
-- [ ] Translate SPIR-V to HLSL via SPIRV-Cross's `CompilerHLSL`, targeting
+- [x] Translate SPIR-V to HLSL via SPIRV-Cross's `CompilerHLSL`, targeting
   Shader Model 5.0 (`vs_5_0`/`ps_5_0` -- confirm the exact `HLSLOptions`
   shader-model value against the feature-level-10.1 floor from the
-  existing D3D11 research notes).
-- [ ] Compile the emitted HLSL to bytecode via `D3DCompile` (now linked
+  existing D3D11 research notes). **New `directexp_shader_hlsl.h/.cpp`
+  (a third toolchain-concern file, alongside `directexp_shader_toolchain.h/.cpp`
+  for `shaderc` and `directexp_shader_reflection.h/.cpp` for SPIRV-Cross
+  reflection). `CompilerHLSL::Options::shader_model = 50` -- same value
+  4.1's smoke test already picked for the same feature-level-10.1
+  reasoning, now actually fed into a real `D3DCompile` call for the first
+  time. Verification note below covers how the SPIRV-Cross API itself was
+  checked.**
+- [x] Compile the emitted HLSL to bytecode via `D3DCompile` (now linked
   per 4.1), producing `ID3D11VertexShader`/`ID3D11PixelShader`-ready
-  bytecode blobs.
-- [ ] Map the 4.4 layout model onto concrete D3D11 register slots
+  bytecode blobs. **`CompileHlslToBytecode` in the new file, targeting
+  `vs_5_0`/`ps_5_0` per stage, entry point `"main"` (SPIRV-Cross's default
+  -- see the code comment on why, confirmed against the real header).
+  `Flags1`/`Flags2` left at `0` for now, flagged as worth revisiting once
+  a real shader has actually round-tripped through this path.**
+- [x] Map the 4.4 layout model onto concrete D3D11 register slots
   (`b#`/`t#`/`s#`) and build the structures that let later stages bind
   resources by the engine-owned names rather than raw slot numbers.
-- [ ] Surface `D3DCompile` errors as structured diagnostics, same
-  treatment as 4.3's `shaderc` error handling.
+  **Uses SPIRV-Cross's `add_hlsl_resource_binding` (`HLSLResourceBinding`:
+  `stage`/`desc_set`/`binding` identify the SPIR-V resource by its own
+  decorations, `cbv`/`srv`/`uav`/`sampler` each carry a
+  `register_space`/`register_binding` pair -- "On SM 5.0 and lower,
+  register_space is ignored" per SPIRV-Cross's own comment, so only
+  `register_binding` is set, straight from `DxResourceLayoutEntry::slot()`).
+  A combined GLSL `sampler2D` -- reflected in 4.4 as two separate entries
+  under one name -- is merged back into one `HLSLResourceBinding` with
+  both `srv` and `sampler` populated, matching "a single binding in
+  SPIR-V might contain multiple resource types ... SRV/Sampler bindings
+  will be used respectively" per SPIRV-Cross's own comment. A structured
+  buffer's engine slot is assigned to both `srv` and `uav`, since this
+  project's layout model doesn't yet distinguish which one SPIRV-Cross
+  will actually pick (readonly -> SRV `ByteAddressBuffer`, otherwise UAV).
+  Java-side: `DxResourceSlotAssignment` (bridge package) and
+  `DxHlslCompilationStage` (`client/shader`), which filters Milestone
+  4.4's `DxResourceLayout` down to each stage's own resources
+  (`usedInVertexStage()`/`usedInFragmentStage()`) before handing them to
+  the bridge -- also fixed a real ambiguity bug found while wiring this
+  up: `DxResourceLayout.find(String)` could silently return either half
+  of a combined sampler's two same-named entries, so a kind-aware
+  `find(String, DxResourceKind)` overload was added (the old overload
+  kept, now documented as ambiguous for that case).**
+- [x] Surface `D3DCompile` errors as structured diagnostics, same
+  treatment as 4.3's `shaderc` error handling. **Split into two distinct
+  statuses rather than one, since this stage has two independent failure
+  points: `DxHlslCompilationStatus.EMISSION_ERROR` (SPIRV-Cross rejected
+  the SPIR-V) and `.COMPILE_ERROR` (`D3DCompile` rejected the emitted
+  HLSL) -- mirrored at the pipeline level by
+  `DxHlslCompilationStageStatus`'s `VERTEX_EMISSION_FAILED`/
+  `FRAGMENT_EMISSION_FAILED`/`VERTEX_COMPILE_FAILED`/`FRAGMENT_COMPILE_FAILED`.
+  The emitted HLSL text is kept on the result even when only the compile
+  step failed (`DxHlslCompilationResult.hlsl()`), so a human debugging a
+  `D3DCompile` rejection can see exactly what text it was given.**
 
 **Success criterion:** the representative shader(s) produce valid D3D11
 shader bytecode end to end from original GLSL source, with register-slot
-mapping data attached -- still not drawn yet, just compiled.
+mapping data attached -- still not drawn yet, just compiled. **Not yet
+exercised against a real shader or a real `D3DCompile` call -- same
+Linux-sandbox constraint as every 4.x milestone before it (no
+MSYS2/MSVC/`D3DCompile`/`SPIRV-Cross` available here).
+`DxHlslCompilationStageTest` (pure JVM, no native call, 6 test methods)
+covers the stage's shape with a fake bridge: both stages compiling,
+vertex emission error stopping before fragment is attempted, a fragment
+compile error being reported once vertex succeeds, bridge-unavailable
+being distinct from either, and -- specific to this milestone --
+confirming the per-stage resource-slot filtering actually excludes a
+fragment-only sampler from the vertex stage's assignment list. What this
+session *could* do that earlier 4.x sessions couldn't: fetch SPIRV-Cross's
+real, current upstream `spirv_hlsl.hpp` from
+`https://github.com/KhronosGroup/SPIRV-Cross` (`raw.githubusercontent.com`
+is reachable from this sandbox) and check `HLSLResourceBinding`,
+`CompilerHLSL::Options`, `add_hlsl_resource_binding`, and
+`set_hlsl_options` against the real header directly, rather than against
+recollection -- every specific field name, comment, and behavior claim in
+`directexp_shader_hlsl.cpp`'s comments was checked this way, not assumed.
+`D3DCompile`'s own signature was not fetched during authoring (Microsoft's
+Win32 headers aren't hosted on GitHub the way SPIRV-Cross is), but was
+independently confirmed afterward: the person driving this session pasted
+Microsoft's official documented signature, and the actual call in
+`directexp_shader_hlsl.cpp` was checked against it argument-by-argument
+(all eleven parameters, order and type) -- it matches exactly, no code
+changes needed. That confirms the call's shape is right, not that it has
+actually been compiled or run. Running an actual
+representative shader's real SPIR-V through `emitAndCompileHlsl0` on a
+live Windows client, and confirming the resulting HLSL/bytecode by eye
+(or via `D3DReflect`) against the 4.4 layout it was given, remains
+outstanding -- see the bootstrap plan's Progress Log.**
 
 ---
 

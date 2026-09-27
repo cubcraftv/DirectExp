@@ -12,6 +12,7 @@ add_library(directexp_native SHARED
 	src/directexp_bridge_shader.cpp
 	src/directexp_shader_toolchain.cpp
 	src/directexp_shader_reflection.cpp
+	src/directexp_shader_hlsl.cpp
 )
 
 # CMake's default shared-library naming differs by toolchain on Windows:

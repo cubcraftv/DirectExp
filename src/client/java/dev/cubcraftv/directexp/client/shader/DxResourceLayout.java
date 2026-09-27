@@ -29,8 +29,25 @@ public record DxResourceLayout(
 		entries = List.copyOf(entries);
 	}
 
+	/**
+	 * Finds the first entry with this name, in no particular kind order.
+	 * <b>Ambiguous for a combined GLSL {@code sampler2D}</b>: Milestone
+	 * 4.4's reflection deliberately produces two entries under the same
+	 * name for one combined sampler -- a {@link DxResourceKind#SAMPLED_TEXTURE}
+	 * and a {@link DxResourceKind#SAMPLER} (see
+	 * {@code directexp_shader_reflection.cpp}'s handling of SPIR-V's
+	 * {@code sampled_images}) -- so this overload can silently return
+	 * either one. Prefer {@link #find(String, DxResourceKind)} whenever
+	 * the kind is known, which is true almost everywhere a lookup by name
+	 * happens (Milestone 4.5's per-stage resource binding is exactly the
+	 * case that needs the disambiguated form).
+	 */
 	public Optional<DxResourceLayoutEntry> find(String name) {
 		return this.entries.stream().filter(entry -> entry.name().equals(name)).findFirst();
+	}
+
+	public Optional<DxResourceLayoutEntry> find(String name, DxResourceKind kind) {
+		return this.entries.stream().filter(entry -> entry.kind() == kind && entry.name().equals(name)).findFirst();
 	}
 
 	public List<DxResourceLayoutEntry> constantBuffers() {

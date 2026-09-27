@@ -221,6 +221,73 @@ public final class NativeDxBridge implements DxBridge {
 		return resources;
 	}
 
+	@Override
+	public DxHlslCompilationResult emitAndCompileHlsl(
+		String shaderName,
+		byte[] spirv,
+		DxShaderStageKind stageKind,
+		List<DxResourceSlotAssignment> resourceSlots
+	) {
+		DxBridgeLoadResult loadResult = NativeDxBridgeLoader.ensureLoaded();
+		if (!loadResult.isLoaded()) {
+			return DxHlslCompilationResult.bridgeUnavailable(hlslStatusFromLoadStatus(loadResult), loadResult.detail());
+		}
+
+		String[] names = new String[resourceSlots.size()];
+		int[] kinds = new int[resourceSlots.size()];
+		int[] slots = new int[resourceSlots.size()];
+		for (int i = 0; i < resourceSlots.size(); i++) {
+			DxResourceSlotAssignment assignment = resourceSlots.get(i);
+			names[i] = assignment.name();
+			kinds[i] = assignment.kind().ordinal();
+			slots[i] = assignment.slot();
+		}
+
+		try {
+			NativeDxHlslCompilationResult nativeResult = emitAndCompileHlsl0(shaderName, spirv, stageKind.nativeShaderKind(), names, kinds, slots);
+			return fromNativeHlslCompilationResult(nativeResult);
+		} catch (UnsatisfiedLinkError error) {
+			return DxHlslCompilationResult.bridgeUnavailable(
+				DxHlslCompilationStatus.NATIVE_ERROR,
+				error.getMessage() == null ? "DirectX bridge native HLSL emission/compilation entrypoint is missing." : error.getMessage()
+			);
+		} catch (RuntimeException error) {
+			return DxHlslCompilationResult.bridgeUnavailable(
+				DxHlslCompilationStatus.NATIVE_ERROR,
+				error.getMessage() == null ? "DirectX bridge native HLSL emission/compilation failed." : error.getMessage()
+			);
+		}
+	}
+
+	private DxHlslCompilationStatus hlslStatusFromLoadStatus(DxBridgeLoadResult loadResult) {
+		return switch (loadResult.status()) {
+			case UNSUPPORTED_OS -> DxHlslCompilationStatus.UNSUPPORTED_OS;
+			case NOT_FOUND -> DxHlslCompilationStatus.LIBRARY_MISSING;
+			case LOAD_FAILED -> DxHlslCompilationStatus.LIBRARY_LOAD_FAILED;
+			case DEPENDENCY_MISSING -> DxHlslCompilationStatus.RUNTIME_DEPENDENCY_MISSING;
+			case LOADED -> DxHlslCompilationStatus.NATIVE_ERROR;
+		};
+	}
+
+	private DxHlslCompilationResult fromNativeHlslCompilationResult(NativeDxHlslCompilationResult nativeResult) {
+		if (nativeResult == null) {
+			return DxHlslCompilationResult.bridgeUnavailable(
+				DxHlslCompilationStatus.NATIVE_ERROR,
+				"DirectX bridge native HLSL emission/compilation returned no result."
+			);
+		}
+
+		return switch (nativeResult.outcomeCode()) {
+			case NativeDxHlslCompilationResult.OUTCOME_READY -> DxHlslCompilationResult.ready(nativeResult.bytecode(), nativeResult.hlsl());
+			case NativeDxHlslCompilationResult.OUTCOME_EMISSION_ERROR -> DxHlslCompilationResult.emissionError(nativeResult.detail());
+			case NativeDxHlslCompilationResult.OUTCOME_COMPILE_ERROR -> DxHlslCompilationResult.compileError(nativeResult.hlsl(), nativeResult.detail());
+			default -> DxHlslCompilationResult.bridgeUnavailable(
+				DxHlslCompilationStatus.NATIVE_ERROR,
+				nativeResult.detail() == null ? "DirectX bridge native HLSL emission/compilation failed." : nativeResult.detail()
+			);
+		};
+	}
+
 	private DxIrCompilationStatus irStatusFromLoadStatus(DxBridgeLoadResult loadResult) {
 		return switch (loadResult.status()) {
 			case UNSUPPORTED_OS -> DxIrCompilationStatus.UNSUPPORTED_OS;
@@ -431,4 +498,14 @@ public final class NativeDxBridge implements DxBridge {
 	// itself is only ever called through this class), kept for
 	// consistency with compileGlslToSpirv0's naming.
 	private static native NativeDxSpirvReflectionResult reflectSpirv0(byte[] spirv);
+
+	// Milestone 4.5: emits HLSL for one shader stage's SPIR-V and
+	// compiles it via D3DCompile. resourceNames/resourceKinds/resourceSlots
+	// are three parallel arrays -- resourceKinds holding DxResourceKind
+	// ordinals -- describing this stage's engine-owned resource layout;
+	// see directexp_bridge_shader.cpp's ToResourceSlotAssignments for the
+	// native-side unmarshalling.
+	private static native NativeDxHlslCompilationResult emitAndCompileHlsl0(
+		String shaderName, byte[] spirv, int shaderStageKind, String[] resourceNames, int[] resourceKinds, int[] resourceSlots
+	);
 }
