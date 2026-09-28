@@ -68,7 +68,13 @@ final class DxCommandEncoderBackend implements CommandEncoderBackend {
 
 	@Override
 	public GpuBuffer.MappedView mapBuffer(GpuBufferSlice gpuBufferSlice, boolean read, boolean write) {
-		return new DxMappedBufferView(((DxBuffer) gpuBufferSlice.buffer()).sliceStorage(gpuBufferSlice.offset(), gpuBufferSlice.length()));
+		DxBuffer buffer = (DxBuffer) gpuBufferSlice.buffer();
+		long offset = gpuBufferSlice.offset();
+		long length = gpuBufferSlice.length();
+		// A write-mapped view pushes its slice to the GPU copy when closed
+		// (the "unmap"); a read-only view has nothing to push.
+		Runnable onClose = write ? () -> buffer.syncRange(offset, length) : null;
+		return new DxMappedBufferView(buffer.sliceStorage(offset, length), onClose);
 	}
 
 	@Override

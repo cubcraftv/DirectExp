@@ -53,6 +53,44 @@ struct Texture {
 	UINT width = 0;
 	UINT height = 0;
 	UINT mipLevels = 0;
+	// Recorded at creation so createTextureViewNative can build a matching
+	// SRV without re-querying the resource. Always RGBA8_UNORM today (see
+	// DxTexture.createNativeTextureHandle); the field exists so widening
+	// the native texture path later doesn't also mean touching the view code.
+	DXGI_FORMAT format = DXGI_FORMAT_R8G8B8A8_UNORM;
+};
+
+// Bind-purpose mask for createBufferNative. Keep in sync with
+// DxBridge.BUFFER_BIND_* (Java) -- the Java side deliberately does not know
+// D3D11's own D3D11_BIND_* values, and this side deliberately does not know
+// Blaze3D's GpuBuffer.Usage bit layout.
+constexpr jint BUFFER_BIND_VERTEX = 1;
+constexpr jint BUFFER_BIND_INDEX = 2;
+constexpr jint BUFFER_BIND_CONSTANT = 4;
+
+// Keep in sync with DxBridge.SAMPLER_ADDRESS_*.
+constexpr jint SAMPLER_ADDRESS_WRAP = 0;
+constexpr jint SAMPLER_ADDRESS_CLAMP = 1;
+
+// Persistent state for one GPU buffer created via createBufferNative
+// (Milestone 4.6 prerequisite scope; see
+// docs/plans/2026-09-28-directexp-milestone4.6-source-of-truth.md).
+struct Buffer {
+	ID3D11Buffer* buffer = nullptr;
+	UINT byteWidth = 0;
+	UINT bindFlags = 0;
+};
+
+// One ID3D11SamplerState, created via createSamplerNative.
+struct Sampler {
+	ID3D11SamplerState* state = nullptr;
+};
+
+// One ID3D11ShaderResourceView over a Texture, created via
+// createTextureViewNative. Holds its own COM reference on the underlying
+// resource, so releasing the Texture wrapper first is safe.
+struct TextureView {
+	ID3D11ShaderResourceView* view = nullptr;
 };
 
 // The device/context of the single surface currently bootstrapped, set by

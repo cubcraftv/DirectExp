@@ -114,6 +114,52 @@ public final class NativeDxBridge implements DxBridge {
 	}
 
 	@Override
+	public long createBuffer(int bindMask, int byteWidth) {
+		return createBufferNative(bindMask, byteWidth);
+	}
+
+	@Override
+	public void updateBuffer(long nativeBufferHandle, ByteBuffer mirror, int offset, int length) {
+		updateBufferNative(nativeBufferHandle, mirror, offset, length);
+	}
+
+	@Override
+	public void releaseBuffer(long nativeBufferHandle) {
+		if (nativeBufferHandle == 0L) {
+			return;
+		}
+		releaseBuffer0(nativeBufferHandle);
+	}
+
+	@Override
+	public long createSampler(
+		int addressU, int addressV, boolean minLinear, boolean magLinear, boolean mipLinear, int maxAnisotropy, float maxLod
+	) {
+		return createSamplerNative(addressU, addressV, minLinear, magLinear, mipLinear, maxAnisotropy, maxLod);
+	}
+
+	@Override
+	public void releaseSampler(long nativeSamplerHandle) {
+		if (nativeSamplerHandle == 0L) {
+			return;
+		}
+		releaseSampler0(nativeSamplerHandle);
+	}
+
+	@Override
+	public long createTextureView(long nativeTextureHandle, int baseMipLevel, int mipLevels) {
+		return createTextureViewNative(nativeTextureHandle, baseMipLevel, mipLevels);
+	}
+
+	@Override
+	public void releaseTextureView(long nativeTextureViewHandle) {
+		if (nativeTextureViewHandle == 0L) {
+			return;
+		}
+		releaseTextureView0(nativeTextureViewHandle);
+	}
+
+	@Override
 	public void blitSurfaceTexture(long nativeCommandContextHandle, long nativeSurfaceHandle, long nativeTextureHandle) {
 		blitSurfaceTexture0(nativeCommandContextHandle, nativeSurfaceHandle, nativeTextureHandle);
 	}
@@ -482,6 +528,26 @@ public final class NativeDxBridge implements DxBridge {
 	private static native void uploadTextureRgba8Native(long nativeTextureHandle, int mipLevel, ByteBuffer rgbaPixels, int width, int height);
 
 	private static native void releaseTexture0(long nativeTextureHandle);
+
+	// Milestone 4.6 prerequisite scope (directexp_bridge_resource.cpp). Same
+	// "...Native"/"...0" naming rationale as the texture natives above: a
+	// static native and the public override forwarding to it can't share a
+	// name when their parameter lists are identical.
+	private static native long createBufferNative(int bindMask, int byteWidth);
+
+	private static native void updateBufferNative(long nativeBufferHandle, ByteBuffer mirror, int offset, int length);
+
+	private static native void releaseBuffer0(long nativeBufferHandle);
+
+	private static native long createSamplerNative(
+		int addressU, int addressV, boolean minLinear, boolean magLinear, boolean mipLinear, int maxAnisotropy, float maxLod
+	);
+
+	private static native void releaseSampler0(long nativeSamplerHandle);
+
+	private static native long createTextureViewNative(long nativeTextureHandle, int baseMipLevel, int mipLevels);
+
+	private static native void releaseTextureView0(long nativeTextureViewHandle);
 
 	private static native void blitSurfaceTexture0(long nativeCommandContextHandle, long nativeSurfaceHandle, long nativeTextureHandle);
 

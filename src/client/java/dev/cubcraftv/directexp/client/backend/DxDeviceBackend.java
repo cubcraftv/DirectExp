@@ -81,7 +81,7 @@ final class DxDeviceBackend implements GpuDeviceBackend {
 
 	@Override
 	public GpuSampler createSampler(AddressMode addressModeU, AddressMode addressModeV, FilterMode minFilter, FilterMode magFilter, int maxAnisotropy, OptionalDouble maxLod) {
-		return new DxSampler(addressModeU, addressModeV, minFilter, magFilter, maxAnisotropy, maxLod);
+		return new DxSampler(this.surfaceLease.dxBridge(), addressModeU, addressModeV, minFilter, magFilter, maxAnisotropy, maxLod);
 	}
 
 	@Override
@@ -96,22 +96,22 @@ final class DxDeviceBackend implements GpuDeviceBackend {
 
 	@Override
 	public GpuTextureView createTextureView(GpuTexture gpuTexture) {
-		return new DxTextureView(gpuTexture, 0, gpuTexture.getMipLevels());
+		return new DxTextureView(this.surfaceLease.dxBridge(), gpuTexture, 0, gpuTexture.getMipLevels());
 	}
 
 	@Override
 	public GpuTextureView createTextureView(GpuTexture gpuTexture, int baseMipLevel, int mipLevels) {
-		return new DxTextureView(gpuTexture, baseMipLevel, mipLevels);
+		return new DxTextureView(this.surfaceLease.dxBridge(), gpuTexture, baseMipLevel, mipLevels);
 	}
 
 	@Override
 	public GpuBuffer createBuffer(Supplier<String> label, int usage, long size) {
-		return new DxBuffer(usage, size);
+		return new DxBuffer(this.surfaceLease.dxBridge(), usage, size);
 	}
 
 	@Override
 	public GpuBuffer createBuffer(Supplier<String> label, int usage, ByteBuffer data) {
-		DxBuffer buffer = new DxBuffer(usage, data.remaining());
+		DxBuffer buffer = new DxBuffer(this.surfaceLease.dxBridge(), usage, data.remaining());
 		buffer.write(0L, data.duplicate());
 		return buffer;
 	}

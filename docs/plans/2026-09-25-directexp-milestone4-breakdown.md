@@ -414,6 +414,15 @@ outstanding -- see the bootstrap plan's Progress Log.**
 **Depends on:** 4.5. This is Milestone 4's actual finish line and the
 design spec's stated success criterion for the whole milestone.
 
+- [ ] **Prerequisite resource backing (approved 2026-09-28; see
+  `2026-09-28-directexp-milestone4.6-source-of-truth.md`):**
+  - [x] `DxBuffer` real `ID3D11Buffer` mirror (authored, unverified on Windows)
+  - [x] `DxSampler` real `ID3D11SamplerState` (authored, unverified on Windows)
+  - [x] `DxTextureView` real `ID3D11ShaderResourceView` (authored, unverified on Windows)
+  - [ ] Render-target / depth-target support (RTV/DSV, non-RGBA8 formats) --
+    open decision, see the source-of-truth doc's section 2
+  - [ ] Uniform-slice binding strategy (staging buffer vs D3D11.1 ranged
+    bind) -- open decision, same section
 - [ ] Build the `DxRenderPipeline`-equivalent state: vertex/pixel shader
   handles, `ID3D11InputLayout` derived from the vertex format, render
   target formats, depth/stencil state, blend state, rasterizer state, and

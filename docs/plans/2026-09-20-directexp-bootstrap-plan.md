@@ -566,6 +566,26 @@ not a bug in what's implemented so far).
   it does not change the entry's other conclusion that nothing has
   actually been compiled or run on a real Windows/MSVC toolchain yet.
 
+- **2026-09-28 -- Milestone 4.5 runtime-confirmed; Milestone 4.6 commit 1
+  authored (GPU buffer / sampler / SRV backing).** The project owner
+  reported 4.5 built on a Windows/MinGW-w64 toolchain with a clean
+  `runClient` (no errors); this supersedes the 4.5 "native verification
+  outstanding" status bullets below. 4.6 planning is captured in
+  `docs/plans/2026-09-28-directexp-milestone4.6-source-of-truth.md`, which is
+  the source of truth for 4.6 decisions and the facts read from the decompiled
+  Vulkan backend. Commit 1 (prerequisite scope the owner approved) gives
+  `DxBuffer` a real `ID3D11Buffer` mirror, `DxSampler` a real
+  `ID3D11SamplerState`, and `DxTextureView` a real
+  `ID3D11ShaderResourceView`, via new `DxBridge`/`NativeDxBridge` methods and
+  `native/src/directexp_bridge_resource.cpp`. **Verification actually done
+  (Linux sandbox):** Java compiled with `javac` 21 against Minecraft stubs;
+  19 unit tests pass under a stand-in runner (not real Gradle/JUnit); the
+  native files pass `-fsyntax-only` under `x86_64-w64-mingw32-g++` with real
+  mingw-w64 headers. **Not done:** Gradle build, native link, `runClient`.
+  Nothing binds these resources yet, so `runClient` should still show a black
+  fill plus one `native GPU buffer/sampler/texture view path active` log line
+  each (see section 6.5 of the source-of-truth doc).
+
 ## Current Status (as of the last entry above)
 
 - **Runtime-verified on Windows (MSYS2 UCRT64):** Milestones 1, 2, and 3 all

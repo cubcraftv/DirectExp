@@ -63,6 +63,85 @@ public interface DxBridge {
 		throw new UnsupportedOperationException("DirectX surface texture blit is not implemented by this bridge yet.");
 	}
 
+	// ---- Milestone 4.6 prerequisite scope: GPU buffers, samplers, texture views ----
+	//
+	// Bind-purpose bits for createBuffer. Deliberately D3D-agnostic and
+	// Blaze3D-agnostic: the client side (DxBufferBinding) translates
+	// GpuBuffer.Usage into this mask, and the native side translates this
+	// mask into D3D11_BIND_* -- neither side needs the other's constants.
+	int BUFFER_BIND_VERTEX = 1;
+	int BUFFER_BIND_INDEX = 2;
+	int BUFFER_BIND_CONSTANT = 4;
+
+	// Address-mode codes for createSampler (Blaze3D's AddressMode has exactly
+	// REPEAT and CLAMP_TO_EDGE).
+	int SAMPLER_ADDRESS_WRAP = 0;
+	int SAMPLER_ADDRESS_CLAMP = 1;
+
+	/**
+	 * Creates a GPU buffer (an {@code ID3D11Buffer}, {@code D3D11_USAGE_DEFAULT})
+	 * usable for the given bind purposes. Its contents are undefined until the
+	 * first {@link #updateBuffer}.
+	 *
+	 * @param bindMask  non-empty combination of {@code BUFFER_BIND_*} bits
+	 * @param byteWidth logical size in bytes; the native side rounds a
+	 *                  constant buffer up to a multiple of 16 itself
+	 * @return an opaque non-zero handle; release with {@link #releaseBuffer}
+	 */
+	default long createBuffer(int bindMask, int byteWidth) {
+		throw new UnsupportedOperationException("DirectX buffer creation is not implemented by this bridge yet.");
+	}
+
+	/**
+	 * Copies {@code [offset, offset + length)} of {@code mirror} into the GPU
+	 * buffer at the same offsets. {@code mirror} must be a direct
+	 * {@link ByteBuffer} holding the buffer's full CPU-side copy (same layout
+	 * as the GPU buffer, at least as large as the buffer's byte width); its
+	 * position/limit are ignored -- offsets are absolute. For a constant
+	 * buffer the whole buffer is re-sent regardless of {@code offset}/
+	 * {@code length}, because D3D11 cannot partially update one.
+	 */
+	default void updateBuffer(long nativeBufferHandle, ByteBuffer mirror, int offset, int length) {
+		throw new UnsupportedOperationException("DirectX buffer upload is not implemented by this bridge yet.");
+	}
+
+	default void releaseBuffer(long nativeBufferHandle) {
+	}
+
+	/**
+	 * Creates an {@code ID3D11SamplerState}.
+	 *
+	 * @param addressU      {@code SAMPLER_ADDRESS_*}
+	 * @param addressV      {@code SAMPLER_ADDRESS_*}
+	 * @param minLinear     linear (true) or point (false) minification
+	 * @param magLinear     linear (true) or point (false) magnification
+	 * @param mipLinear     linear (true) or point (false) mip selection
+	 * @param maxAnisotropy values above 1 select anisotropic filtering
+	 *                      (which ignores the three linear flags); clamped to 1..16
+	 * @param maxLod        upper LOD clamp
+	 */
+	default long createSampler(
+		int addressU, int addressV, boolean minLinear, boolean magLinear, boolean mipLinear, int maxAnisotropy, float maxLod
+	) {
+		throw new UnsupportedOperationException("DirectX sampler creation is not implemented by this bridge yet.");
+	}
+
+	default void releaseSampler(long nativeSamplerHandle) {
+	}
+
+	/**
+	 * Creates an {@code ID3D11ShaderResourceView} over
+	 * {@code [baseMipLevel, baseMipLevel + mipLevels)} of a texture created by
+	 * {@link #createTexture2D}. The view keeps its own reference to the
+	 * texture, so it may outlive {@link #releaseTexture}.
+	 */
+	default long createTextureView(long nativeTextureHandle, int baseMipLevel, int mipLevels) {
+		throw new UnsupportedOperationException("DirectX texture view creation is not implemented by this bridge yet.");
+	}
+
+	default void releaseTextureView(long nativeTextureViewHandle) {
+	}
+
 	default void presentSurface(long nativeSurfaceHandle) {
 		throw new UnsupportedOperationException("DirectX surface present is not implemented by this bridge yet.");
 	}
