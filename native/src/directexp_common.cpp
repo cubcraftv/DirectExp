@@ -13,6 +13,7 @@ const D3D_FEATURE_LEVEL kRequestedFeatureLevels[3] = {
 
 ID3D11Device* g_activeDevice = nullptr;
 ID3D11DeviceContext* g_activeContext = nullptr;
+D3D_FEATURE_LEVEL g_activeFeatureLevel = static_cast<D3D_FEATURE_LEVEL>(0);
 
 std::wstring Utf8ToWide(const char* text) {
 	if (text == nullptr) {

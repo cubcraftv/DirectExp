@@ -16,13 +16,18 @@ import com.mojang.blaze3d.textures.FilterMode;
 import com.mojang.blaze3d.textures.GpuSampler;
 import com.mojang.blaze3d.textures.GpuTexture;
 import com.mojang.blaze3d.textures.GpuTextureView;
+import dev.cubcraftv.directexp.DirectExpMod;
 import dev.cubcraftv.directexp.bridge.DxBridge;
+import dev.cubcraftv.directexp.client.shader.DxSpirvCache;
 
 import java.nio.ByteBuffer;
+import java.util.IdentityHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.OptionalDouble;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Supplier;
 
 /**
@@ -37,6 +42,9 @@ final class DxDeviceBackend implements GpuDeviceBackend {
 
 	private final DxSurfaceLease surfaceLease;
 	private final DeviceInfo deviceInfo;
+	private final Map<RenderPipeline, DxRenderPipeline> pipelineCache = new IdentityHashMap<>();
+	private final DxSpirvCache spirvCache = new DxSpirvCache();
+	private final AtomicBoolean loggedFirstValidPipeline = new AtomicBoolean(false);
 	private boolean closed;
 
 	DxDeviceBackend(DxBridge dxBridge, DxSurfaceDescriptor surfaceDescriptor) {
@@ -128,15 +136,40 @@ final class DxDeviceBackend implements GpuDeviceBackend {
 
 	@Override
 	public CompiledRenderPipeline precompilePipeline(RenderPipeline renderPipeline, ShaderSource shaderSource) {
-		return () -> true;
+		// Keyed on the RenderPipeline instance itself, like the Vulkan backend:
+		// an instance already encodes the full render state. Invalid results are
+		// cached too, so a broken pipeline is reported once rather than every frame.
+		synchronized (this.pipelineCache) {
+			DxRenderPipeline cached = this.pipelineCache.get(renderPipeline);
+			if (cached != null) {
+				return cached;
+			}
+
+			DxRenderPipeline compiled = DxPipelineCompiler.compile(renderPipeline, shaderSource, this.surfaceLease.dxBridge(), this.spirvCache);
+			this.pipelineCache.put(renderPipeline, compiled);
+			if (compiled.isValid()) {
+				if (this.loggedFirstValidPipeline.compareAndSet(false, true)) {
+					DirectExpMod.LOGGER.info("DirectExp: first native render pipeline assembled ({}).", renderPipeline.getLocation());
+				}
+			} else {
+				DirectExpMod.LOGGER.warn("DirectExp: pipeline {} is invalid: {}", renderPipeline.getLocation(), compiled.failureReason());
+			}
+			return compiled;
+		}
 	}
 
 	@Override
 	public void clearPipelineCache() {
+		synchronized (this.pipelineCache) {
+			this.pipelineCache.values().forEach(DxRenderPipeline::close);
+			this.pipelineCache.clear();
+		}
+		this.spirvCache.clear();
 	}
 
 	@Override
 	public void close() {
+		clearPipelineCache();
 		this.surfaceLease.close();
 		this.closed = true;
 	}

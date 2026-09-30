@@ -48,16 +48,65 @@ struct Surface {
 // Persistent state for one GPU texture created via createTexture2D0.
 // Allocated on the heap, handed back to Java as an opaque jlong, released
 // in releaseTexture0.
+// Texture format codes for createTextureNative. Keep in sync with
+// DxBridge.TEXTURE_FORMAT_*. Codes, not DXGI values, so Java never needs
+// DXGI's numbering for textures (depth formats in particular need a
+// typeless resource format plus different DSV/SRV view formats, which is
+// this side's business -- see ResolveTextureFormat).
+constexpr jint TEXTURE_FORMAT_RGBA8_UNORM = 1;
+constexpr jint TEXTURE_FORMAT_D32_FLOAT = 2;
+constexpr jint TEXTURE_FORMAT_D24_UNORM_S8_UINT = 3;
+constexpr jint TEXTURE_FORMAT_D32_FLOAT_S8_UINT = 4;
+constexpr jint TEXTURE_FORMAT_D16_UNORM = 5;
+
+// Keep in sync with DxBridge.TEXTURE_BIND_*.
+constexpr jint TEXTURE_BIND_SHADER_RESOURCE = 1;
+constexpr jint TEXTURE_BIND_RENDER_TARGET = 2;
+constexpr jint TEXTURE_BIND_DEPTH_STENCIL = 4;
+
+struct TextureFormatInfo {
+	DXGI_FORMAT resource;    // format of the ID3D11Texture2D (typeless for depth)
+	DXGI_FORMAT shaderView;  // SRV format
+	DXGI_FORMAT targetView;  // RTV (color) or DSV (depth) format
+	bool depth;
+};
+
+// Depth pairings follow the documented typeless convention: the resource is
+// created typeless, the DSV uses the D* format and the SRV the matching
+// R*_ format (D24S8 -> R24_UNORM_X8_TYPELESS, D32 -> R32_FLOAT, D32S8 ->
+// R32_FLOAT_X8X24_TYPELESS, D16 -> R16_UNORM).
+inline bool ResolveTextureFormat(jint code, TextureFormatInfo& out) {
+	switch (code) {
+		case TEXTURE_FORMAT_RGBA8_UNORM:
+			out = { DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_FORMAT_R8G8B8A8_UNORM, false };
+			return true;
+		case TEXTURE_FORMAT_D32_FLOAT:
+			out = { DXGI_FORMAT_R32_TYPELESS, DXGI_FORMAT_R32_FLOAT, DXGI_FORMAT_D32_FLOAT, true };
+			return true;
+		case TEXTURE_FORMAT_D24_UNORM_S8_UINT:
+			out = { DXGI_FORMAT_R24G8_TYPELESS, DXGI_FORMAT_R24_UNORM_X8_TYPELESS, DXGI_FORMAT_D24_UNORM_S8_UINT, true };
+			return true;
+		case TEXTURE_FORMAT_D32_FLOAT_S8_UINT:
+			out = { DXGI_FORMAT_R32G8X24_TYPELESS, DXGI_FORMAT_R32_FLOAT_X8X24_TYPELESS, DXGI_FORMAT_D32_FLOAT_S8X24_UINT, true };
+			return true;
+		case TEXTURE_FORMAT_D16_UNORM:
+			out = { DXGI_FORMAT_R16_TYPELESS, DXGI_FORMAT_R16_UNORM, DXGI_FORMAT_D16_UNORM, true };
+			return true;
+		default:
+			return false;
+	}
+}
+
 struct Texture {
 	ID3D11Texture2D* texture = nullptr;
 	UINT width = 0;
 	UINT height = 0;
 	UINT mipLevels = 0;
-	// Recorded at creation so createTextureViewNative can build a matching
-	// SRV without re-querying the resource. Always RGBA8_UNORM today (see
-	// DxTexture.createNativeTextureHandle); the field exists so widening
-	// the native texture path later doesn't also mean touching the view code.
-	DXGI_FORMAT format = DXGI_FORMAT_R8G8B8A8_UNORM;
+	// Which D3D11_BIND_* purposes the resource was created with, and its
+	// TEXTURE_FORMAT_* code; createTextureViewNative uses them to decide
+	// which views (SRV / RTV / DSV) it can and must create.
+	UINT bindFlags = 0;
+	jint formatCode = TEXTURE_FORMAT_RGBA8_UNORM;
 };
 
 // Bind-purpose mask for createBufferNative. Keep in sync with
@@ -86,11 +135,29 @@ struct Sampler {
 	ID3D11SamplerState* state = nullptr;
 };
 
-// One ID3D11ShaderResourceView over a Texture, created via
-// createTextureViewNative. Holds its own COM reference on the underlying
-// resource, so releasing the Texture wrapper first is safe.
+// Immutable D3D11 objects for one RenderPipeline, created by
+// createPipelineNative (directexp_bridge_pipeline.cpp). inputLayout is null
+// for a pipeline with no vertex inputs.
+struct Pipeline {
+	ID3D11VertexShader* vertexShader = nullptr;
+	ID3D11PixelShader* pixelShader = nullptr;
+	ID3D11InputLayout* inputLayout = nullptr;
+	ID3D11BlendState* blendState = nullptr;
+	ID3D11DepthStencilState* depthStencilState = nullptr;
+	ID3D11RasterizerState* rasterizerState = nullptr;
+	D3D_PRIMITIVE_TOPOLOGY topology = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
+	UINT vertexStride = 0;
+};
+
+// The views one texture-view object owns over a Texture, created via
+// createTextureViewNative. Each member is null when the texture wasn't
+// created for that purpose (see Texture::bindFlags). Holds its own COM
+// references on the underlying resource, so releasing the Texture wrapper
+// first is safe.
 struct TextureView {
-	ID3D11ShaderResourceView* view = nullptr;
+	ID3D11ShaderResourceView* shaderView = nullptr;
+	ID3D11RenderTargetView* renderTargetView = nullptr;
+	ID3D11DepthStencilView* depthStencilView = nullptr;
 };
 
 // The device/context of the single surface currently bootstrapped, set by
@@ -106,6 +173,17 @@ struct TextureView {
 // currently is not (see AGENTS.md's Non-Goals).
 extern ID3D11Device* g_activeDevice;
 extern ID3D11DeviceContext* g_activeContext;
+
+// The feature level actually negotiated for g_activeDevice (0 when no
+// device is active). D3D_FEATURE_LEVEL_10_1 only guarantees Shader Model
+// 4.1; Shader Model 5.0 needs D3D_FEATURE_LEVEL_11_0
+// [Microsoft Learn, D3D_FEATURE_LEVEL enumeration]. kRequestedFeatureLevels
+// accepts 10.1 as a floor (matching kMinimumFeatureLevel and the "feature
+// level 10.1 floor" the project advertises), so anything that picks a
+// D3DCompile target profile or an spirv_cross::CompilerHLSL::Options::
+// shader_model value MUST branch on this rather than assuming Shader
+// Model 5.0 is always available -- see directexp_shader_hlsl.cpp.
+extern D3D_FEATURE_LEVEL g_activeFeatureLevel;
 
 // Plain-data result of attempting to create a D3D11 device at or above
 // DirectExp's feature level floor. Not a JNI type itself -- see

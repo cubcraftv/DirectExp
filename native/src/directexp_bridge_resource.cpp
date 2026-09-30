@@ -1,5 +1,5 @@
-// DirectExp native bridge - GPU buffer, sampler, and texture-view lifecycle
-// entrypoints (Milestone 4.6 prerequisite scope).
+// DirectExp native bridge - GPU buffer, sampler, texture (render/depth
+// target capable), and texture-view lifecycle entrypoints (Milestone 4.6).
 //
 // Scope: real ID3D11Buffer / ID3D11SamplerState / ID3D11ShaderResourceView
 // creation, buffer upload, and release. Nothing here binds anything to the
@@ -261,6 +261,90 @@ Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_releaseSampler0(JNIEnv*, jcla
 	delete wrapper;
 }
 
+// Creates a texture of any supported TEXTURE_FORMAT_* with the requested
+// TEXTURE_BIND_* purposes (Milestone 4.6: render/depth target support). The
+// resource is typeless for depth formats so the same texture can be both a
+// DSV and an SRV; see ResolveTextureFormat. Contents undefined until
+// written/cleared. Color textures keep the old createTexture2D behaviour
+// (CPU upload via uploadTextureRgba8Native works on any RGBA8 texture).
+extern "C" JNIEXPORT jlong JNICALL
+Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_createTextureNative(
+	JNIEnv* env, jclass, jint formatCode, jint width, jint height, jint mipLevels, jint bindMask
+) {
+	if (g_activeDevice == nullptr) {
+		ThrowIllegalState(env, "createTextureNative called with no active DirectX device (no surface bootstrapped yet?).");
+		return 0;
+	}
+
+	if (width <= 0 || height <= 0 || mipLevels <= 0) {
+		ThrowIllegalState(env, "createTextureNative requires positive width, height, and mipLevels.");
+		return 0;
+	}
+
+	TextureFormatInfo info = {};
+	if (!ResolveTextureFormat(formatCode, info)) {
+		ThrowIllegalState(env, "createTextureNative: unknown TEXTURE_FORMAT_* code.");
+		return 0;
+	}
+
+	const jint knownMask = TEXTURE_BIND_SHADER_RESOURCE | TEXTURE_BIND_RENDER_TARGET | TEXTURE_BIND_DEPTH_STENCIL;
+	if (bindMask <= 0 || (bindMask & ~knownMask) != 0) {
+		ThrowIllegalState(env, "createTextureNative requires a non-empty bind mask made only of TEXTURE_BIND_* bits.");
+		return 0;
+	}
+
+	if (((bindMask & TEXTURE_BIND_RENDER_TARGET) != 0 && info.depth)
+		|| ((bindMask & TEXTURE_BIND_DEPTH_STENCIL) != 0 && !info.depth)) {
+		ThrowIllegalState(env, "createTextureNative: RENDER_TARGET needs a color format and DEPTH_STENCIL a depth format.");
+		return 0;
+	}
+
+	UINT bindFlags = 0;
+	if ((bindMask & TEXTURE_BIND_SHADER_RESOURCE) != 0) {
+		bindFlags |= D3D11_BIND_SHADER_RESOURCE;
+	}
+	if ((bindMask & TEXTURE_BIND_RENDER_TARGET) != 0) {
+		bindFlags |= D3D11_BIND_RENDER_TARGET;
+	}
+	if ((bindMask & TEXTURE_BIND_DEPTH_STENCIL) != 0) {
+		bindFlags |= D3D11_BIND_DEPTH_STENCIL;
+	}
+
+	D3D11_TEXTURE2D_DESC desc = {};
+	desc.Width = static_cast<UINT>(width);
+	desc.Height = static_cast<UINT>(height);
+	desc.MipLevels = static_cast<UINT>(mipLevels);
+	desc.ArraySize = 1;
+	desc.Format = info.resource;
+	desc.SampleDesc.Count = 1;
+	desc.SampleDesc.Quality = 0;
+	desc.Usage = D3D11_USAGE_DEFAULT;
+	desc.BindFlags = bindFlags;
+	desc.CPUAccessFlags = 0;
+	desc.MiscFlags = 0;
+
+	ID3D11Texture2D* texture = nullptr;
+	HRESULT hr = g_activeDevice->CreateTexture2D(&desc, nullptr, &texture);
+	if (FAILED(hr) || texture == nullptr) {
+		ThrowIllegalState(env, "ID3D11Device::CreateTexture2D failed (unsupported format/bind-flag combination, or out of memory).");
+		return 0;
+	}
+
+	Texture* wrapper = new Texture();
+	wrapper->texture = texture;
+	wrapper->width = static_cast<UINT>(width);
+	wrapper->height = static_cast<UINT>(height);
+	wrapper->mipLevels = static_cast<UINT>(mipLevels);
+	wrapper->bindFlags = bindFlags;
+	wrapper->formatCode = formatCode;
+	return PointerToHandle(wrapper);
+}
+
+// Creates whichever views the texture's bind flags allow over the mip range:
+// an SRV over [baseMipLevel, baseMipLevel + mipLevels), and an RTV or DSV on
+// mip `baseMipLevel` alone (a render attachment is one subresource -- same
+// as Vulkan, where the attachment is a view's base mip). A view object may
+// legitimately hold only some of the three.
 extern "C" JNIEXPORT jlong JNICALL
 Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_createTextureViewNative(
 	JNIEnv* env, jclass, jlong nativeTextureHandle, jint baseMipLevel, jint mipLevels
@@ -282,21 +366,54 @@ Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_createTextureViewNative(
 		return 0;
 	}
 
-	D3D11_SHADER_RESOURCE_VIEW_DESC desc = {};
-	desc.Format = texture->format;
-	desc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
-	desc.Texture2D.MostDetailedMip = static_cast<UINT>(baseMipLevel);
-	desc.Texture2D.MipLevels = static_cast<UINT>(mipLevels);
-
-	ID3D11ShaderResourceView* view = nullptr;
-	HRESULT hr = g_activeDevice->CreateShaderResourceView(texture->texture, &desc, &view);
-	if (FAILED(hr) || view == nullptr) {
-		ThrowIllegalState(env, "ID3D11Device::CreateShaderResourceView failed.");
+	TextureFormatInfo info = {};
+	if (!ResolveTextureFormat(texture->formatCode, info)) {
+		ThrowIllegalState(env, "createTextureViewNative: texture has an unknown format code.");
 		return 0;
 	}
 
 	TextureView* wrapper = new TextureView();
-	wrapper->view = view;
+	auto fail = [&](const char* message) -> jlong {
+		if (wrapper->shaderView != nullptr) wrapper->shaderView->Release();
+		if (wrapper->renderTargetView != nullptr) wrapper->renderTargetView->Release();
+		if (wrapper->depthStencilView != nullptr) wrapper->depthStencilView->Release();
+		delete wrapper;
+		ThrowIllegalState(env, message);
+		return 0;
+	};
+
+	if ((texture->bindFlags & D3D11_BIND_SHADER_RESOURCE) != 0) {
+		D3D11_SHADER_RESOURCE_VIEW_DESC desc = {};
+		desc.Format = info.shaderView;
+		desc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+		desc.Texture2D.MostDetailedMip = static_cast<UINT>(baseMipLevel);
+		desc.Texture2D.MipLevels = static_cast<UINT>(mipLevels);
+		if (FAILED(g_activeDevice->CreateShaderResourceView(texture->texture, &desc, &wrapper->shaderView))) {
+			return fail("ID3D11Device::CreateShaderResourceView failed.");
+		}
+	}
+
+	if ((texture->bindFlags & D3D11_BIND_RENDER_TARGET) != 0) {
+		D3D11_RENDER_TARGET_VIEW_DESC desc = {};
+		desc.Format = info.targetView;
+		desc.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2D;
+		desc.Texture2D.MipSlice = static_cast<UINT>(baseMipLevel);
+		if (FAILED(g_activeDevice->CreateRenderTargetView(texture->texture, &desc, &wrapper->renderTargetView))) {
+			return fail("ID3D11Device::CreateRenderTargetView failed.");
+		}
+	}
+
+	if ((texture->bindFlags & D3D11_BIND_DEPTH_STENCIL) != 0) {
+		D3D11_DEPTH_STENCIL_VIEW_DESC desc = {};
+		desc.Format = info.targetView;
+		desc.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2D;
+		desc.Flags = 0;
+		desc.Texture2D.MipSlice = static_cast<UINT>(baseMipLevel);
+		if (FAILED(g_activeDevice->CreateDepthStencilView(texture->texture, &desc, &wrapper->depthStencilView))) {
+			return fail("ID3D11Device::CreateDepthStencilView failed.");
+		}
+	}
+
 	return PointerToHandle(wrapper);
 }
 
@@ -307,8 +424,14 @@ Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_releaseTextureView0(JNIEnv*, 
 		return;
 	}
 
-	if (wrapper->view != nullptr) {
-		wrapper->view->Release();
+	if (wrapper->shaderView != nullptr) {
+		wrapper->shaderView->Release();
+	}
+	if (wrapper->renderTargetView != nullptr) {
+		wrapper->renderTargetView->Release();
+	}
+	if (wrapper->depthStencilView != nullptr) {
+		wrapper->depthStencilView->Release();
 	}
 	delete wrapper;
 }
@@ -335,6 +458,11 @@ Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_createSamplerNative(JNIEnv*, 
 
 extern "C" JNIEXPORT void JNICALL
 Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_releaseSampler0(JNIEnv*, jclass, jlong) {
+}
+
+extern "C" JNIEXPORT jlong JNICALL
+Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_createTextureNative(JNIEnv*, jclass, jint, jint, jint, jint, jint) {
+	return 0;
 }
 
 extern "C" JNIEXPORT jlong JNICALL

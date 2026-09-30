@@ -105,7 +105,7 @@ panoramaScrollSpeed:1.0
 telemetryOptInExtra:false
 onboardAccessibility:true
 menuBackgroundBlurriness:5
-startedCleanly:true
+startedCleanly:false
 musicToast:"never"
 musicFrequency:"DEFAULT"
 key_key.attack:key.mouse.left

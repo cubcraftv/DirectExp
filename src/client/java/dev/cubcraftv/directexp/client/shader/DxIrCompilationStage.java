@@ -100,6 +100,12 @@ public final class DxIrCompilationStage {
 		DxIrCompilationStageStatus status = bridgeResult.isCompileError()
 			? (stageKind == DxShaderStageKind.VERTEX ? DxIrCompilationStageStatus.VERTEX_COMPILE_FAILED : DxIrCompilationStageStatus.FRAGMENT_COMPILE_FAILED)
 			: DxIrCompilationStageStatus.BRIDGE_UNAVAILABLE;
+		if (status == DxIrCompilationStageStatus.VERTEX_COMPILE_FAILED) {
+			DirectExpMod.LOGGER.error(
+				"Post-interface-layout GLSL submitted for vertex shader ({}) in pipeline {}:\n{}",
+				stageSource.id(), pipelineDebugLabel, stageSource.preprocessedSource()
+			);
+		}
 
 		return CompileOutcome.failure(status, bridgeResult.detail());
 	}

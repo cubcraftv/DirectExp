@@ -62,17 +62,32 @@ spv::ExecutionModel ToExecutionModel(ShaderExecutionStage stage) {
 	}
 }
 
-// Shader Model 5.0 target profiles -- vs_5_0/ps_5_0, matching the
-// feature-level-10.1 floor per the D3D11 research notes and 4.1's smoke
-// test (`hlslOptions.shader_model = 50` there is the same choice, just
-// not yet fed into a real D3DCompile call until this milestone).
+// CORRECTION (Milestone 4.6 commit 4 -- see the source of truth doc):
+// vs_5_0/ps_5_0 does NOT "match the feature-level-10.1 floor" as 4.1's
+// comment here used to claim -- Shader Model 5.0 requires
+// D3D_FEATURE_LEVEL_11_0; a 10.1 device only guarantees Shader Model 4.1
+// [Microsoft Learn, D3D_FEATURE_LEVEL enumeration: 10.1 -> "shader model
+// 4", 11.0 -> "shader model 5"]. D3DCompile itself doesn't care what the
+// runtime device supports -- it compiled vs_5_0 bytecode successfully
+// regardless -- but ID3D11Device::CreateVertexShader/CreatePixelShader
+// reject Shader-Model-5.0 bytecode on a sub-11.0 device, which is exactly
+// what a `runClient` log on a feature-level-10.1 machine showed: GLSL ->
+// SPIR-V -> HLSL -> D3DCompile all succeeding, then
+// "ID3D11Device::CreateVertexShader failed." for nearly every pipeline --
+// this was never caught earlier because no shader had compiled far enough
+// to reach CreateVertexShader before Milestone 4.6 commit 3's
+// DxShaderInterfaceLayout fix. Must stay in sync with EmitHlsl's
+// options.shader_model below -- both derive from the same g_activeDevice
+// feature level and must agree (a vs_4_1 target compiled against
+// shader_model 50 HLSL, or vice versa, is a mismatch of its own).
 const char* ToD3DCompileTarget(ShaderExecutionStage stage) {
+	bool shaderModel5 = g_activeFeatureLevel >= D3D_FEATURE_LEVEL_11_0;
 	switch (stage) {
 		case ShaderExecutionStage::Fragment:
-			return "ps_5_0";
+			return shaderModel5 ? "ps_5_0" : "ps_4_1";
 		case ShaderExecutionStage::Vertex:
 		default:
-			return "vs_5_0";
+			return shaderModel5 ? "vs_5_0" : "vs_4_1";
 	}
 }
 
@@ -211,7 +226,9 @@ std::string EmitHlsl(
 	spirv_cross::CompilerHLSL compiler(spirv);
 
 	spirv_cross::CompilerHLSL::Options options;
-	options.shader_model = 50;
+	// Must agree with ToD3DCompileTarget's vs_5_0/vs_4_1 choice below --
+	// see that function's comment for why this can't be hardcoded to 50.
+	options.shader_model = (g_activeFeatureLevel >= D3D_FEATURE_LEVEL_11_0) ? 50 : 41;
 	compiler.set_hlsl_options(options);
 
 	ApplyResourceBindings(compiler, ToExecutionModel(stage), assignments);

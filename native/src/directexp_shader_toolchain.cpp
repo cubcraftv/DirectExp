@@ -81,6 +81,19 @@ GlslToSpirvResult CompileGlslToSpirv(shaderc_shader_kind kind, const std::string
 	shaderc::Compiler compiler;
 	shaderc::CompileOptions options;
 
+	// Keep the SPIR-V debug names (OpName). Milestone 4.4 reflects resources
+	// by name and Milestone 4.5 looks their forced registers up by the same
+	// name, so a stripped module would degrade to synthesized
+	// `spirv_resource_<id>` names and stop matching the pipeline's declared
+	// uniforms/samplers. Mojang's Vulkan GlslCompiler sets the same option
+	// (decompiled 26.2 snapshot 1); its reflection is name-based too.
+	//
+	// Locations/bindings are NOT set through shaderc options here: unlike
+	// Vulkan (auto-map + auto-bind, then patching the SPIR-V words),
+	// DirectExp writes explicit layout(location/binding) into the GLSL text
+	// beforehand -- see DxShaderInterfaceLayout.java.
+	options.SetGenerateDebugInfo();
+
 	// GLSL -> SPIR-V only, never HLSL -> SPIR-V: shaderc's HLSL-as-input
 	// path is upstream-deprecated (see the toolchain research notes'
 	// shaderc section), but that's irrelevant here since this pipeline

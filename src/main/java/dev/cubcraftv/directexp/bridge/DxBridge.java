@@ -142,6 +142,49 @@ public interface DxBridge {
 	default void releaseTextureView(long nativeTextureViewHandle) {
 	}
 
+	// ---- Milestone 4.6 commit 2: render/depth-capable textures, pipeline objects ----
+
+	// Texture formats createTexture supports natively. Codes, not DXGI numbers:
+	// depth formats need a typeless resource format and different view formats,
+	// which is the native side's business.
+	int TEXTURE_FORMAT_RGBA8_UNORM = 1;
+	int TEXTURE_FORMAT_D32_FLOAT = 2;
+	int TEXTURE_FORMAT_D24_UNORM_S8_UINT = 3;
+	int TEXTURE_FORMAT_D32_FLOAT_S8_UINT = 4;
+	int TEXTURE_FORMAT_D16_UNORM = 5;
+
+	// What a texture will be used for; decides the D3D11 bind flags and which
+	// views createTextureView can produce (SRV / RTV / DSV).
+	int TEXTURE_BIND_SHADER_RESOURCE = 1;
+	int TEXTURE_BIND_RENDER_TARGET = 2;
+	int TEXTURE_BIND_DEPTH_STENCIL = 4;
+
+	/**
+	 * Creates a 2D texture of a {@code TEXTURE_FORMAT_*} for the given
+	 * {@code TEXTURE_BIND_*} purposes. {@code RENDER_TARGET} requires a color
+	 * format and {@code DEPTH_STENCIL} a depth format. Contents are undefined
+	 * until written or cleared. Release with {@link #releaseTexture}.
+	 * {@link #uploadTextureRgba8} still works on any RGBA8 texture.
+	 */
+	default long createTexture(int format, int width, int height, int mipLevels, int bindMask) {
+		throw new UnsupportedOperationException("DirectX render/depth texture creation is not implemented by this bridge yet.");
+	}
+
+	/**
+	 * Builds the immutable D3D11 objects for one render pipeline (vertex and
+	 * pixel shader, input layout, blend / depth-stencil / rasterizer state) from
+	 * the two compiled bytecode blobs and the state description. Throws
+	 * {@link IllegalStateException} on any failure (bad bytecode, or a vertex
+	 * format the vertex shader's input signature doesn't match). Nothing is
+	 * bound; release with {@link #releasePipeline}.
+	 */
+	default long createPipeline(byte[] vertexBytecode, byte[] pixelBytecode, DxPipelineStateDescriptor state) {
+		throw new UnsupportedOperationException("DirectX pipeline creation is not implemented by this bridge yet.");
+	}
+
+	default void releasePipeline(long nativePipelineHandle) {
+	}
+
 	default void presentSurface(long nativeSurfaceHandle) {
 		throw new UnsupportedOperationException("DirectX surface present is not implemented by this bridge yet.");
 	}

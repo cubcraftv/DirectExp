@@ -2,6 +2,7 @@ package dev.cubcraftv.directexp.client.backend;
 
 import dev.cubcraftv.directexp.bridge.DxBridge;
 import dev.cubcraftv.directexp.bridge.DxBridgeProbe;
+import dev.cubcraftv.directexp.bridge.DxPipelineStateDescriptor;
 
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
@@ -58,6 +59,25 @@ final class RecordingDxBridge implements DxBridge {
 	@Override
 	public void releaseSampler(long handle) {
 		this.calls.add("releaseSampler(" + handle + ")");
+	}
+
+	@Override
+	public long createTexture(int format, int width, int height, int mipLevels, int bindMask) {
+		failIfConfigured();
+		this.calls.add("createTexture(fmt=" + format + "," + width + "x" + height + ",mips=" + mipLevels + ",bind=" + bindMask + ")");
+		return this.textureHandle;
+	}
+
+	@Override
+	public long createPipeline(byte[] vertexBytecode, byte[] pixelBytecode, DxPipelineStateDescriptor state) {
+		failIfConfigured();
+		this.calls.add("createPipeline(vs=" + vertexBytecode.length + ",ps=" + pixelBytecode.length + ")");
+		return this.nextHandle++;
+	}
+
+	@Override
+	public void releasePipeline(long handle) {
+		this.calls.add("releasePipeline(" + handle + ")");
 	}
 
 	@Override

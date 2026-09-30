@@ -586,6 +586,135 @@ not a bug in what's implemented so far).
   fill plus one `native GPU buffer/sampler/texture view path active` log line
   each (see section 6.5 of the source-of-truth doc).
 
+- **2026-09-28 (later) -- Milestone 4.6 commit 1 runtime-confirmed; commit 2
+  authored (render/depth targets + pipeline objects).** Owner reported commit 1
+  built and `runClient` clean with `native GPU buffer path active` and `native
+  GPU sampler path active` lines (no texture-view line; cause undetermined, see
+  source-of-truth 6.5). Owner decisions: implement RTV/DSV in commit 2; uniform
+  slices use staging buffer + copy. Commit 2 adds `createTexture` (RGBA8 +
+  D16/D24S8/D32/D32S8 with RENDER_TARGET/DEPTH_STENCIL/SHADER_RESOURCE binds),
+  RTV/DSV creation in `createTextureView`, `createPipeline`/`releasePipeline`
+  (VS/PS/input layout/blend/depth-stencil/rasterizer), `DxPipelineStateMapping`,
+  `DxPipelineCompiler`, and a real `DxDeviceBackend.precompilePipeline` with an
+  identity-keyed cache. **Verification actually done (Linux sandbox):** Java
+  compiled against Minecraft stubs together with the real 4.2-4.5 stage
+  classes; 32 unit tests pass under a stand-in runner; all native files
+  `-fsyntax-only` clean under mingw-w64 with `static_assert`s pinning D3D11/DXGI
+  enum numbers to the real headers. **Not done:** Gradle build, native link,
+  `runClient`. Expect many "pipeline ... is invalid" warnings on first run
+  (4.3 has no vertex-attribute location injection; see source-of-truth 7.6/8).
+  Details: `docs/plans/2026-09-28-directexp-milestone4.6-source-of-truth.md`.
+
+- **2026-09-28 (Milestone 4.6 commit 3 -- shader interface layout, fixes the
+  all-pipelines-invalid bug commit 2 predicted).** Owner supplied the
+  decompiled `com.mojang.blaze3d.vulkan.glsl` package (missing from the
+  original `vulkan.zip`) plus the actual `runClient` logs, confirming every
+  pipeline failed with `GLSL->SPIR-V: VERTEX_COMPILE_FAILED`: our
+  `directexp_shader_toolchain.cpp` compiles with default `shaderc` options,
+  but Mojang's `#version 330` GLSL has no explicit vertex-attribute
+  locations or uniform/sampler bindings, which Vulkan-semantics `shaderc`
+  requires. Fix: a new stage, `DxShaderInterfaceLayout`, spliced into
+  `DxPipelineCompiler` between the 4.2 source stage and 4.3 IR stage,
+  rewrites the preprocessed GLSL text with explicit `layout(location=N)`/
+  `layout(binding=N)` following the exact numbering the decompiled
+  `GlslCompiler`/`IntermediaryShaderModule` use (vertex input = vertex
+  format element index; varyings matched vertex-output-to-fragment-input by
+  name; uniform blocks/samplers share one binding space, vertex stage
+  first), plus the `#extension`s Vulkan-semantics GLSL needs for those
+  layouts under `#version 330` and the same `gl_VertexID`/`gl_InstanceID`
+  defines Vulkan injects. Also added the one real native change this
+  investigation surfaced: `shaderc::CompileOptions::SetGenerateDebugInfo()`
+  in `directexp_shader_toolchain.cpp` (matching Vulkan's own option),
+  needed to keep SPIR-V debug names alive for the existing name-based 4.4
+  reflection / 4.5 HLSL-binding lookups. The four questions the 2026-09-28
+  (later) entry above raised are now answered in
+  `docs/plans/2026-09-28-directexp-milestone4.6-source-of-truth.md` section
+  9: (a) attribute-name-to-location is fully decompiled and replicated; (d)
+  the exact shaderc options `GlslCompiler` sets are listed, and which ones
+  DirectExp does/doesn't need to copy and why; (b) Y-flip is confirmed via
+  the decompile (absent from the `glsl` package) plus independently-checked
+  facts about D3D11/Vulkan/OpenGL NDC conventions to be a **Vulkan-only**
+  concern -- `FrontCounterClockwise = TRUE` (GL's CCW convention) was
+  already correct and stays unchanged; (c) clip-space depth remap is the
+  one question still genuinely open (D3D11 and Vulkan agree with each
+  other here, unlike Y, so the reasoning that resolved (b) doesn't resolve
+  (c) too) -- flagged for an empirical check at commit 4's first real draw
+  rather than guessed at. **Verification actually done (Linux sandbox, no
+  `shaderc`/Gradle):** `DxShaderInterfaceLayout` compiles under real `javac`
+  21 and passes 16 unit tests under the existing stand-in runner; separately,
+  five samples shaped like real vanilla pipelines (GUI/textured/particle/
+  full-screen-quad/flat-varying) were rewritten by it and fed to a real
+  `glslangValidator --target-env vulkan1.0`, which accepted all ten
+  rewritten stages with zero errors (vs. the original text's errors,
+  matching the owner's log) -- and `spirv-dis`/`spirv-cross` confirmed the
+  resulting location/binding numbers and vertex-output-to-fragment-input
+  HLSL semantic matching are correct. **Not done:** an actual `shaderc`
+  compile of the rewritten text (only `glslangValidator` was available),
+  and nothing past IR (reflection/HLSL/`D3DCompile`/a real draw) exercised
+  against real vanilla shader source. Also noticed, not fixed (out of
+  scope for this commit): one `native GPU buffer upload failed;
+  updateBufferNative: range is outside the buffer or the mirror.` warning
+  in the same log, once at startup -- see source-of-truth section 8 item 6.
+  Details: `docs/plans/2026-09-28-directexp-milestone4.6-source-of-truth.md`
+  section 9.
+
+- **2026-09-28 (later same day) -- Milestone 4.6 commit 3 follow-up: real
+  bugs surfaced now that shaders actually compile.** Owner ran commit 3
+  through `runClient` and reported "looks like preprocessing is not
+  working," with a fresh `debug.log`/`latest.log`. It was working -- none of
+  the three `shaderc` location/binding error kinds from the earlier entry
+  appear anywhere in the new log, and `DxShaderInterfaceLayout`'s own debug
+  line shows up exactly where expected. All 174 `pipeline ... is invalid`
+  lines in the new log are different, later-stage failures: 148x
+  `ID3D11Device::CreateVertexShader failed.`, 14x `vertexStride must be
+  positive.`, 6x the already-known `TRIANGLE_FAN` gap, 2x an HLSL
+  `Unsupported builtin` for a `gl_PointSize` shader. Fixed the first two
+  (86% of the failures): (1) `directexp_shader_hlsl.cpp` hardcoded Shader
+  Model 5.0 (`vs_5_0`/`ps_5_0`, `shader_model=50`) regardless of the
+  negotiated D3D11 feature level, but this project's own accepted floor,
+  `D3D_FEATURE_LEVEL_10_1`, only guarantees Shader Model 4.1 (confirmed
+  against Microsoft Learn's `D3D_FEATURE_LEVEL` docs) -- `D3DCompile`
+  doesn't care and happily produced SM5 bytecode anyway, but
+  `CreateVertexShader` on a 10.1 device correctly refused to create a
+  shader object from it, for every pipeline uniformly. Fixed by threading
+  the real device's negotiated feature level (previously computed then
+  discarded in `BootstrapSurface`) into a new `g_activeFeatureLevel` global,
+  and branching both `ToD3DCompileTarget` and `EmitHlsl`'s `shader_model` on
+  it. (2) `DxPipelineStateDescriptor` rejected any `vertexStride <= 0`
+  unconditionally, but several vanilla pipelines (`blit`, `flat_clouds`,
+  `animate_sprite_blit`, `lightmap`, `entity_outline_blit`, `tracy_blit`)
+  legitimately have an empty vertex format (no vertex buffer, positions
+  computed from `gl_VertexIndex`) and so a legitimate stride of 0 -- fixed
+  to only require a positive stride when there's at least one attribute to
+  stride through. **Verification:** the feature-level branch logic (not the
+  whole native files, which need `shaderc`/SPIRV-Cross headers this sandbox
+  lacks) was compiled standalone against real mingw-w64 `d3d11.h` and run
+  under Wine -- all four feature-level cases assert correctly; the
+  `vertexStride` fix has 5 new passing unit tests under `javac` 21. **Not
+  done:** an actual Windows build/`runClient` of the native diff, a fix for
+  the still-open `TRIANGLE_FAN`/`gl_PointSize` gaps (owner decisions
+  needed), and logging the real negotiated feature level in
+  `DxDeviceBackend`'s startup log line (currently a hardcoded string that
+  made this bug harder to spot from the log alone -- noted as a suggested
+  follow-up, not implemented). Details:
+  `docs/plans/2026-09-28-directexp-milestone4.6-source-of-truth.md` section
+  10.
+
+- **2026-09-30 -- end-portal vertex input location diagnostic and fix.** The
+  owner's fresh `runClient` log showed that `DxShaderInterfaceLayout` had
+  assigned locations to the end-portal vertex outputs but not to `Position`.
+  The preprocessed source places an imported-source block comment directly
+  before a `#line` directive (`*/#line ...`); the layout tokenizer treated
+  the comment as ending the line-start state, so it tokenized the directive
+  as part of the following `in vec3 Position;` declaration and skipped it.
+  Fixed block-comment line-start tracking and added a regression test for
+  that exact comment/directive/input sequence. The failure-only vertex
+  diagnostic now also prints the post-layout GLSL that shaderc received.
+  **Verification:** the focused `DxShaderInterfaceLayoutTest` and full
+  `./gradlew.bat test` both pass. **Not done:** a fresh `runClient` after
+  this fix, so its runtime effect on the end-portal pipeline is not yet
+  confirmed.
+
 ## Current Status (as of the last entry above)
 
 - **Runtime-verified on Windows (MSYS2 UCRT64):** Milestones 1, 2, and 3 all
@@ -651,3 +780,33 @@ not a bug in what's implemented so far).
   short of Milestone 4's actual finish line. See the "2026-09-27 (later
   same day)" Progress Log entry above and
   `docs/plans/2026-09-25-directexp-milestone4-breakdown.md`.
+- **Milestone 4.6 commit 1 runtime-verified on Windows; commit 2 authored,
+  build/`runClient`-unverified; commit 3 authored and fixes the bug commit
+  2's own runtime check (correctly) predicted:** commit 1 (GPU-backed
+  buffer/sampler/texture-view objects) is confirmed on Windows/MSYS2
+  UCRT64. Commit 2 (render/depth targets, real `createPipeline`, a real
+  `DxDeviceBackend.precompilePipeline`) compiles and unit-tests outside
+  Gradle only; running it was expected to -- and, per the owner's actual
+  `runClient` log, did -- produce a `pipeline ... is invalid:
+  GLSL->SPIR-V: VERTEX_COMPILE_FAILED` warning for every one of the 86
+  vanilla pipelines Blaze3D tried, because Mojang's GLSL has no explicit
+  vertex-attribute locations or uniform/sampler bindings and our
+  `shaderc` call used default options. Commit 3 fixes this: see the
+  2026-09-28 Progress Log entry above and
+  `docs/plans/2026-09-28-directexp-milestone4.6-source-of-truth.md`
+  section 9 for the fix, the four questions it answers about the Vulkan
+  backend's own shader-compile behavior, and what was and wasn't possible
+  to verify without a Windows `shaderc`/Gradle build. Commit 3 *was* then
+  run through `runClient`, confirming the shader-interface fix works
+  (no more location/binding errors) and surfacing two further,
+  previously-hidden bugs now that shaders compile far enough to reach real
+  pipeline creation: a Shader-Model-5.0-vs-feature-level-10.1 mismatch
+  (148 of 174 failures) and an over-strict `vertexStride` check rejecting
+  legitimate zero-vertex-format pipelines (14 of 174) -- both fixed in the
+  "commit 3 follow-up" Progress Log entry above and source-of-truth section
+  10. Milestone 4 is still not complete -- none of commit 3 or its
+  follow-up has been run through the project's own Windows build, two
+  smaller gaps remain open (`TRIANGLE_FAN`, an HLSL `gl_PointSize`
+  translation failure -- both need an owner decision, see source-of-truth
+  section 8 items 2 and 7), and commit 4 (clears, viewport/scissor,
+  resource binding, and the first real draw) has not started.

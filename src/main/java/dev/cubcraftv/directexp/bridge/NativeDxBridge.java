@@ -160,6 +160,28 @@ public final class NativeDxBridge implements DxBridge {
 	}
 
 	@Override
+	public long createTexture(int format, int width, int height, int mipLevels, int bindMask) {
+		return createTextureNative(format, width, height, mipLevels, bindMask);
+	}
+
+	@Override
+	public long createPipeline(byte[] vertexBytecode, byte[] pixelBytecode, DxPipelineStateDescriptor state) {
+		return createPipelineNative(
+			vertexBytecode, pixelBytecode,
+			state.attributeFormats(), state.attributeOffsets(), state.vertexStride(),
+			state.stateArray(), state.floatStateArray()
+		);
+	}
+
+	@Override
+	public void releasePipeline(long nativePipelineHandle) {
+		if (nativePipelineHandle == 0L) {
+			return;
+		}
+		releasePipeline0(nativePipelineHandle);
+	}
+
+	@Override
 	public void blitSurfaceTexture(long nativeCommandContextHandle, long nativeSurfaceHandle, long nativeTextureHandle) {
 		blitSurfaceTexture0(nativeCommandContextHandle, nativeSurfaceHandle, nativeTextureHandle);
 	}
@@ -538,6 +560,17 @@ public final class NativeDxBridge implements DxBridge {
 	private static native void updateBufferNative(long nativeBufferHandle, ByteBuffer mirror, int offset, int length);
 
 	private static native void releaseBuffer0(long nativeBufferHandle);
+
+	// Milestone 4.6 commit 2 (directexp_bridge_resource.cpp / directexp_bridge_pipeline.cpp).
+	private static native long createTextureNative(int format, int width, int height, int mipLevels, int bindMask);
+
+	private static native long createPipelineNative(
+		byte[] vertexBytecode, byte[] pixelBytecode,
+		int[] attributeFormats, int[] attributeOffsets, int vertexStride,
+		int[] state, float[] floatState
+	);
+
+	private static native void releasePipeline0(long nativePipelineHandle);
 
 	private static native long createSamplerNative(
 		int addressU, int addressV, boolean minLinear, boolean magLinear, boolean mipLinear, int maxAnisotropy, float maxLod

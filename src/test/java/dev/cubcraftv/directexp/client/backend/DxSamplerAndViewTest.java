@@ -70,6 +70,7 @@ class DxSamplerAndViewTest {
 	void textureViewOfNativeTextureGetsSrvAndReleasesIt() {
 		RecordingDxBridge bridge = new RecordingDxBridge();
 		DxTexture texture = new DxTexture(bridge, 0, "t", GpuFormat.RGBA8_UNORM, 4, 4, 1, 3);
+		bridge.calls.clear();
 		DxTextureView view = new DxTextureView(bridge, texture, 1, 2);
 
 		assertTrue(view.hasNativeViewHandle());
@@ -86,6 +87,7 @@ class DxSamplerAndViewTest {
 		RecordingDxBridge bridge = new RecordingDxBridge();
 		bridge.textureHandle = 0L;
 		DxTexture texture = new DxTexture(bridge, 0, "t", GpuFormat.RGBA8_UNORM, 4, 4, 1, 1);
+		bridge.calls.clear();
 		DxTextureView view = new DxTextureView(bridge, texture, 0, 1);
 
 		assertFalse(view.hasNativeViewHandle());

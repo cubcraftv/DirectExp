@@ -83,7 +83,8 @@ Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_createTexture2DNative(
 	wrapper->width = static_cast<UINT>(width);
 	wrapper->height = static_cast<UINT>(height);
 	wrapper->mipLevels = static_cast<UINT>(mipLevels);
-	wrapper->format = desc.Format;
+	wrapper->bindFlags = D3D11_BIND_SHADER_RESOURCE;
+	wrapper->formatCode = TEXTURE_FORMAT_RGBA8_UNORM;
 
 	return PointerToHandle(wrapper);
 }

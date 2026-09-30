@@ -27,12 +27,14 @@ final class DxTexture extends GpuTexture {
 	private final DxBridge dxBridge;
 	private final ByteBuffer[] mipStorage;
 	private final long nativeTextureHandle;
+	private final int nativeBindMask;
 	private boolean closed;
 
 	DxTexture(DxBridge dxBridge, int usage, String label, GpuFormat format, int width, int height, int depthOrLayers, int mipLevels) {
 		super(usage, label, format, width, height, depthOrLayers, mipLevels);
 		this.dxBridge = dxBridge;
 		this.mipStorage = new ByteBuffer[mipLevels];
+		this.nativeBindMask = DxTextureBinding.bindMask(usage, format.hasDepthAspect());
 		this.nativeTextureHandle = createNativeTextureHandle(format, width, height, depthOrLayers, mipLevels);
 
 		for (int mipLevel = 0; mipLevel < mipLevels; mipLevel++) {
@@ -152,18 +154,34 @@ final class DxTexture extends GpuTexture {
 	private static final AtomicBoolean LOGGED_NATIVE_TEXTURE_SUCCESS = new AtomicBoolean(false);
 	private static final AtomicBoolean LOGGED_NATIVE_TEXTURE_FALLBACK = new AtomicBoolean(false);
 
+	/** DxBridge.TEXTURE_FORMAT_* for a format the native path supports, else 0 (CPU-only). */
+	static int nativeFormatCode(GpuFormat format) {
+		return switch (format) {
+			case RGBA8_UNORM -> DxBridge.TEXTURE_FORMAT_RGBA8_UNORM;
+			case D32_FLOAT -> DxBridge.TEXTURE_FORMAT_D32_FLOAT;
+			case D24_UNORM_S8_UINT -> DxBridge.TEXTURE_FORMAT_D24_UNORM_S8_UINT;
+			case D32_FLOAT_S8_UINT -> DxBridge.TEXTURE_FORMAT_D32_FLOAT_S8_UINT;
+			case D16_UNORM -> DxBridge.TEXTURE_FORMAT_D16_UNORM;
+			default -> 0;
+		};
+	}
+
 	private long createNativeTextureHandle(GpuFormat format, int width, int height, int depthOrLayers, int mipLevels) {
-		if (this.dxBridge == null || format != GpuFormat.RGBA8_UNORM || depthOrLayers != 1) {
+		int formatCode = nativeFormatCode(format);
+		if (this.dxBridge == null || formatCode == 0 || depthOrLayers != 1 || this.nativeBindMask == 0) {
 			return 0L;
 		}
 
 		try {
-			long handle = this.dxBridge.createTexture2D(width, height, mipLevels);
+			long handle = this.dxBridge.createTexture(formatCode, width, height, mipLevels, this.nativeBindMask);
 			if (handle != 0L && LOGGED_NATIVE_TEXTURE_SUCCESS.compareAndSet(false, true)) {
 				DirectExpMod.LOGGER.info(
 					"DirectExp: native GPU texture path active (first native texture created, {}x{}, {} mip levels).",
 					width, height, mipLevels
 				);
+			}
+			if (handle != 0L && (this.nativeBindMask & (DxBridge.TEXTURE_BIND_RENDER_TARGET | DxBridge.TEXTURE_BIND_DEPTH_STENCIL)) != 0) {
+				DxNativeResourceLog.nativeActive("render/depth texture", format + " " + width + "x" + height);
 			}
 			return handle;
 		} catch (UnsupportedOperationException | IllegalStateException error) {
@@ -177,8 +195,18 @@ final class DxTexture extends GpuTexture {
 		}
 	}
 
+	boolean hasNativeRenderTarget() {
+		return this.nativeTextureHandle != 0L && (this.nativeBindMask & DxBridge.TEXTURE_BIND_RENDER_TARGET) != 0;
+	}
+
+	boolean hasNativeDepthTarget() {
+		return this.nativeTextureHandle != 0L && (this.nativeBindMask & DxBridge.TEXTURE_BIND_DEPTH_STENCIL) != 0;
+	}
+
 	private void syncMipToNative(int mipLevel) {
-		if (this.nativeTextureHandle == 0L || this.dxBridge == null) {
+		// Only RGBA8 has a CPU -> GPU upload path; depth textures are written by
+		// the GPU (clears/draws) and their CPU mirror is not synced.
+		if (this.nativeTextureHandle == 0L || this.dxBridge == null || getFormat() != GpuFormat.RGBA8_UNORM) {
 			return;
 		}
 

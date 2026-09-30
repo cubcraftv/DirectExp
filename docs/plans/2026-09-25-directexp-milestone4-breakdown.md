@@ -419,10 +419,10 @@ design spec's stated success criterion for the whole milestone.
   - [x] `DxBuffer` real `ID3D11Buffer` mirror (authored, unverified on Windows)
   - [x] `DxSampler` real `ID3D11SamplerState` (authored, unverified on Windows)
   - [x] `DxTextureView` real `ID3D11ShaderResourceView` (authored, unverified on Windows)
-  - [ ] Render-target / depth-target support (RTV/DSV, non-RGBA8 formats) --
-    open decision, see the source-of-truth doc's section 2
-  - [ ] Uniform-slice binding strategy (staging buffer vs D3D11.1 ranged
-    bind) -- open decision, same section
+  - [x] Render-target / depth-target support (RTV/DSV, depth formats) --
+    authored in commit 2, unverified on Windows (source-of-truth section 7)
+  - [x] Uniform-slice binding strategy: staging buffer + copy (decided
+    2026-09-28; implemented in the draw-path commit)
 - [ ] Build the `DxRenderPipeline`-equivalent state: vertex/pixel shader
   handles, `ID3D11InputLayout` derived from the vertex format, render
   target formats, depth/stencil state, blend state, rasterizer state, and

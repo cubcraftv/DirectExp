@@ -1,17 +1,22 @@
-[13:19:57] [Test worker/INFO]: DirectExp: native GPU buffer path active (first native buffer created: 100 bytes, bind mask 1).
-[13:19:57] [Test worker/WARN]: DirectExp: native GPU buffer creation unavailable, using CPU-side fallback (no active device).
-[13:19:57] [Test worker/INFO]: DirectExp: native GPU sampler path active (first native sampler created: NEAREST/LINEAR, aniso 4).
-[13:19:57] [Test worker/WARN]: DirectExp: native GPU sampler creation unavailable, using CPU-side fallback (no active device).
-[13:19:57] [Test worker/INFO]: DirectExp: native GPU texture path active (first native texture created, 4x4, 3 mip levels).
-[13:19:57] [Test worker/INFO]: DirectExp: native GPU texture view path active (first native texture view created: mips 1..2).
-[13:19:58] [Test worker/ERROR]: HLSL emission/compilation failed for VERTEX shader (directexp:test/position) in pipeline test:pipeline: malformed SPIR-V module
-[13:19:58] [Test worker/ERROR]: HLSL emission/compilation failed for FRAGMENT shader (directexp:test/position) in pipeline test:pipeline: D3DCompile failed
-[13:19:58] [Test worker/ERROR]: HLSL emission/compilation failed for VERTEX shader (directexp:test/position) in pipeline test:pipeline: native library not loaded
-[13:19:58] [Test worker/ERROR]: GLSL -> SPIR-V compilation failed for VERTEX shader (directexp:test/position) in pipeline test:pipeline: native library not loaded
-[13:19:58] [Test worker/ERROR]: GLSL -> SPIR-V compilation failed for VERTEX shader (directexp:test/position) in pipeline test:pipeline: syntax error at line 3
-[13:19:58] [Test worker/ERROR]: GLSL -> SPIR-V compilation failed for FRAGMENT shader (directexp:test/position) in pipeline test:pipeline: unsupported construct
-[13:19:58] [Test worker/ERROR]: SPIR-V reflection failed for VERTEX shader (directexp:test/position) in pipeline test:pipeline: native library not loaded
-[13:19:58] [Test worker/ERROR]: SPIR-V reflection failed for FRAGMENT shader (directexp:test/position) in pipeline test:pipeline: malformed SPIR-V module
-[13:19:58] [Test worker/ERROR]: SPIR-V reflection failed for VERTEX shader (directexp:test/position) in pipeline test:pipeline: malformed SPIR-V module
-[13:19:58] [Test worker/ERROR]: Couldn't find source for VERTEX shader (directexp:test/position) in pipeline test:pipeline
-[13:19:58] [Test worker/ERROR]: Couldn't find source for FRAGMENT shader (directexp:test/position) in pipeline test:pipeline
+[14:49:56] [Test worker/INFO]: DirectExp: native GPU buffer path active (first native buffer created: 100 bytes, bind mask 1).
+[14:49:56] [Test worker/WARN]: DirectExp: native GPU buffer creation unavailable, using CPU-side fallback (no active device).
+[14:49:56] [Test worker/INFO]: DirectExp: native GPU sampler path active (first native sampler created: NEAREST/LINEAR, aniso 4).
+[14:49:56] [Test worker/WARN]: DirectExp: native GPU sampler creation unavailable, using CPU-side fallback (no active device).
+[14:49:56] [Test worker/INFO]: DirectExp: native GPU texture path active (first native texture created, 4x4, 3 mip levels).
+[14:49:56] [Test worker/INFO]: DirectExp: native GPU texture view path active (first native texture view created: mips 1..2).
+[14:49:56] [Test worker/INFO]: DirectExp: native GPU render/depth texture path active (first native render/depth texture created: D32_FLOAT 4x4).
+[14:49:56] [Test worker/INFO]: DirectExp: native GPU render target view path active (first native render target view created: mip 0).
+[14:49:56] [Test worker/INFO]: DirectExp: native GPU depth-stencil view path active (first native depth-stencil view created: mip 0).
+[14:49:57] [Test worker/ERROR]: HLSL emission/compilation failed for VERTEX shader (directexp:test/position) in pipeline test:pipeline: malformed SPIR-V module
+[14:49:57] [Test worker/ERROR]: HLSL emission/compilation failed for FRAGMENT shader (directexp:test/position) in pipeline test:pipeline: D3DCompile failed
+[14:49:57] [Test worker/ERROR]: HLSL emission/compilation failed for VERTEX shader (directexp:test/position) in pipeline test:pipeline: native library not loaded
+[14:49:57] [Test worker/ERROR]: GLSL -> SPIR-V compilation failed for VERTEX shader (directexp:test/position) in pipeline test:pipeline: native library not loaded
+[14:49:57] [Test worker/ERROR]: GLSL -> SPIR-V compilation failed for VERTEX shader (directexp:test/position) in pipeline test:pipeline: syntax error at line 3
+[14:49:57] [Test worker/ERROR]: Post-interface-layout GLSL submitted for vertex shader (directexp:test/position) in pipeline test:pipeline:
+bad-vertex-glsl
+[14:49:57] [Test worker/ERROR]: GLSL -> SPIR-V compilation failed for FRAGMENT shader (directexp:test/position) in pipeline test:pipeline: unsupported construct
+[14:49:57] [Test worker/ERROR]: SPIR-V reflection failed for VERTEX shader (directexp:test/position) in pipeline test:pipeline: native library not loaded
+[14:49:57] [Test worker/ERROR]: SPIR-V reflection failed for FRAGMENT shader (directexp:test/position) in pipeline test:pipeline: malformed SPIR-V module
+[14:49:57] [Test worker/ERROR]: SPIR-V reflection failed for VERTEX shader (directexp:test/position) in pipeline test:pipeline: malformed SPIR-V module
+[14:49:57] [Test worker/ERROR]: Couldn't find source for VERTEX shader (directexp:test/position) in pipeline test:pipeline
+[14:49:57] [Test worker/ERROR]: Couldn't find source for FRAGMENT shader (directexp:test/position) in pipeline test:pipeline

@@ -216,6 +216,7 @@ Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_bootstrapSurface0(JNIEnv* env
 	// g_activeDevice/g_activeContext comment in directexp_common.h.
 	g_activeDevice = device;
 	g_activeContext = context;
+	g_activeFeatureLevel = negotiatedLevel;
 
 	double dpiScale = QueryDpiScaleForWindow(hwnd);
 
@@ -362,6 +363,7 @@ Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_releaseSurface0(JNIEnv*, jcla
 		// torn down anyway.
 		g_activeDevice = nullptr;
 		g_activeContext = nullptr;
+		g_activeFeatureLevel = static_cast<D3D_FEATURE_LEVEL>(0);
 	}
 
 	ReleaseSurfaceObjects(surface);
