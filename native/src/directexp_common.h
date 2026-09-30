@@ -141,6 +141,12 @@ struct Sampler {
 struct Pipeline {
 	ID3D11VertexShader* vertexShader = nullptr;
 	ID3D11PixelShader* pixelShader = nullptr;
+	// Optional. Only point-sprite pipelines (gl_PointSize) have these two: the
+	// generated geometry shader and the 16-byte dynamic constant buffer
+	// holding the viewport size it reads (bound at b13 by the draw path,
+	// filled by setPipelineViewport0).
+	ID3D11GeometryShader* geometryShader = nullptr;
+	ID3D11Buffer* geometryViewportBuffer = nullptr;
 	ID3D11InputLayout* inputLayout = nullptr;
 	ID3D11BlendState* blendState = nullptr;
 	ID3D11DepthStencilState* depthStencilState = nullptr;

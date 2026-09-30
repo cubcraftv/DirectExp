@@ -165,7 +165,14 @@ Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_reflectSpirv0(
 namespace {
 
 ShaderExecutionStage ToShaderExecutionStage(jint stageKind) {
-	return stageKind == 1 ? ShaderExecutionStage::Fragment : ShaderExecutionStage::Vertex;
+	switch (stageKind) {
+		case 1:
+			return ShaderExecutionStage::Fragment;
+		case 2:
+			return ShaderExecutionStage::Geometry;
+		default:
+			return ShaderExecutionStage::Vertex;
+	}
 }
 
 // Unmarshals the three parallel resource-slot-assignment arrays into
@@ -260,6 +267,35 @@ Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_emitAndCompileHlsl0(
 	return BuildHlslCompilationResult(env, compileResult);
 }
 
+// HLSL text -> D3D11 bytecode (no SPIRV-Cross), for the generated point-sprite
+// geometry shader. Stage encoding as emitAndCompileHlsl0 (2 = geometry).
+extern "C" JNIEXPORT jobject JNICALL
+Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_compileHlsl0(
+	JNIEnv* env, jclass, jstring shaderName, jstring hlslSource, jint shaderStageKind
+) {
+	if (shaderName == nullptr || hlslSource == nullptr) {
+		ShaderCompilationResult failure;
+		failure.emissionSucceeded = false;
+		failure.errorMessage = "compileHlsl0 requires a non-null shader name and HLSL source.";
+		return BuildHlslCompilationResult(env, failure);
+	}
+
+	const char* nameChars = env->GetStringUTFChars(shaderName, nullptr);
+	std::string name = nameChars != nullptr ? std::string(nameChars) : std::string();
+	if (nameChars != nullptr) {
+		env->ReleaseStringUTFChars(shaderName, nameChars);
+	}
+
+	const char* sourceChars = env->GetStringUTFChars(hlslSource, nullptr);
+	std::string source = sourceChars != nullptr ? std::string(sourceChars) : std::string();
+	if (sourceChars != nullptr) {
+		env->ReleaseStringUTFChars(hlslSource, sourceChars);
+	}
+
+	ShaderCompilationResult compileResult = CompileHlslToD3DBytecode(source, ToShaderExecutionStage(shaderStageKind), name);
+	return BuildHlslCompilationResult(env, compileResult);
+}
+
 #else // !_WIN32
 
 extern "C" JNIEXPORT jobject JNICALL
@@ -276,6 +312,11 @@ extern "C" JNIEXPORT jobject JNICALL
 Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_emitAndCompileHlsl0(
 	JNIEnv*, jclass, jstring, jbyteArray, jint, jobjectArray, jintArray, jintArray
 ) {
+	return nullptr;
+}
+
+extern "C" JNIEXPORT jobject JNICALL
+Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_compileHlsl0(JNIEnv*, jclass, jstring, jstring, jint) {
 	return nullptr;
 }
 

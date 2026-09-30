@@ -182,6 +182,37 @@ public interface DxBridge {
 		throw new UnsupportedOperationException("DirectX pipeline creation is not implemented by this bridge yet.");
 	}
 
+	/**
+	 * Slot (b13, the last of D3D11's 14 constant buffer slots) the generated
+	 * point-sprite geometry shader reads its viewport size from. Engine
+	 * resource slots are assigned from 0 upward, so this stays out of their
+	 * way. The draw path binds the buffer at this slot with
+	 * {@code GSSetConstantBuffers} whenever the pipeline has a geometry stage.
+	 */
+	int GEOMETRY_VIEWPORT_CBUFFER_SLOT = 13;
+
+	/**
+	 * Same as {@link #createPipeline(byte[], byte[], DxPipelineStateDescriptor)}
+	 * plus an optional geometry shader ({@code null} for none). A pipeline
+	 * with a geometry shader also owns the small constant buffer that feeds
+	 * it the viewport size, see {@link #setPipelineViewport}.
+	 */
+	default long createPipeline(byte[] vertexBytecode, byte[] pixelBytecode, byte[] geometryBytecode, DxPipelineStateDescriptor state) {
+		if (geometryBytecode != null) {
+			throw new UnsupportedOperationException("DirectX geometry-shader pipelines are not implemented by this bridge yet.");
+		}
+		return createPipeline(vertexBytecode, pixelBytecode, state);
+	}
+
+	/**
+	 * Updates the viewport size (in pixels) a pipeline's geometry shader uses
+	 * to turn a point size in pixels into a clip-space offset. Only meaningful
+	 * for pipelines created with a geometry shader; a no-op for the rest.
+	 */
+	default void setPipelineViewport(long nativePipelineHandle, int width, int height) {
+		throw new UnsupportedOperationException("DirectX pipeline viewport update is not implemented by this bridge yet.");
+	}
+
 	default void releasePipeline(long nativePipelineHandle) {
 	}
 
@@ -289,5 +320,17 @@ public interface DxBridge {
 		List<DxResourceSlotAssignment> resourceSlots
 	) {
 		throw new UnsupportedOperationException("DirectX HLSL emission/compilation is not implemented by this bridge yet.");
+	}
+
+	/**
+	 * Compiles HLSL text (not SPIR-V) to D3D11 bytecode via {@code D3DCompile},
+	 * for shaders DirectExp generates itself, currently the point-sprite
+	 * geometry shader. {@code stageKind} picks the profile
+	 * ({@code vs_/ps_/gs_} 4_1 or 5_0 by negotiated feature level). Result
+	 * shape and failure reporting match {@link #emitAndCompileHlsl}; there is
+	 * no emission step, so an emission error is never returned.
+	 */
+	default DxHlslCompilationResult compileHlsl(String shaderName, String hlsl, DxShaderStageKind stageKind) {
+		throw new UnsupportedOperationException("DirectX HLSL compilation is not implemented by this bridge yet.");
 	}
 }

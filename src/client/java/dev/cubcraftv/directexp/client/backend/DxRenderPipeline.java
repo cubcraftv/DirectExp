@@ -20,26 +20,32 @@ final class DxRenderPipeline implements CompiledRenderPipeline {
 	private final DxBridge dxBridge;
 	private final long nativePipelineHandle;
 	private final DxResourceLayout layout;
+	private final boolean hasGeometryStage;
 	private final String failureReason;
 	private boolean closed;
 
-	private DxRenderPipeline(RenderPipeline pipeline, DxBridge dxBridge, long nativePipelineHandle, DxResourceLayout layout, String failureReason) {
+	private DxRenderPipeline(RenderPipeline pipeline, DxBridge dxBridge, long nativePipelineHandle, DxResourceLayout layout, boolean hasGeometryStage, String failureReason) {
 		this.pipeline = Objects.requireNonNull(pipeline, "pipeline");
 		this.dxBridge = dxBridge;
 		this.nativePipelineHandle = nativePipelineHandle;
 		this.layout = layout;
+		this.hasGeometryStage = hasGeometryStage;
 		this.failureReason = failureReason;
 	}
 
 	static DxRenderPipeline valid(RenderPipeline pipeline, DxBridge dxBridge, long nativePipelineHandle, DxResourceLayout layout) {
+		return valid(pipeline, dxBridge, nativePipelineHandle, layout, false);
+	}
+
+	static DxRenderPipeline valid(RenderPipeline pipeline, DxBridge dxBridge, long nativePipelineHandle, DxResourceLayout layout, boolean hasGeometryStage) {
 		if (nativePipelineHandle == 0L) {
 			throw new IllegalArgumentException("A valid pipeline needs a non-zero native handle.");
 		}
-		return new DxRenderPipeline(pipeline, dxBridge, nativePipelineHandle, Objects.requireNonNull(layout, "layout"), null);
+		return new DxRenderPipeline(pipeline, dxBridge, nativePipelineHandle, Objects.requireNonNull(layout, "layout"), hasGeometryStage, null);
 	}
 
 	static DxRenderPipeline invalid(RenderPipeline pipeline, String reason) {
-		return new DxRenderPipeline(pipeline, null, 0L, null, Objects.requireNonNull(reason, "reason"));
+		return new DxRenderPipeline(pipeline, null, 0L, null, false, Objects.requireNonNull(reason, "reason"));
 	}
 
 	RenderPipeline pipeline() {
@@ -52,6 +58,15 @@ final class DxRenderPipeline implements CompiledRenderPipeline {
 
 	DxResourceLayout layout() {
 		return this.layout;
+	}
+
+	/**
+	 * True for point-sprite pipelines: the draw path must bind the geometry
+	 * shader and its viewport constants (DxBridge.GEOMETRY_VIEWPORT_CBUFFER_SLOT),
+	 * updating them with DxBridge.setPipelineViewport when the viewport changes.
+	 */
+	boolean hasGeometryStage() {
+		return this.hasGeometryStage;
 	}
 
 	String failureReason() {

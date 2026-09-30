@@ -423,6 +423,15 @@ design spec's stated success criterion for the whole milestone.
     authored in commit 2, unverified on Windows (source-of-truth section 7)
   - [x] Uniform-slice binding strategy: staging buffer + copy (decided
     2026-09-28; implemented in the draw-path commit)
+- [ ] **Open blockers to a valid shader reload (latest supplied 17:58 log;
+  see source-of-truth section 11):** the 14:28/14:46 failures for the End
+  shaders, fans, and point size no longer appear. The 17:58 run instead has
+  seven empty-vertex-format pipelines rejected by the native JNI stride
+  guard. The guard is now fixed and `./gradlew.bat build` passes; a fresh
+  `runClient` is still needed to verify it at runtime. Fan expansion and
+  point-size geometry-shader handling are implemented and covered by tests,
+  but actual draws are not visually verified. The separate `DxBuffer`
+  initial-sync warning remains under investigation (source-of-truth 11.4).
 - [ ] Build the `DxRenderPipeline`-equivalent state: vertex/pixel shader
   handles, `ID3D11InputLayout` derived from the vertex format, render
   target formats, depth/stencil state, blend state, rasterizer state, and

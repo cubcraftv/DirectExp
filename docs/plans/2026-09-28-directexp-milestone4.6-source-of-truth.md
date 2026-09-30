@@ -30,6 +30,7 @@ authored, not built/run.
 | 4.6 commit 2 (render/depth targets + pipeline objects) | **Authored** (this session). Java compiles against stubs (including the real 4.2-4.5 stage classes), 32 unit tests pass under a stand-in runner, native files pass `-fsyntax-only` under `x86_64-w64-mingw32-g++`. **Not** built via Gradle, **not** run in `runClient`. |
 | 4.6 commit 3 (shader interface layout -- fixes the all-pipelines-invalid bug) | **Authored** (this session, using the now-supplied `com.mojang.blaze3d.vulkan.glsl` package). See section 9. `DxShaderInterfaceLayout` compiles under a real `javac` 21 and passes 16 unit tests under a stand-in runner; its output was additionally validated against a real `glslangValidator 15.1.0 --target-env vulkan1.0` and inspected with `spirv-dis`/`spirv-cross` (see 9.5) -- stronger verification than commits 1-2 got, still **not** run through the project's own `shaderc`/Gradle/`runClient`. |
 | 4.6 commit 3 follow-up (feature-level/shader-model fix + vertexStride fix) | **Authored** (this session), from the owner's `runClient` log *after* commit 3 was applied. See section 10. The SM5-vs-FL10.1 branch logic was compiled and run for real under Wine against real mingw-w64 `d3d11.h` enum values (all four feature-level cases assert correctly); `DxPipelineStateDescriptor`'s changed validation passes 5 new unit tests under `javac` 21. The native `directexp_shader_hlsl.cpp`/`directexp_bridge_surface.cpp`/`directexp_common.*` edits themselves are **not** `-fsyntax-only`-checked (no real `jni.h`/`shaderc`/SPIRV-Cross headers in this sandbox, only a hand-written partial `jni.h` stub good enough for a JNI-free isolated logic test, not the whole files) -- reviewed by hand instead. **Not** run through the project's own build/`runClient`. |
+| 4.6 commit 3 follow-up 2 (2026-09-30 logs and repairs) | The 14:28/14:46 logs exposed the End tokenizer bug and the 17:58 log confirms the End, `TRIANGLE_FAN`, and `gl_PointSize` pipeline failures no longer appear. Fan expansion and point-size geometry-shader generation are implemented and covered by tests. The 17:58 run instead reports seven empty-vertex-format pipelines rejected by the native stride guard; that guard is fixed and `./gradlew.bat build` succeeds. **A post-fix `runClient` remains pending.** See section 11.6. |
 | 4.6 commit 4 | Not started (see updated section 8) |
 
 Verification available in the authoring sandbox (Linux): `javac` 21, a
@@ -396,10 +397,22 @@ numbers; `stateArray()`/`floatStateArray()` order must match `StateIndex` /
 2. `TRIANGLE_FAN`: **confirmed 26.2 does issue it** -- 6 occurrences in the
    post-commit-3 `runClient` log (`sunrise_sunset` and similar sky
    pipelines), all `pipeline ... is invalid: ... TRIANGLE_FAN ...` from
-   `DxPipelineStateMapping`'s rejection. Still unresolved; needs either a
-   `TRIANGLE_FAN`->`TRIANGLE_LIST` index-buffer expansion (the usual D3D11
-   fix, since D3D11 has no native fan topology) or confirmation from the
-   owner that these specific pipelines are skippable for now.
+  `DxPipelineStateMapping`'s rejection. **Recommendation:** expand each
+  draw's fan to `TRIANGLE_LIST` indices at submission. Alongside that,
+  map the immutable pipeline topology to D3D11 triangle list instead of
+  throwing; topology mapping alone is not the conversion:
+  for fan vertices/indices `v0..v(n-1)`, emit
+  `(v0,v1,v2), (v0,v2,v3), ...`, preserving winding. Generate indices for
+  non-indexed draws and transform the source index sequence for indexed
+  draws; use a reusable scratch index buffer and preserve base vertex,
+  first-index, and instance-count semantics. This is draw-dependent data,
+  and D3D11 has no native fan topology. Add tests for small counts, winding,
+  index type/base vertex, and batched draws. Implemented by
+  `DxTriangleFanExpander` and wired into `DxRenderPassBackend`; pipeline
+  topology maps to triangle list. Focused tests pass, and no fan-pipeline
+  failure appears in the 17:58 log. Actual draw output remains unverified.
+  *Update 2026-09-30:* the 17:58 log reports no invalid `sky`,
+  `sunrise_sunset`, or `debug_triangle_fan` pipelines; see section 11.3.
 3. Render-target readback: native color/depth textures become GPU-authoritative
    once drawn to; `DxTexture`'s CPU mirror goes stale (affects
    `copyTextureToBuffer`, screenshots). Needs a staging-texture readback path.
@@ -423,19 +436,32 @@ numbers; `stateArray()`/`floatStateArray()` order must match `StateIndex` /
    `HLSL emission/compilation failed for VERTEX shader ...: Unsupported
    builtin in HLSL: 1` for the `debug_points` pipeline (`GL_POINTS`
    topology, uses `gl_PointSize`). SPIR-V `BuiltIn PointSize` (decoration
-   value 1, matching the "`: 1`" in SPIRV-Cross's own error text) has no
-   direct HLSL equivalent SPIRV-Cross's HLSL backend will emit by default;
-   likely needs either dropping/ignoring the point-size write for the HLSL
-   path (D3D11 has no per-vertex point-sprite size without a geometry
-   shader expanding points to quads) or a geometry-shader-based point-sprite
-   expansion. Out of scope for the commit-3 follow-up; needs an owner
-   decision on which approach fits DirectExp's point-rendering needs.
+    value 1, matching the "`: 1`" in SPIRV-Cross's own error text) has no
+    direct HLSL equivalent that SPIRV-Cross's HLSL backend can emit by
+    default. The vanilla `debug_point.vsh` assigns
+    `gl_PointSize = LineWidth`, so dropping it or forcing a constant size
+    loses shader behavior. **Recommendation:** before shaderc, rewrite this
+    builtin write to an explicit float output and assign it a location; let
+    SPIRV-Cross emit the value as a vertex-output semantic, then have an
+    optional generated HLSL geometry shader consume it. Implemented by
+    `DxPointSizeRewriter` and `DxPointSpriteGeometryShader`, with native GS
+    pipeline support. Focused tests pass, and the 17:58 log reports no
+    `debug_points` pipeline failure. Actual rendered point size remains
+    unverified. See section 11.3.
 8. **Unrelated, noticed in the same `runClient` log commit 3 was analyzed
    against:** one `native GPU buffer upload failed; ... updateBufferNative:
    range is outside the buffer or the mirror.` warning (single occurrence,
    startup). Not investigated -- out of scope for both the interface-layout
    fix and the commit-3 follow-up -- but worth a look before or during
    commit 4 since it means one buffer's GPU copy is stale from startup.
+   *Update 2026-09-30:* still present in both new logs. Likely root cause
+   identified by code reading (not runtime-confirmed): section 11.4.
+9. **New, from the 2026-09-30 logs:** `end_portal` and `end_gateway` (both
+  use `core/rendertype_end_portal`) failed GLSL->SPIR-V because
+  `DxShaderInterfaceLayout` never numbered `in vec3 Position;`. Root cause
+  was a tokenizer bug, reproduced and fixed with a regression test: section
+  11.2. The 17:58 `runClient` log contains no End shader failure, so the
+  tokenizer fix is runtime-confirmed at pipeline precompile.
 
 ## 9. Commit 3 -- shader interface layout (fixes every pipeline being invalid)
 
@@ -810,3 +836,180 @@ with `vertexStride == 0`/no attributes must not have `IASetVertexBuffers`
 called for it at draw time (there's no buffer to bind) -- not yet relevant
 since `draw()` is still a no-op, but worth remembering when it stops being
 one.
+
+## 11. Post-follow-up log analysis (2026-09-30) -- six required pipelines invalid in supplied logs
+
+Inputs: `latest.log` and `debug.log` from one `runClient` (14:28), and a
+second `latest.log` (14:46), both Minecraft 26.2-snapshot-1, Fabric Loader
+0.19.0, Windows 10, `backend=DIRECTX`. **No code was changed in this
+analysis.** Each failure appears twice in every log because the resource
+manager reloads once after the initial load, so "2 lines" means "1
+pipeline".
+
+### 11.1 What the logs show
+
+The commit-3 follow-up (section 10) is confirmed at runtime: none of the
+148 `CreateVertexShader failed` or 14 `vertexStride must be positive`
+failures from section 10 remain, and the native pipeline path, buffers,
+samplers, textures and views all report as active (`minecraft:pipeline/gui`
+is assembled). Six pipelines were invalid in the supplied logs:
+
+| Pipeline(s) | Failure | Cause | Status |
+| --- | --- | --- | --- |
+| `sky`, `sunrise_sunset`, `debug_triangle_fan` | `TRIANGLE_FAN has no D3D11 primitive topology` | Unimplemented index-conversion path (section 8 item 2) | Invalid in supplied logs; implementation now present (11.3) |
+| `debug_points` | `Unsupported builtin in HLSL: 1` | SPIR-V `PointSize` has no HLSL output (section 8 item 7) | Invalid in supplied logs; implementation now present (11.3) |
+| `end_portal`, `end_gateway` | `0:7: error: 'location' : SPIR-V requires location for user input/output` | Tokenizer bug, 11.2 | Fixed and unit-tested; runtime recheck pending |
+
+Consequence: `ShaderManager.apply` throws `Failed to load required shader
+programs` listing all six, and Minecraft logs `Caught error loading
+resourcepacks, removing all selected resourcepacks`, then reloads and fails
+identically. This abort comes from Minecraft treating those programs as
+required. It is **not** caused by `failureMode=STRICT`: `FailureMode` only
+affects backend negotiation (`BackendNegotiationResolver`), not what
+happens to an invalid pipeline. (An earlier note in the analysis that led
+to this section said otherwise; that was wrong.)
+
+The table is historical evidence from before the End tokenizer repair. The
+current source and test status is recorded immediately below in 11.2.
+
+Housekeeping on section 10's table: its rows sum to 170 (148+14+6+2), not
+the stated 174, and "150 of the 174 (86%)" does not match 148+14=162. The
+4 missing lines are very likely `end_portal`/`end_gateway` (2 pipelines x 2
+reloads), which fail before the stages the table counts. That is an
+inference; the original log was not available for this analysis.
+
+### 11.2 `end_portal` / `end_gateway`: `in vec3 Position;` is never numbered
+
+The post-layout GLSL that the second log prints (a
+`Post-interface-layout GLSL submitted for vertex shader ...` error line;
+this logging is **not in the `DirectExp.zip` snapshot** this analysis read,
+so it was added later in the owner's working copy) contains:
+
+```
+/*#moj_import <minecraft:projection.glsl>*/#line 6 0
+
+in vec3 Position;
+
+layout(location = 0) out vec4 texProj0;
+layout(location = 1) out float sphericalVertexDistance;
+layout(location = 2) out float cylindricalVertexDistance;
+```
+
+All three `out` variables were numbered; `Position` was not. shaderc's
+error is on line 7, which is that declaration.
+
+**Cause.** Mojang's preprocessor replaces `#moj_import` with a block comment
+and appends a `#line` directive on the *same physical line*. In
+`DxShaderInterfaceLayout.tokenize`, a `#` is only treated as a preprocessor
+directive when `atLineStart` is true, and the block-comment branch sets
+`atLineStart = false` after `*/`. So `#line 6 0` is tokenised as the four
+ordinary tokens `#`, `line`, `6`, `0`. No `;` follows, so the next
+statement becomes `# line 6 0 in vec3 Position`. In `analyze`, the first
+token `#` is not a qualifier, the qualifier loop stops immediately, `in`
+and `out` are both false, and the `in == out` branch returns `null` --
+silently. Every other declaration is fine because it either follows a `;`
+or sits after a `#line` that starts a real line.
+
+**Verification (real code, real behaviour).** `DxShaderInterfaceLayout` was
+compiled with JDK 21 (only `apply()`, which depends on Minecraft classes,
+was stripped for the harness; `assign()` is the Minecraft-free core) and run
+on a reduced shader with the exact `*/#line 6 0` shape:
+
+- as logged: `in vec3 Position;` is left un-numbered while the two `out`
+  declarations get `layout(location = 0)` / `layout(location = 1)`, and no
+  note is emitted -- the same symptom as the log;
+- control, identical input except a newline between `*/` and `#line`:
+  `layout(location = 0) in vec3 Position;`.
+
+This proves the cause on the real class. It does not prove the whole
+pipeline then compiles: `shaderc`, SPIRV-Cross and D3DCompile were not run.
+
+**Fix applied after these logs.**
+
+1. **Applied:** `tokenize` preserves `atLineStart` across a same-line block
+  comment and restores it when the comment contains a newline, so a
+  following `#line` remains a preprocessor directive.
+2. **Not included:** making `analyze` fail on every unrecognized stray `#`
+  token. That broader parser-hardening change is not needed for this
+  reproducer and remains a possible follow-up.
+3. **Applied:** a regression test uses the exact
+  `/*#moj_import ...*/#line N M` shape from this log and asserts `Position`
+  receives its location.
+
+The focused `DxShaderInterfaceLayoutTest` and full `./gradlew.bat test` pass.
+The post-layout vertex-source diagnostic captures the text sent to shaderc
+on `VERTEX_COMPILE_FAILED`. A fresh Windows `runClient` is still needed to
+confirm that `end_portal` and `end_gateway` compile after the fix.
+
+### 11.3 `TRIANGLE_FAN` and `gl_PointSize`
+
+The supplied 14:28/14:46 logs confirmed both failures. They are implemented
+in the current tree, and the 17:58 `runClient` log reports neither class of
+pipeline failure. This confirms pipeline compilation/precompile only; it
+does not establish rendered pixels or validate the draw output.
+
+- `TRIANGLE_FAN`: `DxTriangleFanExpander` expands source indices to triangle
+  lists while preserving fan winding, first-index range, and relative
+  indices; `DxRenderPassBackend` routes fan draws through it, and
+  `DxPipelineStateMapping` maps the pipeline to D3D11 triangle-list topology.
+  `DxTriangleFanExpanderTest` covers non-indexed and indexed inputs, 16/32-bit
+  indices, ranges, winding, and scratch-array reuse. The 17:58 log reports no
+  invalid fan pipelines. Actual draw output still needs visual/runtime
+  verification.
+- `gl_PointSize`: `DxPointSizeRewriter` converts the built-in write to an
+  explicit located float output before shaderc; `DxPointSpriteGeometryShader`
+  generates a geometry shader that expands points to viewport-scaled quads,
+  preserving the vanilla `LineWidth` diameter. Optional GS bytecode and
+  viewport constants are handled by the bridge. Focused tests cover rewrite,
+  semantic propagation, and clip-space scaling. The 17:58 log reports no
+  invalid `debug_points` pipeline; actual point appearance still needs
+  runtime verification.
+
+### 11.4 Buffer upload warning: likely cause
+
+`native GPU buffer upload failed; GPU copy may be stale
+(updateBufferNative: range is outside the buffer or the mirror.)` appears
+once per run. It is log-once by design (`DxNativeResourceLog.syncFailure`
+keys on `buffer:sync`), so the single line says nothing about how many
+buffers are affected.
+
+Likely cause, from code reading only: `DxBuffer` pads its CPU mirror to a
+multiple of 16 bytes (`DxBufferBinding.alignedSize`) and its constructor
+pushes `storage.capacity()` -- the padded size -- to the GPU. Only constant
+buffers have their native `ByteWidth` rounded up the same way
+(`directexp_bridge_resource.cpp`). A vertex or index buffer whose size is
+not a multiple of 16 has native width exactly `size`, so the initial sync
+exceeds it and the range check throws. The exception is caught, so the
+symptom is only a GPU copy that starts stale (zeroed).
+
+Proposed fix (not applied): sync `logicalSize` rather than
+`storage.capacity()` in the constructor. To confirm first, include the
+buffer size and bind mask in the `syncFailure` message.
+
+### 11.5 Noise, not DirectExp
+
+`Failed to fetch user properties` (401) and the Realms
+`Failed to parse into SignedJWT: FabricMC` errors come from the offline
+development session.
+
+### 11.6 17:58 run -- native stride validation mismatch
+
+The 17:58 `runClient` log no longer reports invalid `end_portal`,
+`end_gateway`, `TRIANGLE_FAN`, or `debug_points` pipelines. It instead
+reports seven empty-vertex-format pipelines as invalid:
+`animate_sprite_blit`, `lightmap`, `entity_outline_blit`, `flat_clouds`,
+`tracy_blit`, `animate_sprite_interpolate`, and `clouds`. Each fails with
+`createPipelineNative: attribute format/offset arrays must match and
+vertexStride must be positive.`
+
+**Cause.** `DxPipelineStateDescriptor` already permits stride 0 when both
+attribute arrays are empty, matching vanilla's full-screen pipelines. The
+JNI guard in `directexp_bridge_pipeline.cpp` still rejected every
+`vertexStride <= 0`, so the native boundary contradicted the Java contract.
+
+**Fix applied:** the native guard now requires matching array lengths,
+rejects negative strides, and requires positive stride only if attributes
+exist. **Verification:** Windows `./gradlew.bat build` succeeds and
+`./gradlew.bat test` succeeds. **Not yet done:** a new `runClient` after the
+native fix; that run should confirm the seven pipelines now precompile.
+The separate initial buffer-sync warning remains as described in 11.4.

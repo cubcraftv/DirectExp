@@ -49,6 +49,11 @@ final class DxBuffer extends GpuBuffer {
 		return duplicate.slice().order(ByteOrder.nativeOrder());
 	}
 
+	/** The whole logical CPU mirror (excluding alignment padding), e.g. for CPU-side index expansion. */
+	ByteBuffer logicalStorage() {
+		return sliceStorage(0L, this.logicalSize);
+	}
+
 	void write(long offset, ByteBuffer source) {
 		int length = source.remaining();
 		ByteBuffer destination = sliceStorage(offset, length);

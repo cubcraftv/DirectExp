@@ -166,11 +166,24 @@ public final class NativeDxBridge implements DxBridge {
 
 	@Override
 	public long createPipeline(byte[] vertexBytecode, byte[] pixelBytecode, DxPipelineStateDescriptor state) {
+		return createPipeline(vertexBytecode, pixelBytecode, null, state);
+	}
+
+	@Override
+	public long createPipeline(byte[] vertexBytecode, byte[] pixelBytecode, byte[] geometryBytecode, DxPipelineStateDescriptor state) {
 		return createPipelineNative(
-			vertexBytecode, pixelBytecode,
+			vertexBytecode, pixelBytecode, geometryBytecode,
 			state.attributeFormats(), state.attributeOffsets(), state.vertexStride(),
 			state.stateArray(), state.floatStateArray()
 		);
+	}
+
+	@Override
+	public void setPipelineViewport(long nativePipelineHandle, int width, int height) {
+		if (nativePipelineHandle == 0L) {
+			return;
+		}
+		setPipelineViewport0(nativePipelineHandle, width, height);
 	}
 
 	@Override
@@ -323,6 +336,28 @@ public final class NativeDxBridge implements DxBridge {
 			return DxHlslCompilationResult.bridgeUnavailable(
 				DxHlslCompilationStatus.NATIVE_ERROR,
 				error.getMessage() == null ? "DirectX bridge native HLSL emission/compilation failed." : error.getMessage()
+			);
+		}
+	}
+
+	@Override
+	public DxHlslCompilationResult compileHlsl(String shaderName, String hlsl, DxShaderStageKind stageKind) {
+		DxBridgeLoadResult loadResult = NativeDxBridgeLoader.ensureLoaded();
+		if (!loadResult.isLoaded()) {
+			return DxHlslCompilationResult.bridgeUnavailable(hlslStatusFromLoadStatus(loadResult), loadResult.detail());
+		}
+
+		try {
+			return fromNativeHlslCompilationResult(compileHlsl0(shaderName, hlsl, stageKind.nativeShaderKind()));
+		} catch (UnsatisfiedLinkError error) {
+			return DxHlslCompilationResult.bridgeUnavailable(
+				DxHlslCompilationStatus.NATIVE_ERROR,
+				error.getMessage() == null ? "DirectX bridge native HLSL compilation entrypoint is missing." : error.getMessage()
+			);
+		} catch (RuntimeException error) {
+			return DxHlslCompilationResult.bridgeUnavailable(
+				DxHlslCompilationStatus.NATIVE_ERROR,
+				error.getMessage() == null ? "DirectX bridge native HLSL compilation failed." : error.getMessage()
 			);
 		}
 	}
@@ -565,12 +600,14 @@ public final class NativeDxBridge implements DxBridge {
 	private static native long createTextureNative(int format, int width, int height, int mipLevels, int bindMask);
 
 	private static native long createPipelineNative(
-		byte[] vertexBytecode, byte[] pixelBytecode,
+		byte[] vertexBytecode, byte[] pixelBytecode, byte[] geometryBytecode,
 		int[] attributeFormats, int[] attributeOffsets, int vertexStride,
 		int[] state, float[] floatState
 	);
 
 	private static native void releasePipeline0(long nativePipelineHandle);
+
+	private static native void setPipelineViewport0(long nativePipelineHandle, int width, int height);
 
 	private static native long createSamplerNative(
 		int addressU, int addressV, boolean minLinear, boolean magLinear, boolean mipLinear, int maxAnisotropy, float maxLod
@@ -607,4 +644,7 @@ public final class NativeDxBridge implements DxBridge {
 	private static native NativeDxHlslCompilationResult emitAndCompileHlsl0(
 		String shaderName, byte[] spirv, int shaderStageKind, String[] resourceNames, int[] resourceKinds, int[] resourceSlots
 	);
+
+	// HLSL text -> bytecode only (no SPIRV-Cross); stage encoding as emitAndCompileHlsl0 plus 2 = geometry.
+	private static native NativeDxHlslCompilationResult compileHlsl0(String shaderName, String hlsl, int shaderStageKind);
 }

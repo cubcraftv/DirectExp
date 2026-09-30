@@ -83,6 +83,8 @@ spv::ExecutionModel ToExecutionModel(ShaderExecutionStage stage) {
 const char* ToD3DCompileTarget(ShaderExecutionStage stage) {
 	bool shaderModel5 = g_activeFeatureLevel >= D3D_FEATURE_LEVEL_11_0;
 	switch (stage) {
+		case ShaderExecutionStage::Geometry:
+			return shaderModel5 ? "gs_5_0" : "gs_4_1";
 		case ShaderExecutionStage::Fragment:
 			return shaderModel5 ? "ps_5_0" : "ps_4_1";
 		case ShaderExecutionStage::Vertex:
@@ -322,6 +324,18 @@ ShaderCompilationResult CompileSpirvToD3DBytecode(
 		return result;
 	}
 
+	CompileHlslToBytecode(result.hlsl, stage, shaderName, result);
+	return result;
+}
+
+ShaderCompilationResult CompileHlslToD3DBytecode(
+	const std::string& hlslSource,
+	ShaderExecutionStage stage,
+	const std::string& shaderName
+) {
+	ShaderCompilationResult result;
+	result.emissionSucceeded = true;
+	result.hlsl = hlslSource;
 	CompileHlslToBytecode(result.hlsl, stage, shaderName, result);
 	return result;
 }

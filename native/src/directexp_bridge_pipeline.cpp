@@ -2,7 +2,8 @@
 // commit 2).
 //
 // createPipelineNative turns two compiled shader-bytecode blobs (the 4.5
-// D3DCompile output) plus a flat description of the Blaze3D render state into
+// D3DCompile output, plus an optional generated geometry shader for
+// gl_PointSize point sprites) plus a flat description of the Blaze3D render state into
 // the set of immutable D3D11 objects one RenderPipeline needs: vertex shader,
 // pixel shader, input layout, blend state, depth-stencil state, rasterizer
 // state, and the primitive topology. Nothing is bound here -- binding and
@@ -47,6 +48,8 @@ static_assert(D3D11_CULL_NONE == 1 && D3D11_CULL_BACK == 3 && D3D11_FILL_WIREFRA
 static_assert(D3D_PRIMITIVE_TOPOLOGY_POINTLIST == 1 && D3D_PRIMITIVE_TOPOLOGY_LINELIST == 2
 	&& D3D_PRIMITIVE_TOPOLOGY_LINESTRIP == 3 && D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST == 4
 	&& D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP == 5, "D3D topology values changed");
+// DxBridge.GEOMETRY_VIEWPORT_CBUFFER_SLOT (Java) must be a valid constant buffer slot.
+static_assert(13 < D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT, "geometry viewport cbuffer slot out of range");
 static_assert(DXGI_FORMAT_R32G32B32A32_FLOAT == 2 && DXGI_FORMAT_R32G32B32_FLOAT == 6 && DXGI_FORMAT_R32G32_FLOAT == 16
 	&& DXGI_FORMAT_R32_FLOAT == 41 && DXGI_FORMAT_R8G8B8A8_UNORM == 28 && DXGI_FORMAT_R8G8B8A8_SNORM == 31
 	&& DXGI_FORMAT_R16G16_SINT == 38 && DXGI_FORMAT_R32G32B32A32_UINT == 3, "DXGI_FORMAT values changed");
@@ -115,6 +118,8 @@ struct ScopedIntArray {
 void ReleasePipelineObjects(Pipeline* p) {
 	if (p->vertexShader != nullptr) p->vertexShader->Release();
 	if (p->pixelShader != nullptr) p->pixelShader->Release();
+	if (p->geometryShader != nullptr) p->geometryShader->Release();
+	if (p->geometryViewportBuffer != nullptr) p->geometryViewportBuffer->Release();
 	if (p->inputLayout != nullptr) p->inputLayout->Release();
 	if (p->blendState != nullptr) p->blendState->Release();
 	if (p->depthStencilState != nullptr) p->depthStencilState->Release();
@@ -126,7 +131,7 @@ void ReleasePipelineObjects(Pipeline* p) {
 extern "C" JNIEXPORT jlong JNICALL
 Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_createPipelineNative(
 	JNIEnv* env, jclass,
-	jbyteArray vertexBytecode, jbyteArray pixelBytecode,
+	jbyteArray vertexBytecode, jbyteArray pixelBytecode, jbyteArray geometryBytecode,
 	jintArray attributeFormats, jintArray attributeOffsets, jint vertexStride,
 	jintArray state, jfloatArray floatState
 ) {
@@ -137,6 +142,7 @@ Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_createPipelineNative(
 
 	ScopedByteArray vs(env, vertexBytecode);
 	ScopedByteArray ps(env, pixelBytecode);
+	ScopedByteArray gs(env, geometryBytecode); // null array = no geometry stage
 	ScopedIntArray formats(env, attributeFormats);
 	ScopedIntArray offsets(env, attributeOffsets);
 	ScopedIntArray st(env, state);
@@ -149,8 +155,8 @@ Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_createPipelineNative(
 		ThrowIllegalState(env, "createPipelineNative: state arrays have the wrong length (Java/native STATE_* out of sync).");
 		return 0;
 	}
-	if (formats.length != offsets.length || vertexStride <= 0) {
-		ThrowIllegalState(env, "createPipelineNative: attribute format/offset arrays must match and vertexStride must be positive.");
+	if (formats.length != offsets.length || vertexStride < 0 || (formats.length > 0 && vertexStride == 0)) {
+		ThrowIllegalState(env, "createPipelineNative: attribute format/offset arrays must match; vertexStride must be non-negative and positive when attributes exist.");
 		return 0;
 	}
 
@@ -170,6 +176,22 @@ Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_createPipelineNative(
 	}
 	if (FAILED(g_activeDevice->CreatePixelShader(ps.data, static_cast<SIZE_T>(ps.length), nullptr, &pipeline->pixelShader))) {
 		return fail("ID3D11Device::CreatePixelShader failed.");
+	}
+
+	if (gs.data != nullptr && gs.length > 0) {
+		if (FAILED(g_activeDevice->CreateGeometryShader(gs.data, static_cast<SIZE_T>(gs.length), nullptr, &pipeline->geometryShader))) {
+			return fail("ID3D11Device::CreateGeometryShader failed.");
+		}
+
+		// float2 viewport size (+ padding to the 16-byte constant buffer granule).
+		D3D11_BUFFER_DESC constants = {};
+		constants.ByteWidth = 16;
+		constants.Usage = D3D11_USAGE_DYNAMIC;
+		constants.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+		constants.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+		if (FAILED(g_activeDevice->CreateBuffer(&constants, nullptr, &pipeline->geometryViewportBuffer))) {
+			return fail("ID3D11Device::CreateBuffer failed for the geometry shader viewport constants.");
+		}
 	}
 
 	// Input layout: one element per VertexFormat element, semantic
@@ -256,6 +278,34 @@ Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_createPipelineNative(
 }
 
 extern "C" JNIEXPORT void JNICALL
+Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_setPipelineViewport0(JNIEnv* env, jclass, jlong nativePipelineHandle, jint width, jint height) {
+	Pipeline* pipeline = HandleToPointer<Pipeline>(nativePipelineHandle);
+	if (pipeline == nullptr || pipeline->geometryViewportBuffer == nullptr) {
+		return; // only point-sprite pipelines have viewport constants
+	}
+	if (g_activeContext == nullptr) {
+		ThrowIllegalState(env, "setPipelineViewport0 called with no active DirectX device context.");
+		return;
+	}
+	if (width <= 0 || height <= 0) {
+		ThrowIllegalState(env, "setPipelineViewport0 requires a positive viewport size.");
+		return;
+	}
+
+	D3D11_MAPPED_SUBRESOURCE mapped = {};
+	if (FAILED(g_activeContext->Map(pipeline->geometryViewportBuffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
+		ThrowIllegalState(env, "ID3D11DeviceContext::Map failed for the geometry shader viewport constants.");
+		return;
+	}
+	float* values = static_cast<float*>(mapped.pData);
+	values[0] = static_cast<float>(width);
+	values[1] = static_cast<float>(height);
+	values[2] = 0.0f;
+	values[3] = 0.0f;
+	g_activeContext->Unmap(pipeline->geometryViewportBuffer, 0);
+}
+
+extern "C" JNIEXPORT void JNICALL
 Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_releasePipeline0(JNIEnv*, jclass, jlong nativePipelineHandle) {
 	Pipeline* pipeline = HandleToPointer<Pipeline>(nativePipelineHandle);
 	if (pipeline == nullptr) {
@@ -270,9 +320,13 @@ Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_releasePipeline0(JNIEnv*, jcl
 
 extern "C" JNIEXPORT jlong JNICALL
 Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_createPipelineNative(
-	JNIEnv*, jclass, jbyteArray, jbyteArray, jintArray, jintArray, jint, jintArray, jfloatArray
+	JNIEnv*, jclass, jbyteArray, jbyteArray, jbyteArray, jintArray, jintArray, jint, jintArray, jfloatArray
 ) {
 	return 0;
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_setPipelineViewport0(JNIEnv*, jclass, jlong, jint, jint) {
 }
 
 extern "C" JNIEXPORT void JNICALL

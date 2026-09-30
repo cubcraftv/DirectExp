@@ -13,7 +13,14 @@ package dev.cubcraftv.directexp.bridge;
  */
 public enum DxShaderStageKind {
 	VERTEX,
-	FRAGMENT;
+	FRAGMENT,
+	/**
+	 * Only valid for {@link DxBridge#compileHlsl}: the generated point-sprite
+	 * geometry shader (see {@code DxPointSpriteGeometryShader}). Not a
+	 * {@code shaderc} stage, so {@link DxBridge#compileGlslToSpirv} must not be
+	 * given it.
+	 */
+	GEOMETRY;
 
 	/**
 	 * Encodes this stage for the {@code shaderStageKind} native bridge
@@ -24,6 +31,7 @@ public enum DxShaderStageKind {
 		return switch (this) {
 			case VERTEX -> 0;
 			case FRAGMENT -> 1;
+			case GEOMETRY -> 2;
 		};
 	}
 }

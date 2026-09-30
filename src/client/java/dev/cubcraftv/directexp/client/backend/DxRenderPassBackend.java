@@ -39,6 +39,7 @@ final class DxRenderPassBackend implements RenderPassBackend {
 	private final Map<String, GpuBuffer> uniformBuffers = new HashMap<>();
 	private final Map<String, GpuBufferSlice> uniformSlices = new HashMap<>();
 	private final Map<Integer, DxBuffer> vertexBuffers = new HashMap<>();
+	private final DxTriangleFanExpander fanExpander = new DxTriangleFanExpander();
 
 	private RenderPipeline pipeline;
 	private DxBuffer indexBuffer;
@@ -131,6 +132,12 @@ final class DxRenderPassBackend implements RenderPassBackend {
 
 	@Override
 	public void drawIndexed(int baseVertex, int firstIndex, int indexCount, int instanceCount) {
+		if (isTriangleFanPipeline() && this.indexBuffer != null && this.indexType != null) {
+			// The pipeline topology is TRIANGLELIST; the fan's indices become
+			// triangle-list indices here. Submission draws fanExpander.indices()
+			// [0, count()) with the same baseVertex and instanceCount.
+			expandIndexedFan(firstIndex, indexCount);
+		}
 		// TODO(Milestone 4): compile `this.pipeline` to D3D11 shader/PSO
 		// state and issue DrawIndexedInstanced through the native bridge.
 		// Currently a no-op: state above is tracked but nothing is
@@ -144,11 +151,34 @@ final class DxRenderPassBackend implements RenderPassBackend {
 
 	@Override
 	public void draw(int firstVertex, int vertexCount) {
+		if (isTriangleFanPipeline()) {
+			// Submission draws fanExpander.indices()[0, count()) as an indexed
+			// triangle list with base vertex 0 (indices are absolute here).
+			this.fanExpander.expandNonIndexed(firstVertex, vertexCount);
+		}
 		// TODO(Milestone 4): issue Draw through the native bridge. No-op for now.
 	}
 
 	@Override
 	public void writeTimestamp(GpuQueryPool gpuQueryPool, int index) {
+	}
+
+	/** D3D11 has no fan topology: fan pipelines are TRIANGLELIST and every draw expands its indices. */
+	boolean isTriangleFanPipeline() {
+		return this.pipeline != null && this.pipeline.getVertexFormatMode() == VertexFormat.Mode.TRIANGLE_FAN;
+	}
+
+	/** Expands the bound index buffer's fan range into {@link #fanExpander()}; indices stay relative to the draw's base vertex. */
+	void expandIndexedFan(int firstIndex, int indexCount) {
+		int indexBytes = switch (this.indexType) {
+			case SHORT -> 2;
+			case INT -> 4;
+		};
+		this.fanExpander.expandIndexed(this.indexBuffer.logicalStorage(), indexBytes, firstIndex, indexCount);
+	}
+
+	DxTriangleFanExpander fanExpander() {
+		return this.fanExpander;
 	}
 
 	DxTexture colorTarget() {

@@ -49,6 +49,9 @@ namespace directexp {
 enum class ShaderExecutionStage : int32_t {
 	Vertex = 0,
 	Fragment = 1,
+	// Only for CompileHlslToD3DBytecode (generated point-sprite geometry
+	// shader); SPIRV-Cross emission never targets it.
+	Geometry = 2,
 };
 
 // One resource's engine-assigned D3D11 register slot, as produced
@@ -108,6 +111,18 @@ ShaderCompilationResult CompileSpirvToD3DBytecode(
 	ShaderExecutionStage stage,
 	const std::string& shaderName,
 	const std::vector<HlslResourceSlotAssignment>& assignments
+);
+
+// Compiles already-written HLSL text (no SPIRV-Cross step) to D3D11 bytecode
+// via `D3DCompile`, entry point `main`, profile chosen like
+// CompileSpirvToD3DBytecode's (`gs_5_0`/`gs_4_1` for Geometry). Used for the
+// geometry shader DirectExp generates itself for `gl_PointSize`. Reports
+// failure through the result exactly like CompileSpirvToD3DBytecode;
+// `emissionSucceeded` is always true and `hlsl` echoes the input.
+ShaderCompilationResult CompileHlslToD3DBytecode(
+	const std::string& hlslSource,
+	ShaderExecutionStage stage,
+	const std::string& shaderName
 );
 
 // Converts a ShaderCompilationResult into a

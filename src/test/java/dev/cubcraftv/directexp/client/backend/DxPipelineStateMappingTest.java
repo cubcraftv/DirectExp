@@ -15,21 +15,16 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class DxPipelineStateMappingTest {
 	@Test
-	void quadsAndLinesUseTriangleListAndFanIsRejected() {
+	void quadsLinesAndFansUseTriangleList() {
 		assertEquals(DxPipelineStateMapping.TOPOLOGY_TRIANGLELIST, DxPipelineStateMapping.topology(Mode.QUADS));
 		assertEquals(DxPipelineStateMapping.TOPOLOGY_TRIANGLELIST, DxPipelineStateMapping.topology(Mode.LINES));
 		assertEquals(DxPipelineStateMapping.TOPOLOGY_TRIANGLELIST, DxPipelineStateMapping.topology(Mode.TRIANGLES));
+		// D3D11 has no fan topology: the pipeline is a triangle list and the draw path expands the indices.
+		assertEquals(DxPipelineStateMapping.TOPOLOGY_TRIANGLELIST, DxPipelineStateMapping.topology(Mode.TRIANGLE_FAN));
 		assertEquals(DxPipelineStateMapping.TOPOLOGY_TRIANGLESTRIP, DxPipelineStateMapping.topology(Mode.TRIANGLE_STRIP));
 		assertEquals(DxPipelineStateMapping.TOPOLOGY_LINELIST, DxPipelineStateMapping.topology(Mode.DEBUG_LINES));
 		assertEquals(DxPipelineStateMapping.TOPOLOGY_LINESTRIP, DxPipelineStateMapping.topology(Mode.DEBUG_LINE_STRIP));
 		assertEquals(DxPipelineStateMapping.TOPOLOGY_POINTLIST, DxPipelineStateMapping.topology(Mode.POINTS));
-		boolean rejected = false;
-		try {
-			DxPipelineStateMapping.topology(Mode.TRIANGLE_FAN);
-		} catch (UnsupportedOperationException expected) {
-			rejected = true;
-		}
-		assertTrue(rejected);
 	}
 
 	@Test

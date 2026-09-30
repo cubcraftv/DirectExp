@@ -700,20 +700,37 @@ not a bug in what's implemented so far).
   `docs/plans/2026-09-28-directexp-milestone4.6-source-of-truth.md` section
   10.
 
-- **2026-09-30 -- end-portal vertex input location diagnostic and fix.** The
-  owner's fresh `runClient` log showed that `DxShaderInterfaceLayout` had
-  assigned locations to the end-portal vertex outputs but not to `Position`.
-  The preprocessed source places an imported-source block comment directly
-  before a `#line` directive (`*/#line ...`); the layout tokenizer treated
-  the comment as ending the line-start state, so it tokenized the directive
-  as part of the following `in vec3 Position;` declaration and skipped it.
-  Fixed block-comment line-start tracking and added a regression test for
-  that exact comment/directive/input sequence. The failure-only vertex
-  diagnostic now also prints the post-layout GLSL that shaderc received.
-  **Verification:** the focused `DxShaderInterfaceLayoutTest` and full
-  `./gradlew.bat test` both pass. **Not done:** a fresh `runClient` after
-  this fix, so its runtime effect on the end-portal pipeline is not yet
-  confirmed.
+- **2026-09-30 -- Milestone 4.6 log analysis after the commit 3 follow-up
+  (diagnosis only, no code changed).** Owner supplied fresh `runClient`
+  logs (14:28 and 14:46) and asked for a report, then for docs. The
+  follow-up is confirmed at runtime: no `CreateVertexShader failed` or
+  `vertexStride` failures remain, and native buffers/samplers/textures/views
+  and the first `gui` pipeline all report active. Six pipelines are still
+  invalid, which makes Minecraft's `ShaderManager` throw `Failed to load
+  required shader programs` and drop all resource packs on every reload
+  (this comes from Minecraft treating those programs as required, not from
+  `failureMode=STRICT`, which only affects backend negotiation). Causes:
+  `sky`/`sunrise_sunset`/`debug_triangle_fan` -- `TRIANGLE_FAN` still
+  unimplemented; `debug_points` -- `gl_PointSize` (SPIR-V builtin 1) has no
+  HLSL output; `end_portal`/`end_gateway` -- a **new** bug: Mojang's
+  preprocessor leaves `/*#moj_import ...*/#line N M` on one line, and
+  `DxShaderInterfaceLayout.tokenize` only recognises `#` directives at a
+  line start (a block comment clears that flag), so `in vec3 Position;` is
+  merged into a garbage statement and silently never gets a
+  `layout(location = ...)`. **Verified:** reproduced on the real class
+  compiled under JDK 21 (only the Minecraft-dependent `apply()` stripped),
+  with a control run confirming a newline before `#line` makes
+  `Position` get its location. **Not done:** any fix. Proposed (not
+  applied): let block comments preserve `atLineStart`, make `analyze` fail
+  loudly on a stray `#` token, add a regression test with the exact log
+  shape; separately, sync `logicalSize` instead of the 16-byte-padded
+  `capacity()` in `DxBuffer`'s constructor (likely cause of the
+  once-per-run `updateBufferNative: range is outside the buffer` warning,
+  from code reading only). Fixing the tokenizer clears 2 of the 6 failing
+  pipelines; `TRIANGLE_FAN` and `gl_PointSize` still need owner decisions
+  before the required-shader check can pass. Details:
+  `docs/plans/2026-09-28-directexp-milestone4.6-source-of-truth.md`
+  section 11.
 
 ## Current Status (as of the last entry above)
 
@@ -807,6 +824,28 @@ not a bug in what's implemented so far).
   10. Milestone 4 is still not complete -- none of commit 3 or its
   follow-up has been run through the project's own Windows build, two
   smaller gaps remain open (`TRIANGLE_FAN`, an HLSL `gl_PointSize`
-  translation failure -- both need an owner decision, see source-of-truth
+  translation failure -- recommended implementations are in source-of-truth
   section 8 items 2 and 7), and commit 4 (clears, viewport/scissor,
   resource binding, and the first real draw) has not started.
+  *Update 2026-09-30 (14:28/14:46 runs):* the follow-up held at
+  runtime, and six pipelines
+  remain invalid -- the two known gaps above plus a newly diagnosed
+  tokenizer bug behind `end_portal`/`end_gateway` (see the 2026-09-30
+  Progress Log entry and source-of-truth section 11; not yet fixed).
+  *Follow-up before the 17:58 run:* the tokenizer bug is now fixed and
+  covered by a regression test; the focused layout test and full
+  `./gradlew.bat test` pass. A fresh
+  `runClient` has not yet confirmed that the two End pipelines recover.
+  Recommended next work: expand triangle fans to triangle-list indices in
+  draw submission, and preserve `debug_point`'s `LineWidth` with optional
+  geometry-shader quad expansion. Neither is implemented; see source-of-
+  truth section 11.3.
+  *17:58 run follow-up:* the log reports no invalid End, triangle-fan, or
+  debug-point pipelines, but seven empty-vertex-format pipelines fail the
+  native `vertexStride` check. The C++ guard now matches Java's contract
+  (zero stride allowed only with no attributes); Windows `./gradlew.bat
+  build` and `./gradlew.bat test` pass. A post-fix `runClient` remains
+  outstanding. Fan and point-size implementations are now present and
+  tested; actual draw output is not yet runtime-verified. Details:
+  `docs/plans/2026-09-28-directexp-milestone4.6-source-of-truth.md` sections
+  11.3 and 11.6.

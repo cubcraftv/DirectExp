@@ -28,8 +28,9 @@ import java.util.List;
  *       mask from the four write flags;</li>
  *   <li>topology: {@code QUADS} and {@code LINES} arrive as already-expanded
  *       triangle indices (Vulkan maps both to a triangle list), so they use
- *       TRIANGLELIST; {@code TRIANGLE_FAN} has no D3D11 topology and is
- *       rejected (see below);</li>
+ *       TRIANGLELIST; {@code TRIANGLE_FAN} has no D3D11 topology, so the
+ *       immutable pipeline is also TRIANGLELIST and the draw path must
+ *       expand each fan's indices ({@link DxTriangleFanExpander});</li>
  *   <li>vertex inputs: one element per {@code VertexFormat} element, in order
  *       (the element index is also the shader location), slot 0, per-vertex.</li>
  * </ul>
@@ -203,11 +204,8 @@ final class DxPipelineStateMapping {
 			case POINTS -> TOPOLOGY_POINTLIST;
 			case DEBUG_LINES -> TOPOLOGY_LINELIST;
 			case DEBUG_LINE_STRIP -> TOPOLOGY_LINESTRIP;
-			case TRIANGLES, QUADS, LINES -> TOPOLOGY_TRIANGLELIST;
+			case TRIANGLES, QUADS, LINES, TRIANGLE_FAN -> TOPOLOGY_TRIANGLELIST;
 			case TRIANGLE_STRIP -> TOPOLOGY_TRIANGLESTRIP;
-			case TRIANGLE_FAN -> throw new UnsupportedOperationException(
-				"TRIANGLE_FAN has no D3D11 primitive topology; needs an index-conversion path (Milestone 4.6 source of truth, 3.2)."
-			);
 		};
 	}
 
