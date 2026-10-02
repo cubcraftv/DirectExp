@@ -269,15 +269,15 @@ Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_releaseSampler0(JNIEnv*, jcla
 // (CPU upload via uploadTextureRgba8Native works on any RGBA8 texture).
 extern "C" JNIEXPORT jlong JNICALL
 Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_createTextureNative(
-	JNIEnv* env, jclass, jint formatCode, jint width, jint height, jint mipLevels, jint bindMask
+	JNIEnv* env, jclass, jint formatCode, jint width, jint height, jint arrayLayers, jint mipLevels, jint bindMask, jboolean cubemap
 ) {
 	if (g_activeDevice == nullptr) {
 		ThrowIllegalState(env, "createTextureNative called with no active DirectX device (no surface bootstrapped yet?).");
 		return 0;
 	}
 
-	if (width <= 0 || height <= 0 || mipLevels <= 0) {
-		ThrowIllegalState(env, "createTextureNative requires positive width, height, and mipLevels.");
+	if (width <= 0 || height <= 0 || arrayLayers <= 0 || mipLevels <= 0) {
+		ThrowIllegalState(env, "createTextureNative requires positive dimensions, arrayLayers, and mipLevels.");
 		return 0;
 	}
 
@@ -299,6 +299,13 @@ Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_createTextureNative(
 		return 0;
 	}
 
+	const bool isCubemap = cubemap == JNI_TRUE;
+	if ((isCubemap && (arrayLayers != 6 || width != height || info.depth || bindMask != TEXTURE_BIND_SHADER_RESOURCE))
+		|| (!isCubemap && arrayLayers != 1)) {
+		ThrowIllegalState(env, "createTextureNative: only square six-layer RGBA shader-resource cubemaps and single-layer 2D textures are supported.");
+		return 0;
+	}
+
 	UINT bindFlags = 0;
 	if ((bindMask & TEXTURE_BIND_SHADER_RESOURCE) != 0) {
 		bindFlags |= D3D11_BIND_SHADER_RESOURCE;
@@ -314,14 +321,14 @@ Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_createTextureNative(
 	desc.Width = static_cast<UINT>(width);
 	desc.Height = static_cast<UINT>(height);
 	desc.MipLevels = static_cast<UINT>(mipLevels);
-	desc.ArraySize = 1;
+	desc.ArraySize = static_cast<UINT>(arrayLayers);
 	desc.Format = info.resource;
 	desc.SampleDesc.Count = 1;
 	desc.SampleDesc.Quality = 0;
 	desc.Usage = D3D11_USAGE_DEFAULT;
 	desc.BindFlags = bindFlags;
 	desc.CPUAccessFlags = 0;
-	desc.MiscFlags = 0;
+	desc.MiscFlags = isCubemap ? D3D11_RESOURCE_MISC_TEXTURECUBE : 0;
 
 	ID3D11Texture2D* texture = nullptr;
 	HRESULT hr = g_activeDevice->CreateTexture2D(&desc, nullptr, &texture);
@@ -335,6 +342,8 @@ Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_createTextureNative(
 	wrapper->width = static_cast<UINT>(width);
 	wrapper->height = static_cast<UINT>(height);
 	wrapper->mipLevels = static_cast<UINT>(mipLevels);
+	wrapper->arrayLayers = static_cast<UINT>(arrayLayers);
+	wrapper->cubemap = isCubemap;
 	wrapper->bindFlags = bindFlags;
 	wrapper->formatCode = formatCode;
 	return PointerToHandle(wrapper);
@@ -385,9 +394,15 @@ Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_createTextureViewNative(
 	if ((texture->bindFlags & D3D11_BIND_SHADER_RESOURCE) != 0) {
 		D3D11_SHADER_RESOURCE_VIEW_DESC desc = {};
 		desc.Format = info.shaderView;
-		desc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
-		desc.Texture2D.MostDetailedMip = static_cast<UINT>(baseMipLevel);
-		desc.Texture2D.MipLevels = static_cast<UINT>(mipLevels);
+		if (texture->cubemap) {
+			desc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURECUBE;
+			desc.TextureCube.MostDetailedMip = static_cast<UINT>(baseMipLevel);
+			desc.TextureCube.MipLevels = static_cast<UINT>(mipLevels);
+		} else {
+			desc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+			desc.Texture2D.MostDetailedMip = static_cast<UINT>(baseMipLevel);
+			desc.Texture2D.MipLevels = static_cast<UINT>(mipLevels);
+		}
 		if (FAILED(g_activeDevice->CreateShaderResourceView(texture->texture, &desc, &wrapper->shaderView))) {
 			return fail("ID3D11Device::CreateShaderResourceView failed.");
 		}
@@ -461,7 +476,7 @@ Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_releaseSampler0(JNIEnv*, jcla
 }
 
 extern "C" JNIEXPORT jlong JNICALL
-Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_createTextureNative(JNIEnv*, jclass, jint, jint, jint, jint, jint) {
+Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_createTextureNative(JNIEnv*, jclass, jint, jint, jint, jint, jint, jint, jboolean) {
 	return 0;
 }
 

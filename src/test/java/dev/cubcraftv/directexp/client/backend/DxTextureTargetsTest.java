@@ -4,6 +4,8 @@ import com.mojang.blaze3d.GpuFormat;
 import dev.cubcraftv.directexp.bridge.DxBridge;
 import org.junit.jupiter.api.Test;
 
+import java.nio.ByteBuffer;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -11,6 +13,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class DxTextureTargetsTest {
 	private static final int TEXTURE_BINDING = 4;
 	private static final int RENDER_ATTACHMENT = 8;
+	private static final int CUBEMAP = 16;
 
 	@Test
 	void colorTexturesAreAlwaysSampleableAndRenderableOnlyWhenAttached() {
@@ -44,7 +47,7 @@ class DxTextureTargetsTest {
 		RecordingDxBridge bridge = new RecordingDxBridge();
 		DxTexture texture = new DxTexture(bridge, TEXTURE_BINDING | RENDER_ATTACHMENT, "rt", GpuFormat.RGBA8_UNORM, 8, 8, 1, 1);
 
-		assertEquals("createTexture(fmt=1,8x8,mips=1,bind=3)", bridge.calls.get(0));
+		assertEquals("createTexture(fmt=1,8x8,layers=1,mips=1,bind=3,cube=false)", bridge.calls.get(0));
 		assertTrue(texture.hasNativeRenderTarget());
 		assertFalse(texture.hasNativeDepthTarget());
 		assertTrue(new DxTextureView(bridge, texture, 0, 1).hasNativeRenderTargetView());
@@ -55,7 +58,7 @@ class DxTextureTargetsTest {
 		RecordingDxBridge bridge = new RecordingDxBridge();
 		DxTexture texture = new DxTexture(bridge, TEXTURE_BINDING | RENDER_ATTACHMENT, "depth", GpuFormat.D32_FLOAT, 8, 8, 1, 1);
 
-		assertEquals("createTexture(fmt=2,8x8,mips=1,bind=5)", bridge.calls.get(0));
+		assertEquals("createTexture(fmt=2,8x8,layers=1,mips=1,bind=5,cube=false)", bridge.calls.get(0));
 		assertTrue(texture.hasNativeDepthTarget());
 		assertFalse(texture.hasNativeRenderTarget());
 		DxTextureView view = new DxTextureView(bridge, texture, 0, 1);
@@ -72,6 +75,45 @@ class DxTextureTargetsTest {
 		texture.fillRegion(0, 0, 0, 4, 4, 0);
 
 		assertTrue(bridge.calls.isEmpty());
+	}
+
+	@Test
+	void rgbaTextureClearKeepsRedAndBlueChannelsInRgbaByteOrder() {
+		DxTexture texture = new DxTexture(null, 0, "clear", GpuFormat.RGBA8_UNORM, 1, 1, 1, 1);
+
+		texture.fillRegion(0, 0, 0, 1, 1, 0xFFFF0000);
+		assertEquals(0xFF, texture.readRegion(0, 0, 0, 1, 1).get(0) & 0xFF);
+		assertEquals(0x00, texture.readRegion(0, 0, 0, 1, 1).get(2) & 0xFF);
+
+		texture.fillRegion(0, 0, 0, 1, 1, 0xFF0000FF);
+		assertEquals(0x00, texture.readRegion(0, 0, 0, 1, 1).get(0) & 0xFF);
+		assertEquals(0xFF, texture.readRegion(0, 0, 0, 1, 1).get(2) & 0xFF);
+	}
+
+	@Test
+	void cubemapCreationAndFaceUploadsPreserveTheLayerIndex() {
+		RecordingDxBridge bridge = new RecordingDxBridge();
+		DxTexture texture = new DxTexture(bridge, TEXTURE_BINDING | CUBEMAP, "cube", GpuFormat.RGBA8_UNORM, 2, 2, 6, 1);
+		assertEquals("createTexture(fmt=1,2x2,layers=6,mips=1,bind=1,cube=true)", bridge.calls.get(0));
+
+		ByteBuffer face = ByteBuffer.allocateDirect(4).put(new byte[] {1, 2, 3, 4});
+		face.flip();
+		texture.writeRegion(face, 4, 1, 0, 5, 0, 0, 1, 1, 0, 0);
+
+		assertEquals("uploadTexture(77,mip=0,layer=5,size=2x2,cap=96)", bridge.calls.get(1));
+		ByteBuffer uploadedFace = texture.readRegion(0, 5, 0, 0, 1, 1);
+		assertEquals(1, uploadedFace.get(0));
+		assertEquals(4, uploadedFace.get(3));
+	}
+
+	@Test
+	void unsupportedCubemapShapesStayCpuOnly() {
+		RecordingDxBridge bridge = new RecordingDxBridge();
+		DxTexture nonsquare = new DxTexture(bridge, TEXTURE_BINDING | CUBEMAP, "cube", GpuFormat.RGBA8_UNORM, 4, 2, 6, 1);
+		DxTexture wrongLayerCount = new DxTexture(bridge, TEXTURE_BINDING | CUBEMAP, "cube", GpuFormat.RGBA8_UNORM, 4, 4, 5, 1);
+
+		assertFalse(nonsquare.hasNativeTextureHandle());
+		assertFalse(wrongLayerCount.hasNativeTextureHandle());
 	}
 
 	@Test

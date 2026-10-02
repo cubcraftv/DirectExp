@@ -26,6 +26,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
 final class DxTexture extends GpuTexture {
 	private final DxBridge dxBridge;
 	private final ByteBuffer[] mipStorage;
+	private final int layerCount;
+	private final boolean cubemap;
 	private final long nativeTextureHandle;
 	private final int nativeBindMask;
 	private boolean closed;
@@ -34,8 +36,10 @@ final class DxTexture extends GpuTexture {
 		super(usage, label, format, width, height, depthOrLayers, mipLevels);
 		this.dxBridge = dxBridge;
 		this.mipStorage = new ByteBuffer[mipLevels];
+		this.layerCount = depthOrLayers;
+		this.cubemap = (usage & DxTextureBinding.USAGE_CUBEMAP) != 0;
 		this.nativeBindMask = DxTextureBinding.bindMask(usage, format.hasDepthAspect());
-		this.nativeTextureHandle = createNativeTextureHandle(format, width, height, depthOrLayers, mipLevels);
+		this.nativeTextureHandle = createNativeTextureHandle(format, width, height, depthOrLayers, mipLevels, this.cubemap);
 
 		for (int mipLevel = 0; mipLevel < mipLevels; mipLevel++) {
 			int mipWidth = getWidth(mipLevel);
@@ -50,6 +54,7 @@ final class DxTexture extends GpuTexture {
 		int sourceBytesPerPixel,
 		int sourceRowLength,
 		int mipLevel,
+		int layer,
 		int dstX,
 		int dstY,
 		int width,
@@ -57,6 +62,10 @@ final class DxTexture extends GpuTexture {
 		int srcX,
 		int srcY
 	) {
+		if (layer < 0 || layer >= this.layerCount) {
+			throw new IllegalArgumentException("Texture layer is outside the allocated layer range.");
+		}
+
 		ByteBuffer destination = this.mipStorage[mipLevel].duplicate().order(ByteOrder.nativeOrder());
 		ByteBuffer sourceCopy = source.duplicate().order(ByteOrder.nativeOrder());
 		int destinationBytesPerPixel = getFormat().pixelSize();
@@ -67,7 +76,7 @@ final class DxTexture extends GpuTexture {
 		for (int row = 0; row < height; row++) {
 			for (int column = 0; column < width; column++) {
 				int sourcePixelOffset = ((srcY + row) * sourceStride + (srcX + column)) * sourceBytesPerPixel;
-				int destinationPixelOffset = ((dstY + row) * mipWidth + (dstX + column)) * destinationBytesPerPixel;
+				int destinationPixelOffset = (layer * mipWidth * getHeight(mipLevel) + (dstY + row) * mipWidth + (dstX + column)) * destinationBytesPerPixel;
 
 				for (int byteIndex = 0; byteIndex < destinationBytesPerPixel; byteIndex++) {
 					byte value = byteIndex < copyBytesPerPixel ? sourceCopy.get(sourcePixelOffset + byteIndex) : 0;
@@ -76,10 +85,18 @@ final class DxTexture extends GpuTexture {
 			}
 		}
 
-		syncMipToNative(mipLevel);
+		syncMipToNative(mipLevel, layer);
 	}
 
 	ByteBuffer readRegion(int mipLevel, int srcX, int srcY, int width, int height) {
+		return readRegion(mipLevel, 0, srcX, srcY, width, height);
+	}
+
+	ByteBuffer readRegion(int mipLevel, int layer, int srcX, int srcY, int width, int height) {
+		if (layer < 0 || layer >= this.layerCount) {
+			throw new IllegalArgumentException("Texture layer is outside the allocated layer range.");
+		}
+
 		int bytesPerPixel = getFormat().pixelSize();
 		ByteBuffer source = this.mipStorage[mipLevel].duplicate().order(ByteOrder.nativeOrder());
 		ByteBuffer copy = ByteBuffer.allocateDirect(width * height * bytesPerPixel).order(ByteOrder.nativeOrder());
@@ -87,7 +104,7 @@ final class DxTexture extends GpuTexture {
 
 		for (int row = 0; row < height; row++) {
 			for (int column = 0; column < width; column++) {
-				int sourcePixelOffset = ((srcY + row) * mipWidth + (srcX + column)) * bytesPerPixel;
+				int sourcePixelOffset = (layer * mipWidth * getHeight(mipLevel) + (srcY + row) * mipWidth + (srcX + column)) * bytesPerPixel;
 				int copyPixelOffset = (row * width + column) * bytesPerPixel;
 
 				for (int byteIndex = 0; byteIndex < bytesPerPixel; byteIndex++) {
@@ -100,7 +117,7 @@ final class DxTexture extends GpuTexture {
 	}
 
 	void copyRegionTo(DxTexture destination, int mipLevel, int dstX, int dstY, int srcX, int srcY, int width, int height) {
-		destination.writeRegion(readRegion(mipLevel, srcX, srcY, width, height), getFormat().pixelSize(), width, mipLevel, dstX, dstY, width, height, 0, 0);
+		destination.writeRegion(readRegion(mipLevel, srcX, srcY, width, height), getFormat().pixelSize(), width, mipLevel, 0, dstX, dstY, width, height, 0, 0);
 	}
 
 	void fillRegion(int mipLevel, int dstX, int dstY, int width, int height, int packedValue) {
@@ -111,13 +128,17 @@ final class DxTexture extends GpuTexture {
 		for (int row = 0; row < height; row++) {
 			for (int column = 0; column < width; column++) {
 				int destinationPixelOffset = ((dstY + row) * mipWidth + (dstX + column)) * bytesPerPixel;
-				for (int byteIndex = 0; byteIndex < bytesPerPixel; byteIndex++) {
-					destination.put(destinationPixelOffset + byteIndex, (byte) (packedValue >>> (byteIndex * 8)));
+				if (getFormat() == GpuFormat.RGBA8_UNORM) {
+					DxClearColor.writeRgba8(destination, destinationPixelOffset, packedValue);
+				} else {
+					for (int byteIndex = 0; byteIndex < bytesPerPixel; byteIndex++) {
+						destination.put(destinationPixelOffset + byteIndex, (byte) (packedValue >>> (byteIndex * 8)));
+					}
 				}
 			}
 		}
 
-		syncMipToNative(mipLevel);
+		syncMipToNative(mipLevel, 0);
 	}
 
 	long nativeTextureHandle() {
@@ -166,14 +187,16 @@ final class DxTexture extends GpuTexture {
 		};
 	}
 
-	private long createNativeTextureHandle(GpuFormat format, int width, int height, int depthOrLayers, int mipLevels) {
+	private long createNativeTextureHandle(GpuFormat format, int width, int height, int depthOrLayers, int mipLevels, boolean cubemap) {
 		int formatCode = nativeFormatCode(format);
-		if (this.dxBridge == null || formatCode == 0 || depthOrLayers != 1 || this.nativeBindMask == 0) {
+		if (this.dxBridge == null || formatCode == 0 || this.nativeBindMask == 0
+			|| !DxTextureBinding.supportsNativeShape(usage(), format.hasDepthAspect(), width, height, depthOrLayers)
+			|| (cubemap && (format != GpuFormat.RGBA8_UNORM || this.nativeBindMask != DxBridge.TEXTURE_BIND_SHADER_RESOURCE))) {
 			return 0L;
 		}
 
 		try {
-			long handle = this.dxBridge.createTexture(formatCode, width, height, mipLevels, this.nativeBindMask);
+			long handle = this.dxBridge.createTexture(formatCode, width, height, depthOrLayers, mipLevels, this.nativeBindMask, cubemap);
 			if (handle != 0L && LOGGED_NATIVE_TEXTURE_SUCCESS.compareAndSet(false, true)) {
 				DirectExpMod.LOGGER.info(
 					"DirectExp: native GPU texture path active (first native texture created, {}x{}, {} mip levels).",
@@ -203,7 +226,7 @@ final class DxTexture extends GpuTexture {
 		return this.nativeTextureHandle != 0L && (this.nativeBindMask & DxBridge.TEXTURE_BIND_DEPTH_STENCIL) != 0;
 	}
 
-	private void syncMipToNative(int mipLevel) {
+	private void syncMipToNative(int mipLevel, int layer) {
 		// Only RGBA8 has a CPU -> GPU upload path; depth textures are written by
 		// the GPU (clears/draws) and their CPU mirror is not synced.
 		if (this.nativeTextureHandle == 0L || this.dxBridge == null || getFormat() != GpuFormat.RGBA8_UNORM) {
@@ -214,6 +237,7 @@ final class DxTexture extends GpuTexture {
 			this.dxBridge.uploadTextureRgba8(
 				this.nativeTextureHandle,
 				mipLevel,
+				layer,
 				this.mipStorage[mipLevel].duplicate().order(ByteOrder.nativeOrder()),
 				getWidth(mipLevel),
 				getHeight(mipLevel)

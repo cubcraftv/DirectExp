@@ -102,6 +102,8 @@ struct Texture {
 	UINT width = 0;
 	UINT height = 0;
 	UINT mipLevels = 0;
+	UINT arrayLayers = 1;
+	bool cubemap = false;
 	// Which D3D11_BIND_* purposes the resource was created with, and its
 	// TEXTURE_FORMAT_* code; createTextureViewNative uses them to decide
 	// which views (SRV / RTV / DSV) it can and must create.

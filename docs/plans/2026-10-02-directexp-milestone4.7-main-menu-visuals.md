@@ -12,6 +12,13 @@ for the 4.1-4.6 shader/draw work, and
 Vulkan comparisons and current open items. This document takes priority for
 these three user-visible outcomes.
 
+**Implementation status (2026-10-02):** all three code paths are implemented.
+The focused texture tests, client compilation, and Windows native bridge build
+pass. A fresh `runClient` reached GUI atlas creation without repeat missing-
+shader spam, an invalid textured pipeline, a panorama missing-view warning, or
+a JVM crash. Verify the clear hue and button pixels in a screenshot before
+calling the visual acceptance criteria fully closed.
+
 ## Outcome And Order
 
 Deliver a recognizable main menu in this strict order:

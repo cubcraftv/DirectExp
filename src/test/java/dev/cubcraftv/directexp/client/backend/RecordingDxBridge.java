@@ -62,10 +62,15 @@ final class RecordingDxBridge implements DxBridge {
 	}
 
 	@Override
-	public long createTexture(int format, int width, int height, int mipLevels, int bindMask) {
+	public long createTexture(int format, int width, int height, int arrayLayers, int mipLevels, int bindMask, boolean cubemap) {
 		failIfConfigured();
-		this.calls.add("createTexture(fmt=" + format + "," + width + "x" + height + ",mips=" + mipLevels + ",bind=" + bindMask + ")");
+		this.calls.add("createTexture(fmt=" + format + "," + width + "x" + height + ",layers=" + arrayLayers + ",mips=" + mipLevels + ",bind=" + bindMask + ",cube=" + cubemap + ")");
 		return this.textureHandle;
+	}
+
+	@Override
+	public void uploadTextureRgba8(long handle, int mipLevel, int layer, ByteBuffer pixels, int width, int height) {
+		this.calls.add("uploadTexture(" + handle + ",mip=" + mipLevel + ",layer=" + layer + ",size=" + width + "x" + height + ",cap=" + pixels.capacity() + ")");
 	}
 
 	@Override

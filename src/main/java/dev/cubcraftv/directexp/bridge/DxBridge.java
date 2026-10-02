@@ -52,7 +52,7 @@ public interface DxBridge {
 		throw new UnsupportedOperationException("DirectX texture creation is not implemented by this bridge yet.");
 	}
 
-	default void uploadTextureRgba8(long nativeTextureHandle, int mipLevel, ByteBuffer rgbaPixels, int width, int height) {
+	default void uploadTextureRgba8(long nativeTextureHandle, int mipLevel, int layer, ByteBuffer rgbaPixels, int width, int height) {
 		throw new UnsupportedOperationException("DirectX texture upload is not implemented by this bridge yet.");
 	}
 
@@ -166,7 +166,7 @@ public interface DxBridge {
 	 * until written or cleared. Release with {@link #releaseTexture}.
 	 * {@link #uploadTextureRgba8} still works on any RGBA8 texture.
 	 */
-	default long createTexture(int format, int width, int height, int mipLevels, int bindMask) {
+	default long createTexture(int format, int width, int height, int arrayLayers, int mipLevels, int bindMask, boolean cubemap) {
 		throw new UnsupportedOperationException("DirectX render/depth texture creation is not implemented by this bridge yet.");
 	}
 

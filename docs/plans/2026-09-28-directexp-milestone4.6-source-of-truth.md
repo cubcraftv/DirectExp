@@ -1155,9 +1155,15 @@ findings and what the decompiled `com.mojang.blaze3d.vulkan` classes
 5. Observed in the Vulkan source but **not** adopted: Vulkan picks a
    with-depth or without-depth pipeline variant per pass; D3D11 treats a
    missing DSV as "depth test always passes", so no variant is needed.
-6. **Still open:** cubemap panorama (`pipeline/panorama` has no native
-   `Sampler0` view; best guess is a 6-layer texture); texel buffers (Vulkan's
-   `TEXEL_BUFFER` entry type, whole-buffer only, needs a `GpuFormat`; the
-   `clouds` pipelines reflect `CloudFaces` as one - see debug.log); render
-   target readback; the ARGB-vs-ABGR clear-color question (12.4 item 2) and
-   clip-space depth (12.4 item 4) still need a screenshot to settle.
+6. **Resolved for the main-menu panorama and color clears (2026-10-02):**
+  `DxTexture` now accepts valid six-layer cube usage, and the native bridge
+  creates a D3D11 cube-compatible resource, uploads the requested array
+  layer, and creates a `TEXTURECUBE` SRV. Java tests cover face-5 storage and
+  upload plus invalid cube shapes. `DxTexture.fillRegion` now writes packed
+  ARGB into RGBA8 as R,G,B,A, with red/blue regression coverage. A fresh
+  client run shows no panorama missing-view diagnostic after atlas loading.
+  **Still open:** texel buffers (Vulkan's `TEXEL_BUFFER` entry type, whole-
+  buffer only, needs a `GpuFormat`; the `clouds` pipelines reflect
+  `CloudFaces` as one -- see debug.log); render-target readback; pixel-level
+  screenshot confirmation of the clear-color result and button backplates;
+  clip-space depth (12.4 item 4).

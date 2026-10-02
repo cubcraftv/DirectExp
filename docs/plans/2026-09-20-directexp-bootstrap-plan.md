@@ -886,3 +886,20 @@ not a bug in what's implemented so far).
   Vulkan decompile is `C:\Users\user\projects\vulkan.zip`; its cube-view
   contract is summarized in the new plan. These three outcomes are not yet
   verified.
+
+- **2026-10-02 -- Main-menu visual fixes implemented.** `DxTexture.fillRegion`
+  now converts packed ARGB explicitly to RGBA8 bytes; pure-red/pure-blue
+  regression coverage was added. Missing-source shader pipelines are deferred
+  until Mojang clears the pipeline cache on resource reload, preventing the
+  textured GUI pipeline from being retried/logged each frame; permanent
+  compile failures remain cached. Cubemap usage now creates six-layer,
+  cube-compatible D3D11 textures and `TEXTURECUBE` SRVs, with per-layer CPU
+  storage and uploads forwarded from Blaze3D's `writeToTexture` layer index.
+  Native upload validates the mip, layer, dimensions, and layered buffer size.
+  The focused `DxTextureTargetsTest` passes (10 tests), client compilation and
+  the Windows native bridge build pass, and a fresh `runClient` reached GUI
+  atlas creation without the old per-frame missing-source spam, panorama
+  missing-view warning, or JVM crash. The log has one early splash-time source
+  miss, then none after resource reload. Pixel-level screenshot confirmation
+  of the red clear and button backplates remains outstanding; the 12:34 run
+  log shows no post-reload invalid textured pipeline.

@@ -14,6 +14,7 @@ import dev.cubcraftv.directexp.bridge.DxBridge;
 final class DxTextureBinding {
 	static final int USAGE_TEXTURE_BINDING = 4;
 	static final int USAGE_RENDER_ATTACHMENT = 8;
+	static final int USAGE_CUBEMAP = 16;
 
 	private DxTextureBinding() {
 	}
@@ -40,5 +41,12 @@ final class DxTextureBinding {
 			}
 		}
 		return mask;
+	}
+
+	static boolean supportsNativeShape(int usage, boolean depth, int width, int height, int layers) {
+		if ((usage & USAGE_CUBEMAP) != 0) {
+			return !depth && width == height && layers == 6;
+		}
+		return layers == 1;
 	}
 }

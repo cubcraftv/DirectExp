@@ -108,12 +108,12 @@ final class DxCommandEncoderBackend implements CommandEncoderBackend {
 			nativeImage.getPointer(),
 			nativeImage.getWidth() * nativeImage.getHeight() * nativeImage.format().components()
 		);
-		((DxTexture) gpuTexture).writeRegion(source, nativeImage.format().components(), nativeImage.getWidth(), mipLevel, dstX, dstY, width, height, srcX, srcY);
+		((DxTexture) gpuTexture).writeRegion(source, nativeImage.format().components(), nativeImage.getWidth(), mipLevel, layer, dstX, dstY, width, height, srcX, srcY);
 	}
 
 	@Override
 	public void writeToTexture(GpuTexture gpuTexture, ByteBuffer byteBuffer, NativeImage.Format format, int mipLevel, int layer, int dstX, int dstY, int width, int height) {
-		((DxTexture) gpuTexture).writeRegion(byteBuffer, format.components(), width, mipLevel, dstX, dstY, width, height, 0, 0);
+		((DxTexture) gpuTexture).writeRegion(byteBuffer, format.components(), width, mipLevel, layer, dstX, dstY, width, height, 0, 0);
 	}
 
 	@Override

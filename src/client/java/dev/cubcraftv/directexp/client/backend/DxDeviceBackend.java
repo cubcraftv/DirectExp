@@ -21,6 +21,7 @@ import dev.cubcraftv.directexp.bridge.DxBridge;
 import dev.cubcraftv.directexp.client.shader.DxSpirvCache;
 
 import java.nio.ByteBuffer;
+import java.util.Collections;
 import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
@@ -43,6 +44,8 @@ final class DxDeviceBackend implements GpuDeviceBackend {
 	private final DxSurfaceLease surfaceLease;
 	private final DeviceInfo deviceInfo;
 	private final Map<RenderPipeline, DxRenderPipeline> pipelineCache = new IdentityHashMap<>();
+	private final Map<RenderPipeline, DxRenderPipeline> deferredSourcePipelines = new IdentityHashMap<>();
+	private final Set<RenderPipeline> loggedMissingShaderSources = Collections.newSetFromMap(new IdentityHashMap<>());
 	private final DxSpirvCache spirvCache = new DxSpirvCache();
 	private final AtomicBoolean loggedFirstValidPipeline = new AtomicBoolean(false);
 	private final DxDrawDiagnostics drawDiagnostics = (key, message) -> DxNativeResourceLog.drawProblem(key, message);
@@ -108,10 +111,14 @@ final class DxDeviceBackend implements GpuDeviceBackend {
 	private DxRenderPipeline getOrCompilePipeline(RenderPipeline renderPipeline) {
 		synchronized (this.pipelineCache) {
 			DxRenderPipeline cached = this.pipelineCache.get(renderPipeline);
-			if (cached != null || this.defaultShaderSource == null) {
+			if (cached != null) {
 				return cached;
 			}
-			return compileAndCache(renderPipeline, this.defaultShaderSource);
+			DxRenderPipeline deferred = this.deferredSourcePipelines.get(renderPipeline);
+			if (deferred != null || this.defaultShaderSource == null) {
+				return deferred;
+			}
+			return compileAndCache(renderPipeline, this.defaultShaderSource, true);
 		}
 	}
 
@@ -173,20 +180,35 @@ final class DxDeviceBackend implements GpuDeviceBackend {
 			if (cached != null) {
 				return cached;
 			}
+			DxRenderPipeline deferred = this.deferredSourcePipelines.get(renderPipeline);
+			if (deferred != null) {
+				return deferred;
+			}
 
-			return compileAndCache(renderPipeline, shaderSource);
+			return compileAndCache(renderPipeline, shaderSource, false);
 		}
 	}
 
 	/** Caller holds the {@code pipelineCache} lock. */
-	private DxRenderPipeline compileAndCache(RenderPipeline renderPipeline, ShaderSource shaderSource) {
+	private DxRenderPipeline compileAndCache(RenderPipeline renderPipeline, ShaderSource shaderSource, boolean deferMissingSource) {
 		DxRenderPipeline compiled = DxPipelineCompiler.compile(renderPipeline, shaderSource, this.surfaceLease.dxBridge(), this.spirvCache);
-		this.pipelineCache.put(renderPipeline, compiled);
 		if (compiled.isValid()) {
+			this.pipelineCache.put(renderPipeline, compiled);
+			this.deferredSourcePipelines.remove(renderPipeline);
+			this.loggedMissingShaderSources.remove(renderPipeline);
 			if (this.loggedFirstValidPipeline.compareAndSet(false, true)) {
 				DirectExpMod.LOGGER.info("DirectExp: first native render pipeline assembled ({}).", renderPipeline.getLocation());
 			}
+		} else if (deferMissingSource && compiled.failureReason().startsWith("shader source: ")) {
+			this.deferredSourcePipelines.put(renderPipeline, compiled);
+			if (this.loggedMissingShaderSources.add(renderPipeline)) {
+				DirectExpMod.LOGGER.warn(
+					"DirectExp: shader source is not available yet for pipeline {}; it will retry after resource reload.",
+					renderPipeline.getLocation()
+				);
+			}
 		} else {
+			this.pipelineCache.put(renderPipeline, compiled);
 			DirectExpMod.LOGGER.warn("DirectExp: pipeline {} is invalid: {}", renderPipeline.getLocation(), compiled.failureReason());
 		}
 		return compiled;
@@ -197,6 +219,7 @@ final class DxDeviceBackend implements GpuDeviceBackend {
 		synchronized (this.pipelineCache) {
 			this.pipelineCache.values().forEach(DxRenderPipeline::close);
 			this.pipelineCache.clear();
+			this.deferredSourcePipelines.clear();
 		}
 		this.spirvCache.clear();
 	}

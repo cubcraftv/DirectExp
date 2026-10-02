@@ -101,8 +101,8 @@ public final class NativeDxBridge implements DxBridge {
 	}
 
 	@Override
-	public void uploadTextureRgba8(long nativeTextureHandle, int mipLevel, ByteBuffer rgbaPixels, int width, int height) {
-		uploadTextureRgba8Native(nativeTextureHandle, mipLevel, rgbaPixels, width, height);
+	public void uploadTextureRgba8(long nativeTextureHandle, int mipLevel, int layer, ByteBuffer rgbaPixels, int width, int height) {
+		uploadTextureRgba8Native(nativeTextureHandle, mipLevel, layer, rgbaPixels, width, height);
 	}
 
 	@Override
@@ -160,8 +160,8 @@ public final class NativeDxBridge implements DxBridge {
 	}
 
 	@Override
-	public long createTexture(int format, int width, int height, int mipLevels, int bindMask) {
-		return createTextureNative(format, width, height, mipLevels, bindMask);
+	public long createTexture(int format, int width, int height, int arrayLayers, int mipLevels, int bindMask, boolean cubemap) {
+		return createTextureNative(format, width, height, arrayLayers, mipLevels, bindMask, cubemap);
 	}
 
 	@Override
@@ -647,7 +647,7 @@ public final class NativeDxBridge implements DxBridge {
 	// their parameter lists are identical.
 	private static native long createTexture2DNative(int width, int height, int mipLevels);
 
-	private static native void uploadTextureRgba8Native(long nativeTextureHandle, int mipLevel, ByteBuffer rgbaPixels, int width, int height);
+	private static native void uploadTextureRgba8Native(long nativeTextureHandle, int mipLevel, int layer, ByteBuffer rgbaPixels, int width, int height);
 
 	private static native void releaseTexture0(long nativeTextureHandle);
 
@@ -662,7 +662,7 @@ public final class NativeDxBridge implements DxBridge {
 	private static native void releaseBuffer0(long nativeBufferHandle);
 
 	// Milestone 4.6 commit 2 (directexp_bridge_resource.cpp / directexp_bridge_pipeline.cpp).
-	private static native long createTextureNative(int format, int width, int height, int mipLevels, int bindMask);
+	private static native long createTextureNative(int format, int width, int height, int arrayLayers, int mipLevels, int bindMask, boolean cubemap);
 
 	private static native long createPipelineNative(
 		byte[] vertexBytecode, byte[] pixelBytecode, byte[] geometryBytecode,

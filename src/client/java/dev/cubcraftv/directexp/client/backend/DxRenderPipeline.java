@@ -12,8 +12,9 @@ import java.util.Objects;
  * objects plus the resource layout the draw path needs to bind uniforms,
  * textures and samplers into the registers the HLSL was compiled against.
  * An invalid instance (any stage failed) carries the reason and no native
- * handle -- like the Vulkan backend's INVALID pipeline it is cached so a
- * broken pipeline is reported once, not recompiled every frame.
+ * handle -- permanent failures are cached so a broken pipeline is reported
+ * once, not recompiled every frame. A missing shader source can be temporary
+ * during resource reload and is retried by the device backend.
  */
 final class DxRenderPipeline implements CompiledRenderPipeline {
 	private final RenderPipeline pipeline;
