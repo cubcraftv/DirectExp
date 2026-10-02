@@ -903,3 +903,13 @@ not a bug in what's implemented so far).
   miss, then none after resource reload. Pixel-level screenshot confirmation
   of the red clear and button backplates remains outstanding; the 12:34 run
   log shows no post-reload invalid textured pipeline.
+
+- **2026-10-02 -- Splash logo startup shader fallback.** The 16:43 client log
+  confirmed `minecraft:pipeline/mojang_logo` first requests
+  `minecraft:core/position_tex_color` before the resource-backed `ShaderSource`
+  is ready. Deferred compilation cannot recover the splash's one-shot draw.
+  `DxShaderSourceStage` now falls back to the snapshot's import-expanded
+  `position_tex_color` vertex/fragment sources only when the provider returns
+  null; provider/resource-pack sources still take precedence. The focused
+  `DxShaderSourceStageTest` passes. A fresh client run and first-logo screenshot
+  are still needed to verify the runtime result.

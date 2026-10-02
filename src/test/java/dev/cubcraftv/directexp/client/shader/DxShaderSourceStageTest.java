@@ -75,6 +75,20 @@ class DxShaderSourceStageTest {
 	}
 
 	@Test
+	void startupTexturedGuiShaderUsesBundledFallbackWhenProviderIsNotReady() {
+		Identifier texturedGuiId = Identifier.fromNamespaceAndPath("minecraft", "core/position_tex_color");
+		FakeShaderSource shaderSource = new FakeShaderSource();
+		DxShaderPipelineDescriptor descriptor = new DxShaderPipelineDescriptor(texturedGuiId, texturedGuiId, null, "minecraft:pipeline/mojang_logo");
+
+		DxShaderSourceStageResult result = DxShaderSourceStage.load(descriptor, shaderSource, new FakeInjector());
+
+		assertTrue(result.isReady());
+		assertTrue(result.source().vertex().rawSource().contains("in vec2 UV0;"));
+		assertTrue(result.source().fragment().rawSource().contains("uniform sampler2D Sampler0;"));
+		assertTrue(result.source().fragment().preprocessedSource().contains("texture(Sampler0, texCoord0)"));
+	}
+
+	@Test
 	void bothStagesAreNormalizedThroughTheSamePreprocessingPath() {
 		FakeShaderSource shaderSource = new FakeShaderSource()
 			.withSource(VERTEX_ID, ShaderType.VERTEX, "shared-raw")
@@ -91,6 +105,29 @@ class DxShaderSourceStageTest {
 		assertEquals(2, injector.invocationCount());
 		assertEquals("shared-raw+defines", result.source().vertex().preprocessedSource());
 		assertEquals("shared-raw+defines", result.source().fragment().preprocessedSource());
+	}
+
+	@Test
+	void texturedGuiFragmentPreservesOriginalDiscardBehavior() {
+		Identifier texturedGuiId = Identifier.fromNamespaceAndPath("minecraft", "core/position_tex_color");
+		String fragment = "uniform sampler2D Sampler0;\n"
+			+ "in vec2 texCoord0;\n"
+			+ "out vec4 fragColor;\n"
+			+ "void main() {\n"
+			+ "    vec4 color = texture(Sampler0, texCoord0);\n"
+			+ "    if (color.a == 0.0) { discard; }\n"
+			+ "    fragColor = color;\n"
+			+ "}";
+		FakeShaderSource shaderSource = new FakeShaderSource()
+			.withSource(VERTEX_ID, ShaderType.VERTEX, "vertex-raw")
+			.withSource(texturedGuiId, ShaderType.FRAGMENT, fragment);
+		DxShaderPipelineDescriptor descriptor = new DxShaderPipelineDescriptor(VERTEX_ID, texturedGuiId, null, "test:pipeline");
+
+		DxShaderSourceStageResult result = DxShaderSourceStage.load(descriptor, shaderSource, new FakeInjector());
+
+		assertTrue(result.isReady());
+		assertTrue(result.source().fragment().preprocessedSource().contains("fragColor = color;"));
+		assertTrue(result.source().fragment().preprocessedSource().contains("discard;"));
 	}
 
 	@Test

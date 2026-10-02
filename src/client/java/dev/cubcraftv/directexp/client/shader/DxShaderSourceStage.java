@@ -48,6 +48,50 @@ import java.util.Objects;
  * stages being handled by separate, potentially-diverging code.
  */
 public final class DxShaderSourceStage {
+	private static final Identifier EARLY_TEXTURED_GUI_SHADER = Identifier.fromNamespaceAndPath("minecraft", "core/position_tex_color");
+	private static final String EARLY_TEXTURED_GUI_VERTEX = """
+		#version 330
+		layout(std140) uniform DynamicTransforms {
+		    mat4 ModelViewMat;
+		    vec4 ColorModulator;
+		    vec3 ModelOffset;
+		    mat4 TextureMat;
+		};
+		layout(std140) uniform Projection {
+		    mat4 ProjMat;
+		};
+		in vec3 Position;
+		in vec2 UV0;
+		in vec4 Color;
+		out vec2 texCoord0;
+		out vec4 vertexColor;
+		void main() {
+		    gl_Position = ProjMat * ModelViewMat * vec4(Position, 1.0);
+		    texCoord0 = UV0;
+		    vertexColor = Color;
+		}
+		""";
+	private static final String EARLY_TEXTURED_GUI_FRAGMENT = """
+		#version 330
+		layout(std140) uniform DynamicTransforms {
+		    mat4 ModelViewMat;
+		    vec4 ColorModulator;
+		    vec3 ModelOffset;
+		    mat4 TextureMat;
+		};
+		uniform sampler2D Sampler0;
+		in vec2 texCoord0;
+		in vec4 vertexColor;
+		out vec4 fragColor;
+		void main() {
+		    vec4 color = texture(Sampler0, texCoord0) * vertexColor;
+		    if (color.a == 0.0) {
+		        discard;
+		    }
+		    fragColor = color * ColorModulator;
+		}
+		""";
+
 	private DxShaderSourceStage() {
 	}
 
@@ -115,14 +159,29 @@ public final class DxShaderSourceStage {
 	) {
 		String rawSource = shaderSource.get(id, type);
 		if (rawSource == null) {
-			DirectExpMod.LOGGER.error(
-				"Couldn't find source for {} shader ({}) in pipeline {}",
-				type, id, descriptor.debugLabel()
-			);
-			return null;
+			rawSource = earlyShaderSource(id, type);
+			if (rawSource == null) {
+				DirectExpMod.LOGGER.error(
+					"Couldn't find source for {} shader ({}) in pipeline {}",
+					type, id, descriptor.debugLabel()
+				);
+				return null;
+			}
+			DirectExpMod.LOGGER.warn("Using bundled startup fallback for {} shader ({}) in pipeline {}.", type, id, descriptor.debugLabel());
 		}
 
 		String preprocessedSource = injector.injectDefines(rawSource, descriptor.shaderDefines());
 		return new DxPreprocessedShaderSource(id, type, rawSource, preprocessedSource);
+	}
+
+	private static String earlyShaderSource(Identifier id, ShaderType type) {
+		if (!EARLY_TEXTURED_GUI_SHADER.equals(id)) {
+			return null;
+		}
+		return switch (type) {
+			case VERTEX -> EARLY_TEXTURED_GUI_VERTEX;
+			case FRAGMENT -> EARLY_TEXTURED_GUI_FRAGMENT;
+			default -> null;
+		};
 	}
 }

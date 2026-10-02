@@ -174,6 +174,7 @@ final class DxTexture extends GpuTexture {
 	// actually gets used; this only reports whether the *handle* exists.
 	private static final AtomicBoolean LOGGED_NATIVE_TEXTURE_SUCCESS = new AtomicBoolean(false);
 	private static final AtomicBoolean LOGGED_NATIVE_TEXTURE_FALLBACK = new AtomicBoolean(false);
+	private static final AtomicBoolean LOGGED_NATIVE_TEXTURE_UPLOAD_FAILURE = new AtomicBoolean(false);
 
 	/** DxBridge.TEXTURE_FORMAT_* for a format the native path supports, else 0 (CPU-only). */
 	static int nativeFormatCode(GpuFormat format) {
@@ -242,12 +243,13 @@ final class DxTexture extends GpuTexture {
 				getWidth(mipLevel),
 				getHeight(mipLevel)
 			);
-		} catch (UnsupportedOperationException | IllegalStateException ignored) {
-			// Sync failures here are non-fatal: the CPU-side storage above
-			// is already correct and is what blitSurfaceRgba8 falls back to
-			// if hasNativeTextureHandle() is false, so a failed native
-			// upload just means this frame's blit takes the CPU path
-			// instead of the GPU one, not a correctness bug.
+		} catch (UnsupportedOperationException | IllegalStateException error) {
+			if (LOGGED_NATIVE_TEXTURE_UPLOAD_FAILURE.compareAndSet(false, true)) {
+				DirectExpMod.LOGGER.warn(
+					"DirectExp: native texture upload failed (mip {}, layer {}, {}x{}): {}; GPU-sampled textures may contain stale or empty texels.",
+					mipLevel, layer, getWidth(mipLevel), getHeight(mipLevel), error.getMessage()
+				);
+			}
 		}
 	}
 }
