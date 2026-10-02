@@ -26,6 +26,7 @@ import java.nio.ByteOrder;
 final class DxBuffer extends GpuBuffer {
 	private final DxBridge dxBridge;
 	private final long logicalSize;
+	private final int usageBits;
 	private final ByteBuffer storage;
 	private final long nativeBufferHandle;
 	private boolean closed;
@@ -34,12 +35,16 @@ final class DxBuffer extends GpuBuffer {
 		super(usage, size);
 		this.dxBridge = dxBridge;
 		this.logicalSize = size;
+		this.usageBits = usage;
 		this.storage = ByteBuffer.allocateDirect(Math.toIntExact(DxBufferBinding.alignedSize(size))).order(ByteOrder.nativeOrder());
 		this.nativeBufferHandle = createNativeBufferHandle(usage, size);
 
 		// GPU contents are undefined after creation; push the (zeroed) mirror
 		// once so the two copies start identical.
-		syncRange(0L, this.storage.capacity());
+		// Logical size, not the padded capacity: a vertex/index buffer's native width is
+		// exactly `size`, so pushing the padding would fail the native range check
+		// (source of truth, 11.4). A constant buffer is re-sent whole natively regardless.
+		syncRange(0L, size);
 	}
 
 	ByteBuffer sliceStorage(long offset, long length) {
@@ -74,7 +79,7 @@ final class DxBuffer extends GpuBuffer {
 		try {
 			this.dxBridge.updateBuffer(this.nativeBufferHandle, this.storage, Math.toIntExact(offset), Math.toIntExact(length));
 		} catch (UnsupportedOperationException | IllegalStateException error) {
-			DxNativeResourceLog.syncFailure("buffer", error.getMessage());
+			DxNativeResourceLog.syncFailure("buffer", error.getMessage() + " [range " + offset + "+" + length + ", logical size " + this.logicalSize + ", bind mask " + DxBufferBinding.bindMask(this.usageBits) + "]");
 		}
 	}
 

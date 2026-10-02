@@ -31,7 +31,7 @@ authored, not built/run.
 | 4.6 commit 3 (shader interface layout -- fixes the all-pipelines-invalid bug) | **Authored** (this session, using the now-supplied `com.mojang.blaze3d.vulkan.glsl` package). See section 9. `DxShaderInterfaceLayout` compiles under a real `javac` 21 and passes 16 unit tests under a stand-in runner; its output was additionally validated against a real `glslangValidator 15.1.0 --target-env vulkan1.0` and inspected with `spirv-dis`/`spirv-cross` (see 9.5) -- stronger verification than commits 1-2 got, still **not** run through the project's own `shaderc`/Gradle/`runClient`. |
 | 4.6 commit 3 follow-up (feature-level/shader-model fix + vertexStride fix) | **Authored** (this session), from the owner's `runClient` log *after* commit 3 was applied. See section 10. The SM5-vs-FL10.1 branch logic was compiled and run for real under Wine against real mingw-w64 `d3d11.h` enum values (all four feature-level cases assert correctly); `DxPipelineStateDescriptor`'s changed validation passes 5 new unit tests under `javac` 21. The native `directexp_shader_hlsl.cpp`/`directexp_bridge_surface.cpp`/`directexp_common.*` edits themselves are **not** `-fsyntax-only`-checked (no real `jni.h`/`shaderc`/SPIRV-Cross headers in this sandbox, only a hand-written partial `jni.h` stub good enough for a JNI-free isolated logic test, not the whole files) -- reviewed by hand instead. **Not** run through the project's own build/`runClient`. |
 | 4.6 commit 3 follow-up 2 (2026-09-30 logs and repairs) | The 14:28/14:46 logs exposed the End tokenizer bug and the 17:58 log confirms the End, `TRIANGLE_FAN`, and `gl_PointSize` pipeline failures no longer appear. Fan expansion and point-size geometry-shader generation are implemented and covered by tests. The 17:58 run instead reports seven empty-vertex-format pipelines rejected by the native stride guard; that guard is fixed and `./gradlew.bat build` succeeds. **A post-fix `runClient` remains pending.** See section 11.6. |
-| 4.6 commit 4 | Not started (see updated section 8) |
+| 4.6 commit 4 (draw path) | **Authored** (this session). Everything except `drawMultipleIndexed`: render/depth target binding, clears, viewport/scissor, pipeline/VB/IB binding, constant-buffer staging, SRV/sampler binding, `Draw`/`DrawIndexedInstanced`, fan draws. See section 12. The new Minecraft-free helpers compile under `javac` 21 and pass 13 new unit tests under a stand-in JUnit runner; `directexp_bridge_draw.cpp` passes `-fsyntax-only -Wall -Wextra` under `x86_64-w64-mingw32-g++` with the real Windows headers (jni faked). The Blaze3D-facing classes (`DxRenderPassBackend`, `DxCommandEncoderBackend`, `DxDeviceBackend`) were **not** compiled (no Minecraft jar in the sandbox) -- reviewed by hand. **Not** built via Gradle, **not** run in `runClient`. **`drawMultipleIndexed` was blocked, then implemented in the follow-up (section 13)** from the decompiled Vulkan backend. |
 
 Verification available in the authoring sandbox (Linux): `javac` 21, a
 hand-written JUnit-compatible runner over Minecraft stubs, and
@@ -416,7 +416,7 @@ numbers; `stateArray()`/`floatStateArray()` order must match `StateIndex` /
 3. Render-target readback: native color/depth textures become GPU-authoritative
    once drawn to; `DxTexture`'s CPU mirror goes stale (affects
    `copyTextureToBuffer`, screenshots). Needs a staging-texture readback path.
-4. Commit 4 must also handle clears (`createRenderPass` clear color/depth ->
+4. **(Done in commit 4, section 12 -- except `drawMultipleIndexed`.)** Commit 4 must also handle clears (`createRenderPass` clear color/depth ->
    `ClearRenderTargetView`/`ClearDepthStencilView`), viewport/scissor, and
    binding SRVs/samplers/constant-buffer staging per the 4.4 layout.
 5. Clip-space depth (9.3) should be settled -- by finding Blaze3D's shared
@@ -1013,3 +1013,151 @@ exist. **Verification:** Windows `./gradlew.bat build` succeeds and
 `./gradlew.bat test` succeeds. **Not yet done:** a new `runClient` after the
 native fix; that run should confirm the seven pipelines now precompile.
 The separate initial buffer-sync warning remains as described in 11.4.
+
+## 12. Commit 4 -- draw path (what was built)
+
+### 12.1 Scope and the one deliberate gap
+
+Implemented: render/depth target binding with viewport `(0,0,w,h)`, the
+`createRenderPass` clears (`ClearRenderTargetView`/`ClearDepthStencilView`),
+texture-level depth clears, scissor, pipeline binding, vertex/index buffer
+binding, constant-buffer staging, SRV + sampler binding per the 4.4 layout,
+`draw` / `drawIndexed`, and the fan expansion path from 11.3.
+
+**(Superseded by section 13: now implemented.) Was not implemented: `drawMultipleIndexed`.** It needs the exact shape of
+`RenderPass.Draw<T>` and `RenderPass.UniformUploader` (and what
+`dynamicUniforms` means per draw) from the decompiled Blaze3D, which no doc in
+this repository records, and this snapshot's API has visibly diverged from
+older ones (`drawIndexed` takes `baseVertex` and `instanceCount`, there is a
+`GpuFormat`), so it was not guessed. It reports once
+(`draw path: drawMultipleIndexed is not implemented yet`) and draws nothing.
+**Batched draws are most likely how chunk terrain is rendered, so world
+rendering stays blank until this lands; menu/GUI draws do not depend on it.**
+Needed: the decompiled `VulkanRenderPass.drawMultipleIndexed` plus
+`RenderPass.Draw` and `RenderPass.UniformUploader`.
+
+### 12.2 Bridge additions (`DxBridge` / `NativeDxBridge` / `directexp_bridge_draw.cpp`)
+
+| Method | D3D11 |
+| --- | --- |
+| `setRenderTargets(colorView, depthView, w, h)` | `OMSetRenderTargets` + `RSSetViewports(0,0,w,h, 0..1)`; either handle may be 0 |
+| `clearRenderTarget(view, r,g,b,a)` | `ClearRenderTargetView` |
+| `clearDepthStencil(view, depth)` | `ClearDepthStencilView`; stencil flag only for formats that have stencil |
+| `clearDepthTexture(texture, depth)` | transient DSV on mip 0 + `ClearDepthStencilView` |
+| `setScissor(x,y,w,h)` | `RSSetScissorRects` (D3D coordinates, top-left origin) |
+| `bindPipeline(p)` | VS/PS/GS (GS cleared when absent), input layout, topology, blend/depth/raster state; for a GS pipeline also binds + refreshes the b13 viewport constants, so Java never calls `setPipelineViewport` |
+| `bindVertexBuffer(slot, buf, offset)` | `IASetVertexBuffers`, stride taken from the bound pipeline |
+| `bindIndexBuffer(buf, wide, offset)` | `IASetIndexBuffer` R32/R16 |
+| `bindConstantBuffer` / `bindShaderResource` / `bindSampler` (`slot, handle, stageMask`) | `VS/PSSet*`; handle 0 unbinds |
+| `draw(count, first)` / `drawIndexed(count, instances, first, baseVertex)` | `Draw` / `DrawIndexedInstanced` |
+
+Native state is one "bound pipeline" pointer (`ForgetBoundPipeline` on
+pipeline release, `ResetDrawState` on surface release). `Pipeline` gained the
+last-written geometry viewport size.
+
+### 12.3 Client side
+
+- `DxResourceBinder`: layout entries -> bridge binds (name lookup, register =
+  `entry.slot()`, stage mask from `usedIn*Stage`). Constants are re-staged
+  **every draw** (a uniform buffer's contents can change without
+  `setUniform` being re-called); SRVs/samplers only when `bindTexture` or the
+  pipeline changed. A never-set uniform or a texture with no native view is
+  reported once; the former skips the draw, the latter unbinds the slot.
+- `DxDrawScratch`: per-slot scratch constant buffers (copy of the slice from
+  the CPU mirror; grow-only; the 2026-09-28 staging decision) and one 32-bit
+  scratch index buffer for expanded fans. Owned by `DxDeviceBackend`.
+- `DxRenderPassBackend`: lazy binding at draw time with dirty flags (a new
+  pass starts fully dirty; D3D11's default scissor rectangle is empty and every
+  pipeline enables scissor, so the first draw must set it). A draw that cannot
+  be issued is skipped and reported once, never thrown. Pipeline lookup goes
+  through `DxDeviceBackend`'s cache by `RenderPipeline` identity; a pipeline
+  that was never precompiled is reported, not compiled on the spot (no
+  `ShaderSource` is available at that point).
+- `DxCommandEncoderBackend`: `createRenderPass` passes the clears/depth view
+  through; `clearDepthTexture` and both `clearColorAndDepthTextures` are real.
+  A partial-rectangle *depth* clear has no D3D11.0 equivalent
+  (`ClearView` is 11.1, above the 10.1 floor) and is skipped + reported.
+- 11.4 fix applied: `DxBuffer`'s initial sync now pushes the logical size, not
+  the 16-padded capacity; `DxBufferTest`'s expectation (`len=112` for a
+  100-byte vertex buffer, i.e. exactly the out-of-range push) was updated. The
+  `syncFailure` message now carries range, logical size and bind mask, so if
+  the warning persists it says which buffer.
+
+### 12.4 Assumptions to verify at first draw
+
+1. **(Wrong, corrected in section 13.)** **Scissor origin.** `DxScissorMapping` assumed Blaze3D passes GL-style
+   (bottom-left origin) rectangles and flips Y. If GUI clipping (chat,
+   inventory lists) is vertically mirrored, change that one method.
+2. **Clear-color packing.** Pass clears assume packed **ARGB**
+   (`DxClearColor`). `DxTexture.fillRegion` (the texture-level clear) writes
+   the int byte-by-byte in memory order, i.e. treats it as **ABGR**. Both
+   cannot be right for non-gray colors; a red/blue swap on a sky/clear color
+   tells which. Not changed here because it cannot be settled without Blaze3D's
+   source.
+3. **(Wrong, corrected in section 13.)** **Pipeline precompiled before use.** Assumed Blaze3D always routes a
+   pipeline through `precompilePipeline` before `setPipeline`. If
+   `pipeline-not-compiled:<id>` appears in the log, it does not.
+4. **Clip-space depth** (9.3/9.6) is still the open question; the first real
+   draw is the empirical check. Symptom of the wrong answer: geometry in the
+   near half of the depth range missing. Fallback: SPIRV-Cross
+   `fixup_clipspace`.
+5. **Render-target readback** (section 8 item 3) is deliberately a separate
+   commit: once a target is drawn to, `DxTexture`'s CPU mirror is stale, which
+   affects `copyTextureToBuffer` and screenshots only.
+6. Binding an SRV of a texture that is currently a bound render target makes
+   D3D11 silently null the SRV (and warn under the debug layer). Not guarded.
+7. Structured buffers in a layout are reported and unbound, not supported.
+
+### 12.5 What `runClient` should show
+
+`native GPU ...` lines as before, then draw-path warnings only for real
+problems (each once): `drawMultipleIndexed is not implemented yet` is
+**expected** on every run until it is implemented. The first main-menu frame
+is the first real draw; a black window with no `draw path:` warnings means
+draws reached the GPU but produced nothing visible -- check the clip-space
+depth and scissor assumptions above first. Run `./gradlew.bat build` and
+`test` before anything else; the new native file is in `CMakeLists.txt`.
+
+## 13. Follow-up after the first `runClient` (decompiled Vulkan backend as reference)
+
+First `runClient` result: main-menu logo, text and the F3 text background
+render, so the GUI path (fills, textured quads, text) works end to end. Log
+findings and what the decompiled `com.mojang.blaze3d.vulkan` classes
+(`vulkan.zip`, `.class` extension but plain-text Java) changed:
+
+1. **`drawMultipleIndexed` implemented**, mirroring
+   `VulkanRenderPass.drawMultipleIndexed`: per `RenderPass.Draw<T>`, call its
+   `uniformUploaderConsumer` (if any) with `(userContext, uploader)` where the
+   uploader is `setUniform(name, slice)`; use the draw's index buffer/type or
+   the defaults; bind vertex buffer 0; `drawIndexed(baseVertex, firstIndex,
+   indexCount, 1)`. `dynamicUniforms` is unused by Vulkan as well (constants
+   are re-staged each draw here anyway). Untested: no compile against the real
+   `RenderPass.Draw`/`UniformUploader` types here, so the accessor names
+   (`uniformUploaderConsumer`, `indexBuffer`, `indexType`, `vertexBuffer`,
+   `baseVertex`, `firstIndex`, `indexCount`) are taken from the Vulkan source's
+   usage only.
+2. **Scissor assumption was wrong, fixed.** `VulkanRenderPass.enableScissor`
+   passes Blaze3D's `(x, y, w, h)` straight to `vkCmdSetScissor` (top-left
+   origin), and `disableScissor` is `(0, 0, w, h)`. So Blaze3D's rectangle is
+   already top-left; `DxScissorMapping` no longer flips Y (clamping kept).
+   The Y flip would have clipped GUI panels/scroll areas to the wrong band and
+   is a candidate for the "no boxes" symptom in the first run.
+3. **Compile on first use.** Vulkan's `getOrCompilePipeline` compiles with the
+   `defaultShaderSource` passed to `GpuBackend.createDevice`; the
+   `precompilePipeline` custom source is optional (null means default). The DX
+   device now receives and keeps that default source (`DxBackend` ->
+   `DxDeviceBackend`), uses it when `precompilePipeline` gets null, and
+   compiles unseen pipelines at first draw. This should recover
+   `mojang_logo` and `blur/0..5`, which the log showed as never compiled
+   (assumption 3 of 12.4 was wrong). Invalid results stay cached.
+4. **`bindTexture` contract** now matches Vulkan: both null clears the
+   binding, exactly one null throws.
+5. Observed in the Vulkan source but **not** adopted: Vulkan picks a
+   with-depth or without-depth pipeline variant per pass; D3D11 treats a
+   missing DSV as "depth test always passes", so no variant is needed.
+6. **Still open:** cubemap panorama (`pipeline/panorama` has no native
+   `Sampler0` view; best guess is a 6-layer texture); texel buffers (Vulkan's
+   `TEXEL_BUFFER` entry type, whole-buffer only, needs a `GpuFormat`; the
+   `clouds` pipelines reflect `CloudFaces` as one - see debug.log); render
+   target readback; the ARGB-vs-ABGR clear-color question (12.4 item 2) and
+   clip-space depth (12.4 item 4) still need a screenshot to settle.

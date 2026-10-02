@@ -11,19 +11,19 @@ import dev.cubcraftv.directexp.bridge.NativeDxBridge;
 import org.lwjgl.glfw.GLFW;
 
 import java.util.Objects;
-import java.util.function.Function;
+import java.util.function.BiFunction;
 
 public final class DxBackend implements GpuBackend {
 	private static final String WINDOW_CREATION_FAILURE_MESSAGE = "Failed to create window for DirectX";
 	private final DxBridge dxBridge;
 	private final Win32HostSurfaceResolver win32HostSurfaceResolver;
-	private final Function<DxSurfaceLease, GpuDevice> gpuDeviceFactory;
+	private final BiFunction<DxSurfaceLease, ShaderSource, GpuDevice> gpuDeviceFactory;
 
 	public DxBackend() {
 		this(
 			NativeDxBridge.getInstance(),
 			new LwjglWin32HostSurfaceResolver(),
-			surfaceLease -> new GpuDevice(new DxDeviceBackend(surfaceLease))
+			(surfaceLease, defaultShaderSource) -> new GpuDevice(new DxDeviceBackend(surfaceLease, defaultShaderSource))
 		);
 	}
 
@@ -31,7 +31,7 @@ public final class DxBackend implements GpuBackend {
 		this(
 			dxBridge,
 			new LwjglWin32HostSurfaceResolver(),
-			surfaceLease -> new GpuDevice(new DxDeviceBackend(surfaceLease))
+			(surfaceLease, defaultShaderSource) -> new GpuDevice(new DxDeviceBackend(surfaceLease, defaultShaderSource))
 		);
 	}
 
@@ -39,11 +39,11 @@ public final class DxBackend implements GpuBackend {
 		this(
 			dxBridge,
 			win32HostSurfaceResolver,
-			surfaceLease -> new GpuDevice(new DxDeviceBackend(surfaceLease))
+			(surfaceLease, defaultShaderSource) -> new GpuDevice(new DxDeviceBackend(surfaceLease, defaultShaderSource))
 		);
 	}
 
-	DxBackend(DxBridge dxBridge, Win32HostSurfaceResolver win32HostSurfaceResolver, Function<DxSurfaceLease, GpuDevice> gpuDeviceFactory) {
+	DxBackend(DxBridge dxBridge, Win32HostSurfaceResolver win32HostSurfaceResolver, BiFunction<DxSurfaceLease, ShaderSource, GpuDevice> gpuDeviceFactory) {
 		this.dxBridge = Objects.requireNonNull(dxBridge, "dxBridge");
 		this.win32HostSurfaceResolver = Objects.requireNonNull(win32HostSurfaceResolver, "win32HostSurfaceResolver");
 		this.gpuDeviceFactory = Objects.requireNonNull(gpuDeviceFactory, "gpuDeviceFactory");
@@ -79,7 +79,7 @@ public final class DxBackend implements GpuBackend {
 			DxSurfaceLease surfaceLease = bootstrapContext.detachSurfaceLease();
 
 			try {
-				return this.gpuDeviceFactory.apply(surfaceLease);
+				return this.gpuDeviceFactory.apply(surfaceLease, defaultShaderSource);
 			} catch (RuntimeException | Error error) {
 				surfaceLease.close();
 				throw error;

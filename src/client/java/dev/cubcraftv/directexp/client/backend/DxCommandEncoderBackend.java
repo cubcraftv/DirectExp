@@ -18,9 +18,11 @@ import java.util.function.Supplier;
 
 final class DxCommandEncoderBackend implements CommandEncoderBackend {
 	private final DxSurfaceLease surfaceLease;
+	private final DxDrawContext drawContext;
 
-	DxCommandEncoderBackend(DxSurfaceLease surfaceLease) {
+	DxCommandEncoderBackend(DxSurfaceLease surfaceLease, DxDrawContext drawContext) {
 		this.surfaceLease = surfaceLease;
+		this.drawContext = drawContext;
 	}
 
 	@Override
@@ -30,12 +32,12 @@ final class DxCommandEncoderBackend implements CommandEncoderBackend {
 
 	@Override
 	public RenderPassBackend createRenderPass(Supplier<String> label, GpuTextureView colorTextureView, OptionalInt clearColor) {
-		return new DxRenderPassBackend(this, colorTextureView);
+		return new DxRenderPassBackend(this.drawContext, colorTextureView, clearColor, null, OptionalDouble.empty());
 	}
 
 	@Override
 	public RenderPassBackend createRenderPass(Supplier<String> label, GpuTextureView colorTextureView, OptionalInt clearColor, GpuTextureView depthTextureView, OptionalDouble clearDepth) {
-		return new DxRenderPassBackend(this, colorTextureView);
+		return new DxRenderPassBackend(this.drawContext, colorTextureView, clearColor, depthTextureView, clearDepth);
 	}
 
 	@Override
@@ -50,15 +52,32 @@ final class DxCommandEncoderBackend implements CommandEncoderBackend {
 	@Override
 	public void clearColorAndDepthTextures(GpuTexture gpuTexture, int packedColor, GpuTexture depthTexture, double depth) {
 		clearColorTexture(gpuTexture, packedColor);
+		clearDepthTexture(depthTexture, depth);
 	}
 
 	@Override
 	public void clearColorAndDepthTextures(GpuTexture gpuTexture, int packedColor, GpuTexture depthTexture, double depth, int x, int y, int width, int height) {
 		((DxTexture) gpuTexture).fillRegion(0, x, y, width, height, packedColor);
+		if (x == 0 && y == 0 && width >= depthTexture.getWidth(0) && height >= depthTexture.getHeight(0)) {
+			clearDepthTexture(depthTexture, depth);
+		} else {
+			// ClearDepthStencilView has no rectangle (ID3D11DeviceContext1::ClearView needs
+			// D3D11.1, above the 10.1 floor), so a partial depth clear is not expressible yet.
+			this.drawContext.diagnostics().reportOnce("partial-depth-clear", "a partial-rectangle depth clear was requested; it is skipped (no D3D11.0 equivalent)");
+		}
 	}
 
 	@Override
 	public void clearDepthTexture(GpuTexture gpuTexture, double depth) {
+		if (!(gpuTexture instanceof DxTexture dxTexture) || !dxTexture.hasNativeDepthTarget()) {
+			return;
+		}
+
+		try {
+			this.drawContext.dxBridge().clearDepthTexture(dxTexture.nativeTextureHandle(), (float) depth);
+		} catch (UnsupportedOperationException | IllegalStateException error) {
+			this.drawContext.diagnostics().reportOnce("clear-depth-texture", "could not clear a depth texture: " + error.getMessage());
+		}
 	}
 
 	@Override

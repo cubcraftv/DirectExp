@@ -153,6 +153,10 @@ struct Pipeline {
 	ID3D11RasterizerState* rasterizerState = nullptr;
 	D3D_PRIMITIVE_TOPOLOGY topology = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
 	UINT vertexStride = 0;
+	// Viewport size last written into geometryViewportBuffer by the draw path
+	// (directexp_bridge_draw.cpp); 0 until the first bind.
+	UINT geometryViewportWidth = 0;
+	UINT geometryViewportHeight = 0;
 };
 
 // The views one texture-view object owns over a Texture, created via
@@ -190,6 +194,13 @@ extern ID3D11DeviceContext* g_activeContext;
 // shader_model value MUST branch on this rather than assuming Shader
 // Model 5.0 is always available -- see directexp_shader_hlsl.cpp.
 extern D3D_FEATURE_LEVEL g_activeFeatureLevel;
+
+// Draw-path state (directexp_bridge_draw.cpp). The "bound pipeline" is what
+// bindVertexBuffer0 reads the vertex stride from; ForgetBoundPipeline must be
+// called before a Pipeline is deleted and ResetDrawState when the device goes
+// away, so the draw path never dereferences a released object.
+void ForgetBoundPipeline(const Pipeline* pipeline);
+void ResetDrawState();
 
 // Plain-data result of attempting to create a D3D11 device at or above
 // DirectExp's feature level floor. Not a JNI type itself -- see

@@ -45,14 +45,28 @@ final class DxDeviceBackend implements GpuDeviceBackend {
 	private final Map<RenderPipeline, DxRenderPipeline> pipelineCache = new IdentityHashMap<>();
 	private final DxSpirvCache spirvCache = new DxSpirvCache();
 	private final AtomicBoolean loggedFirstValidPipeline = new AtomicBoolean(false);
+	private final DxDrawDiagnostics drawDiagnostics = (key, message) -> DxNativeResourceLog.drawProblem(key, message);
+	private final DxDrawScratch drawScratch;
+	private final ShaderSource defaultShaderSource;
 	private boolean closed;
 
 	DxDeviceBackend(DxBridge dxBridge, DxSurfaceDescriptor surfaceDescriptor) {
-		this(new DxSurfaceLease(dxBridge, surfaceDescriptor));
+		this(new DxSurfaceLease(dxBridge, surfaceDescriptor), (ShaderSource) null);
 	}
 
 	DxDeviceBackend(DxSurfaceLease surfaceLease) {
+		this(surfaceLease, (ShaderSource) null);
+	}
+
+	/**
+	 * @param defaultShaderSource what Blaze3D handed {@code GpuBackend.createDevice}; used to compile a pipeline
+	 *                            on first use when it never went through {@link #precompilePipeline}
+	 *                            (the Vulkan backend's {@code getOrCompilePipeline} does the same). May be null in tests.
+	 */
+	DxDeviceBackend(DxSurfaceLease surfaceLease, ShaderSource defaultShaderSource) {
 		this.surfaceLease = Objects.requireNonNull(surfaceLease, "surfaceLease");
+		this.defaultShaderSource = defaultShaderSource;
+		this.drawScratch = new DxDrawScratch(surfaceLease.dxBridge(), this.drawDiagnostics);
 		this.deviceInfo = new DeviceInfo(
 			"DirectX 11 Bootstrap Device",
 			"cubcraftv",
@@ -84,7 +98,21 @@ final class DxDeviceBackend implements GpuDeviceBackend {
 
 	@Override
 	public CommandEncoderBackend createCommandEncoder() {
-		return new DxCommandEncoderBackend(this.surfaceLease);
+		return new DxCommandEncoderBackend(
+			this.surfaceLease,
+			new DxDrawContext(this.surfaceLease.dxBridge(), this.drawScratch, this::getOrCompilePipeline, this.drawDiagnostics)
+		);
+	}
+
+	/** The pipeline for {@code renderPipeline}, compiled now with the default shader source if it was never precompiled; null only if there is no default source. */
+	private DxRenderPipeline getOrCompilePipeline(RenderPipeline renderPipeline) {
+		synchronized (this.pipelineCache) {
+			DxRenderPipeline cached = this.pipelineCache.get(renderPipeline);
+			if (cached != null || this.defaultShaderSource == null) {
+				return cached;
+			}
+			return compileAndCache(renderPipeline, this.defaultShaderSource);
+		}
 	}
 
 	@Override
@@ -135,7 +163,8 @@ final class DxDeviceBackend implements GpuDeviceBackend {
 	}
 
 	@Override
-	public CompiledRenderPipeline precompilePipeline(RenderPipeline renderPipeline, ShaderSource shaderSource) {
+	public CompiledRenderPipeline precompilePipeline(RenderPipeline renderPipeline, ShaderSource customShaderSource) {
+		ShaderSource shaderSource = customShaderSource == null ? this.defaultShaderSource : customShaderSource;
 		// Keyed on the RenderPipeline instance itself, like the Vulkan backend:
 		// an instance already encodes the full render state. Invalid results are
 		// cached too, so a broken pipeline is reported once rather than every frame.
@@ -145,17 +174,22 @@ final class DxDeviceBackend implements GpuDeviceBackend {
 				return cached;
 			}
 
-			DxRenderPipeline compiled = DxPipelineCompiler.compile(renderPipeline, shaderSource, this.surfaceLease.dxBridge(), this.spirvCache);
-			this.pipelineCache.put(renderPipeline, compiled);
-			if (compiled.isValid()) {
-				if (this.loggedFirstValidPipeline.compareAndSet(false, true)) {
-					DirectExpMod.LOGGER.info("DirectExp: first native render pipeline assembled ({}).", renderPipeline.getLocation());
-				}
-			} else {
-				DirectExpMod.LOGGER.warn("DirectExp: pipeline {} is invalid: {}", renderPipeline.getLocation(), compiled.failureReason());
-			}
-			return compiled;
+			return compileAndCache(renderPipeline, shaderSource);
 		}
+	}
+
+	/** Caller holds the {@code pipelineCache} lock. */
+	private DxRenderPipeline compileAndCache(RenderPipeline renderPipeline, ShaderSource shaderSource) {
+		DxRenderPipeline compiled = DxPipelineCompiler.compile(renderPipeline, shaderSource, this.surfaceLease.dxBridge(), this.spirvCache);
+		this.pipelineCache.put(renderPipeline, compiled);
+		if (compiled.isValid()) {
+			if (this.loggedFirstValidPipeline.compareAndSet(false, true)) {
+				DirectExpMod.LOGGER.info("DirectExp: first native render pipeline assembled ({}).", renderPipeline.getLocation());
+			}
+		} else {
+			DirectExpMod.LOGGER.warn("DirectExp: pipeline {} is invalid: {}", renderPipeline.getLocation(), compiled.failureReason());
+		}
+		return compiled;
 	}
 
 	@Override
@@ -170,6 +204,7 @@ final class DxDeviceBackend implements GpuDeviceBackend {
 	@Override
 	public void close() {
 		clearPipelineCache();
+		this.drawScratch.close();
 		this.surfaceLease.close();
 		this.closed = true;
 	}

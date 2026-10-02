@@ -21,14 +21,14 @@ class DxBufferTest {
 	}
 
 	@Test
-	void vertexBufferGetsNativeHandleAndInitialFullSync() {
+	void vertexBufferGetsNativeHandleAndInitialSyncOfItsLogicalSize() {
 		RecordingDxBridge bridge = new RecordingDxBridge();
 		DxBuffer buffer = new DxBuffer(bridge, 32, 100);
 
 		assertTrue(buffer.hasNativeBufferHandle());
 		assertEquals(List.of(
 			"createBuffer(mask=" + DxBridge.BUFFER_BIND_VERTEX + ",width=100)",
-			"updateBuffer(100,off=0,len=112,cap=112)" // mirror is padded to a multiple of 16
+			"updateBuffer(100,off=0,len=100,cap=112)" // syncs the logical size; only the mirror is padded to a multiple of 16 (source of truth 11.4)
 		), bridge.calls);
 	}
 

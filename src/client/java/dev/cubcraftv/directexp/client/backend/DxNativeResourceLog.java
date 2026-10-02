@@ -30,6 +30,13 @@ final class DxNativeResourceLog {
 		}
 	}
 
+	/** A draw-path problem (skipped draw, failed bind). Once per key: these repeat every frame. */
+	static void drawProblem(String key, String message) {
+		if (LOGGED.add("draw:" + key)) {
+			DirectExpMod.LOGGER.warn("DirectExp: draw path: {}", message);
+		}
+	}
+
 	static void syncFailure(String kind, String reason) {
 		if (LOGGED.add(kind + ":sync")) {
 			DirectExpMod.LOGGER.warn("DirectExp: native GPU {} upload failed; GPU copy may be stale ({}).", kind, reason);

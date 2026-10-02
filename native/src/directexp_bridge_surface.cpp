@@ -361,6 +361,7 @@ Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_releaseSurface0(JNIEnv*, jcla
 		// the current single-window assumption, since releasing the
 		// surface means the game is shutting down or the backend is being
 		// torn down anyway.
+		ResetDrawState();
 		g_activeDevice = nullptr;
 		g_activeContext = nullptr;
 		g_activeFeatureLevel = static_cast<D3D_FEATURE_LEVEL>(0);

@@ -439,7 +439,7 @@ design spec's stated success criterion for the whole milestone.
 - [ ] Pipeline cache keys must key on actual render state, not shader
   identity alone (design spec's Pipeline Compilation section, same
   requirement MetalExp has).
-- [ ] Wire `DxRenderPassBackend.draw()` / `drawIndexed()` /
+- [~] (draw/drawIndexed authored in 4.6 commit 4; `drawMultipleIndexed` still open) Wire `DxRenderPassBackend.draw()` / `drawIndexed()` /
   `drawMultipleIndexed()` (currently literal no-ops marked
   `// TODO(Milestone 4)`) through the native bridge to actually issue
   `Draw`/`DrawIndexedInstanced` against the compiled pipeline state.

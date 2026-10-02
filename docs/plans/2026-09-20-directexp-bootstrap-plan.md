@@ -849,3 +849,40 @@ not a bug in what's implemented so far).
   tested; actual draw output is not yet runtime-verified. Details:
   `docs/plans/2026-09-28-directexp-milestone4.6-source-of-truth.md` sections
   11.3 and 11.6.
+
+- **2026-10-01 -- 4.6 commit 4 (draw path) authored.** Render/depth target
+  binding, clears, viewport/scissor, pipeline + vertex/index buffer binding,
+  constant-buffer staging, SRV/sampler binding per the 4.4 layout, and real
+  `Draw`/`DrawIndexed` (including fan expansion) now go through the native
+  bridge (`native/src/directexp_bridge_draw.cpp`, `DxResourceBinder`,
+  `DxDrawScratch`, `DxRenderPassBackend`). The 11.4 buffer-sync bug is fixed.
+  `drawMultipleIndexed` is **not** implemented: it needs
+  `RenderPass.Draw`/`UniformUploader` from the decompiled Blaze3D, so batched
+  draws (likely chunk terrain) stay no-ops with a one-time warning. Verified
+  in the authoring sandbox only: new Minecraft-free helpers under `javac` 21
+  (13 new tests, stand-in runner) and the native file under mingw-w64
+  `-fsyntax-only -Wall -Wextra`; the Blaze3D-facing classes were not compiled.
+  **Not** built through Gradle or run in `runClient`. Open assumptions
+  (scissor origin, ARGB vs ABGR clear color, clip-space depth) are listed in
+  source-of-truth section 12.4. Render-target readback is the next, separate
+  commit.
+
+- **2026-10-02 -- 4.6 commit 4 follow-up after first `runClient`.** The GUI
+  (logo, text, F3 background) renders through the new draw path. Using the
+  decompiled Vulkan backend as reference: implemented `drawMultipleIndexed`,
+  corrected the scissor convention (Blaze3D is already top-left; no Y flip),
+  and compile pipelines on first use from the device's default `ShaderSource`
+  (fixes the never-compiled `mojang_logo`/`blur/*`). Not yet compiled against
+  the real Blaze3D types or run. Still open: cubemap panorama, texel buffers
+  (clouds), render-target readback, clear-color packing, clip-space depth. See
+  source-of-truth section 13.
+
+- **2026-10-02 -- Main-menu visual priorities.** Owner reports the initial
+  clear appears blue instead of red, button labels render without their
+  backgrounds, and the panorama is absent. Added
+  `docs/plans/2026-10-02-directexp-milestone4.7-main-menu-visuals.md` to
+  prioritize clear-color correctness, button backplates, then six-face
+  cubemap support, with runtime acceptance checks for each. The supplied
+  Vulkan decompile is `C:\Users\user\projects\vulkan.zip`; its cube-view
+  contract is summarized in the new plan. These three outcomes are not yet
+  verified.

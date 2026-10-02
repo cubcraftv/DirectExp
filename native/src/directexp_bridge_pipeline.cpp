@@ -312,6 +312,7 @@ Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_releasePipeline0(JNIEnv*, jcl
 		return;
 	}
 
+	ForgetBoundPipeline(pipeline);
 	ReleasePipelineObjects(pipeline);
 	delete pipeline;
 }

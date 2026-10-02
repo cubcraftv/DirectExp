@@ -10,36 +10,66 @@ import com.mojang.blaze3d.systems.RenderPassBackend;
 import com.mojang.blaze3d.textures.GpuSampler;
 import com.mojang.blaze3d.textures.GpuTextureView;
 import com.mojang.blaze3d.vertex.VertexFormat;
+import dev.cubcraftv.directexp.bridge.DxBridge;
 
+import java.nio.ByteBuffer;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.OptionalDouble;
+import java.util.OptionalInt;
+import java.util.function.BiConsumer;
 import java.util.function.Supplier;
 
 /**
- * Milestone 4 ("Shader and Pipeline Core") owns the real implementation of
- * this class -- actually compiling pipeline state and issuing D3D11 draw
- * calls through the native bridge. Until then, this class only tracks the
- * render-pass state Blaze3D pushes into it (pipeline, bound
- * textures/samplers, uniform slices, vertex/index buffers, scissor) so the
- * class compiles against the real RenderPassBackend interface and so a
- * future implementation has a concrete place to plug native draw calls
- * into, without callers crashing on a missing method. draw()/drawIndexed()/
- * drawMultipleIndexed() intentionally do not throw: at this scaffold stage
- * DxBackendBootstrapContext already fails earlier (DxBridge.probeSurface is
- * still a default-throw stub), so this class is never reached in practice
- * yet, but it should not become a second point of failure once the surface
- * path is implemented before the draw path is.
+ * One Blaze3D render pass on the D3D11 immediate context (Milestone 4.6,
+ * commit 4).
+ *
+ * <p>Blaze3D pushes state in (pipeline, textures, uniforms, buffers, scissor);
+ * this class records it and turns it into bridge calls lazily, at draw time,
+ * because D3D11 binding state is sticky and only what changed needs re-sending:
+ * <ul>
+ *   <li><b>pass start</b>: render/depth target binding, viewport
+ *       {@code (0, 0, w, h)}, and the optional clears;</li>
+ *   <li><b>first draw with a pipeline</b>: {@code bindPipeline}, then vertex
+ *       buffers (the stride comes from the pipeline), then the pipeline's
+ *       textures/samplers;</li>
+ *   <li><b>every draw</b>: scissor when changed (it must be set at least once,
+ *       D3D11's default scissor rectangle is empty and every pipeline enables
+ *       scissor), the index buffer when changed, and all constant buffers
+ *       (their contents can change without {@code setUniform} being called
+ *       again; dirty tracking by buffer version is a later optimisation).</li>
+ * </ul>
+ * CPU-side buffer mirrors stay authoritative (see {@link DxBuffer}); uniform
+ * slices are read from them and copied into per-slot scratch constant buffers
+ * ({@link DxDrawScratch}), so uniform buffers over 64 KiB never need a native
+ * mirror.
+ *
+ * <p>A draw that cannot be issued (pipeline invalid or never compiled, a
+ * buffer without a native handle, a native failure) is skipped and reported
+ * once per cause through {@link DxDrawDiagnostics}; it never throws, because a
+ * single bad pipeline must not take the frame down.
+ *
+ * <p>{@link #drawMultipleIndexed} follows the decompiled
+ * {@code VulkanRenderPass} line for line (see the method comment).
  */
 final class DxRenderPassBackend implements RenderPassBackend {
+	private final DxTextureView colorView;
+	private final DxTextureView depthView;
 	private final DxTexture colorTarget;
 	private final int colorTargetMipLevel;
-	private final DxCommandEncoderBackend commandEncoderBackend;
+	private final int targetWidth;
+	private final int targetHeight;
+	private final DxDrawContext drawContext;
+	private final DxBridge dxBridge;
+	private final DxResourceBinder resourceBinder;
+	private final DxResourceBinder.Source bindingSource = new PassBindingSource();
 	private final Map<String, BoundTexture> boundTextures = new HashMap<>();
 	private final Map<String, GpuBuffer> uniformBuffers = new HashMap<>();
 	private final Map<String, GpuBufferSlice> uniformSlices = new HashMap<>();
 	private final Map<Integer, DxBuffer> vertexBuffers = new HashMap<>();
 	private final DxTriangleFanExpander fanExpander = new DxTriangleFanExpander();
+	private final boolean nativeTargetsBound;
 
 	private RenderPipeline pipeline;
 	private DxBuffer indexBuffer;
@@ -50,11 +80,19 @@ final class DxRenderPassBackend implements RenderPassBackend {
 	private int scissorWidth;
 	private int scissorHeight;
 
-	DxRenderPassBackend(GpuTextureView colorTextureView) {
-		this(null, colorTextureView);
-	}
+	// Lazy-binding state. A fresh pass starts with everything dirty because D3D11
+	// state left over from a previous pass says nothing about this one.
+	private DxRenderPipeline boundPipeline;
+	private boolean scissorDirty = true;
+	private boolean vertexBuffersDirty = true;
+	private boolean indexBufferDirty = true;
+	private boolean texturesDirty = true;
 
-	DxRenderPassBackend(DxCommandEncoderBackend commandEncoderBackend, GpuTextureView colorTextureView) {
+	DxRenderPassBackend(DxDrawContext drawContext, GpuTextureView colorTextureView, OptionalInt clearColor, GpuTextureView depthTextureView, OptionalDouble clearDepth) {
+		this.drawContext = drawContext;
+		this.dxBridge = drawContext == null ? null : drawContext.dxBridge();
+		this.resourceBinder = drawContext == null ? null : new DxResourceBinder(drawContext.dxBridge(), drawContext.scratch(), drawContext.diagnostics());
+
 		if (colorTextureView == null || colorTextureView.isClosed()) {
 			throw new IllegalArgumentException("DirectX render pass requires a live color texture view.");
 		}
@@ -67,9 +105,49 @@ final class DxRenderPassBackend implements RenderPassBackend {
 			throw new IllegalArgumentException("DirectX render pass currently only supports RGBA8_UNORM color targets.");
 		}
 
-		this.commandEncoderBackend = commandEncoderBackend;
 		this.colorTarget = dxTexture;
 		this.colorTargetMipLevel = colorTextureView.baseMipLevel();
+		this.colorView = colorTextureView instanceof DxTextureView dxView ? dxView : null;
+		this.depthView = depthTextureView instanceof DxTextureView dxDepthView && !dxDepthView.isClosed() ? dxDepthView : null;
+		this.targetWidth = colorTextureView.getWidth(0);
+		this.targetHeight = colorTextureView.getHeight(0);
+		this.nativeTargetsBound = beginNativePass(clearColor, clearDepth);
+	}
+
+	/**
+	 * Binds the targets, sets the viewport and performs the pass's clears.
+	 *
+	 * @return false when the pass has no native targets (CPU-only texture, no bridge, or a native failure); its draws are then skipped
+	 */
+	private boolean beginNativePass(OptionalInt clearColor, OptionalDouble clearDepth) {
+		if (this.dxBridge == null) {
+			return false;
+		}
+
+		if (this.colorView == null || !this.colorView.hasNativeRenderTargetView()) {
+			report("pass-no-native-color", "a render pass color target has no native render-target view (texture created without a native handle or without render-attachment usage); its draws are skipped");
+			return false;
+		}
+
+		boolean hasDepthTarget = this.depthView != null && this.depthView.hasNativeDepthStencilView();
+		if (this.depthView != null && !hasDepthTarget) {
+			report("pass-no-native-depth", "a render pass depth target has no native depth-stencil view; the pass runs without depth");
+		}
+
+		try {
+			this.dxBridge.setRenderTargets(this.colorView.nativeViewHandle(), hasDepthTarget ? this.depthView.nativeViewHandle() : 0L, this.targetWidth, this.targetHeight);
+			if (clearColor != null && clearColor.isPresent()) {
+				float[] rgba = DxClearColor.unpackArgb(clearColor.getAsInt());
+				this.dxBridge.clearRenderTarget(this.colorView.nativeViewHandle(), rgba[0], rgba[1], rgba[2], rgba[3]);
+			}
+			if (hasDepthTarget && clearDepth != null && clearDepth.isPresent()) {
+				this.dxBridge.clearDepthStencil(this.depthView.nativeViewHandle(), (float) clearDepth.getAsDouble());
+			}
+			return true;
+		} catch (UnsupportedOperationException | IllegalStateException error) {
+			report("pass-begin", "could not begin a native render pass: " + error.getMessage());
+			return false;
+		}
 	}
 
 	@Override
@@ -90,7 +168,15 @@ final class DxRenderPassBackend implements RenderPassBackend {
 		if (name == null) {
 			throw new IllegalArgumentException("DirectX render pass texture binding requires a name.");
 		}
-		this.boundTextures.put(name, new BoundTexture(textureView, sampler));
+		// Same contract as the Vulkan backend: both null clears the binding, exactly one null is a bug.
+		if (textureView == null && sampler == null) {
+			this.boundTextures.remove(name);
+		} else if (textureView != null && sampler != null) {
+			this.boundTextures.put(name, new BoundTexture(textureView, sampler));
+		} else {
+			throw new IllegalArgumentException("DirectX render pass texture binding needs both a texture view and a sampler, or neither.");
+		}
+		this.texturesDirty = true;
 	}
 
 	@Override
@@ -112,51 +198,107 @@ final class DxRenderPassBackend implements RenderPassBackend {
 		this.scissorY = y;
 		this.scissorWidth = width;
 		this.scissorHeight = height;
+		this.scissorDirty = true;
 	}
 
 	@Override
 	public void disableScissor() {
 		this.scissorEnabled = false;
+		this.scissorDirty = true;
 	}
 
 	@Override
 	public void setVertexBuffer(int slot, GpuBuffer gpuBuffer) {
 		this.vertexBuffers.put(slot, (DxBuffer) gpuBuffer);
+		this.vertexBuffersDirty = true;
 	}
 
 	@Override
 	public void setIndexBuffer(GpuBuffer gpuBuffer, VertexFormat.IndexType indexType) {
 		this.indexBuffer = (DxBuffer) gpuBuffer;
 		this.indexType = indexType;
+		this.indexBufferDirty = true;
 	}
 
 	@Override
 	public void drawIndexed(int baseVertex, int firstIndex, int indexCount, int instanceCount) {
-		if (isTriangleFanPipeline() && this.indexBuffer != null && this.indexType != null) {
+		boolean fan = isTriangleFanPipeline();
+		if (this.indexBuffer == null || this.indexType == null) {
+			report("draw-no-index-buffer", "drawIndexed without an index buffer; draw skipped");
+			return;
+		}
+
+		if (fan) {
 			// The pipeline topology is TRIANGLELIST; the fan's indices become
-			// triangle-list indices here. Submission draws fanExpander.indices()
-			// [0, count()) with the same baseVertex and instanceCount.
+			// triangle-list indices here, still relative to the draw's base vertex.
 			expandIndexedFan(firstIndex, indexCount);
 		}
-		// TODO(Milestone 4): compile `this.pipeline` to D3D11 shader/PSO
-		// state and issue DrawIndexedInstanced through the native bridge.
-		// Currently a no-op: state above is tracked but nothing is
-		// submitted to the GPU yet.
+
+		if (!prepareDraw()) {
+			return;
+		}
+
+		try {
+			if (fan) {
+				issueExpandedFan(instanceCount, baseVertex);
+				return;
+			}
+
+			if (!bindIndexBufferIfDirty()) {
+				return;
+			}
+			this.dxBridge.drawIndexed(indexCount, instanceCount, firstIndex, baseVertex);
+		} catch (UnsupportedOperationException | IllegalStateException error) {
+			report("draw-indexed", "DrawIndexedInstanced failed: " + error.getMessage());
+		}
 	}
 
 	@Override
-	public <T> void drawMultipleIndexed(Collection<RenderPass.Draw<T>> draws, GpuBuffer gpuBuffer, VertexFormat.IndexType indexType, Collection<String> dynamicUniforms, T userContext) {
-		// TODO(Milestone 4): same as drawIndexed, batched. No-op for now.
+	public <T> void drawMultipleIndexed(Collection<RenderPass.Draw<T>> draws, GpuBuffer defaultIndexBuffer, VertexFormat.IndexType defaultIndexType, Collection<String> dynamicUniforms, T userContext) {
+		// Mirrors VulkanRenderPass.drawMultipleIndexed: per draw, let the draw's
+		// uploader replace uniforms (chunk-section offsets etc.), pick the draw's
+		// index buffer or the default, bind vertex buffer 0, draw one instance.
+		// dynamicUniforms is unused there too: uniforms are re-staged every draw anyway.
+		for (RenderPass.Draw<T> draw : draws) {
+			BiConsumer<T, RenderPass.UniformUploader> uploader = draw.uniformUploaderConsumer();
+			if (uploader != null) {
+				uploader.accept(userContext, (name, slice) -> setUniform(name, slice));
+			}
+
+			GpuBuffer indexBuffer = draw.indexBuffer() == null ? defaultIndexBuffer : draw.indexBuffer();
+			VertexFormat.IndexType indexType = draw.indexType() == null ? defaultIndexType : draw.indexType();
+			if (indexBuffer == null || indexType == null) {
+				report("draw-multiple-no-index", "a batched draw has neither its own nor a default index buffer/type; draw skipped");
+				continue;
+			}
+
+			setIndexBuffer(indexBuffer, indexType);
+			setVertexBuffer(0, draw.vertexBuffer());
+			drawIndexed(draw.baseVertex(), draw.firstIndex(), draw.indexCount(), 1);
+		}
 	}
 
 	@Override
 	public void draw(int firstVertex, int vertexCount) {
-		if (isTriangleFanPipeline()) {
-			// Submission draws fanExpander.indices()[0, count()) as an indexed
-			// triangle list with base vertex 0 (indices are absolute here).
+		boolean fan = isTriangleFanPipeline();
+		if (fan) {
+			// Expanded into absolute vertex numbers; drawn indexed with base vertex 0.
 			this.fanExpander.expandNonIndexed(firstVertex, vertexCount);
 		}
-		// TODO(Milestone 4): issue Draw through the native bridge. No-op for now.
+
+		if (!prepareDraw()) {
+			return;
+		}
+
+		try {
+			if (fan) {
+				issueExpandedFan(1, 0);
+				return;
+			}
+			this.dxBridge.draw(vertexCount, firstVertex);
+		} catch (UnsupportedOperationException | IllegalStateException error) {
+			report("draw", "Draw failed: " + error.getMessage());
+		}
 	}
 
 	@Override
@@ -189,6 +331,141 @@ final class DxRenderPassBackend implements RenderPassBackend {
 		return this.colorTargetMipLevel;
 	}
 
+	/**
+	 * Brings the D3D11 pipeline state up to date for one draw.
+	 *
+	 * @return false when the draw must be skipped (reported once)
+	 */
+	private boolean prepareDraw() {
+		if (!this.nativeTargetsBound) {
+			return false;
+		}
+
+		if (this.pipeline == null) {
+			report("draw-no-pipeline", "draw without a pipeline; draw skipped");
+			return false;
+		}
+
+		DxRenderPipeline compiled = this.drawContext.pipelineLookup().apply(this.pipeline);
+		if (compiled == null) {
+			report("pipeline-not-compiled:" + this.pipeline.getLocation(), "pipeline " + this.pipeline.getLocation() + " was never compiled by the device backend; draws skipped");
+			return false;
+		}
+		if (!compiled.isValid()) {
+			// Already reported when it failed to compile; don't spam per draw.
+			return false;
+		}
+
+		try {
+			if (compiled != this.boundPipeline) {
+				this.dxBridge.bindPipeline(compiled.nativePipelineHandle());
+				this.boundPipeline = compiled;
+				// Stride (vertex buffers) and register layout (textures) belong to the pipeline.
+				this.vertexBuffersDirty = true;
+				this.texturesDirty = true;
+			}
+
+			if (this.scissorDirty) {
+				int[] rect = this.scissorEnabled
+					? DxScissorMapping.toTopLeftRect(this.scissorX, this.scissorY, this.scissorWidth, this.scissorHeight, this.targetWidth, this.targetHeight)
+					: DxScissorMapping.fullRect(this.targetWidth, this.targetHeight);
+				this.dxBridge.setScissor(rect[0], rect[1], rect[2], rect[3]);
+				this.scissorDirty = false;
+			}
+
+			if (this.vertexBuffersDirty) {
+				for (Map.Entry<Integer, DxBuffer> entry : this.vertexBuffers.entrySet()) {
+					DxBuffer buffer = entry.getValue();
+					if (!buffer.hasNativeBufferHandle()) {
+						report("vertex-buffer-no-native", "a vertex buffer has no native handle; draws using it are skipped");
+						return false;
+					}
+					this.dxBridge.bindVertexBuffer(entry.getKey(), buffer.nativeBufferHandle(), 0);
+				}
+				this.vertexBuffersDirty = false;
+			}
+
+			if (this.texturesDirty) {
+				this.resourceBinder.bindTextures(compiled.layout(), this.bindingSource);
+				this.texturesDirty = false;
+			}
+
+			return this.resourceBinder.bindConstants(compiled.layout(), this.bindingSource);
+		} catch (UnsupportedOperationException | IllegalStateException error) {
+			report("prepare-draw", "binding pipeline state failed: " + error.getMessage());
+			return false;
+		}
+	}
+
+	private boolean bindIndexBufferIfDirty() {
+		if (!this.indexBufferDirty) {
+			return true;
+		}
+		if (!this.indexBuffer.hasNativeBufferHandle()) {
+			report("index-buffer-no-native", "an index buffer has no native handle; draws using it are skipped");
+			return false;
+		}
+		this.dxBridge.bindIndexBuffer(this.indexBuffer.nativeBufferHandle(), this.indexType == VertexFormat.IndexType.INT, 0);
+		this.indexBufferDirty = false;
+		return true;
+	}
+
+	/** Uploads the expanded fan to the scratch index buffer and draws it as a triangle list. */
+	private void issueExpandedFan(int instanceCount, int baseVertex) {
+		int count = this.fanExpander.count();
+		if (count == 0) {
+			return;
+		}
+
+		long handle = this.drawContext.scratch().stageIndices(this.fanExpander.indices(), count);
+		if (handle == 0L) {
+			return; // reported by the scratch
+		}
+
+		this.dxBridge.bindIndexBuffer(handle, true, 0);
+		// The scratch buffer displaced the pass's real index buffer.
+		this.indexBufferDirty = true;
+		this.dxBridge.drawIndexed(count, instanceCount, 0, baseVertex);
+	}
+
+	private void report(String key, String message) {
+		if (this.drawContext != null) {
+			this.drawContext.diagnostics().reportOnce(key, message);
+		}
+	}
+
 	private record BoundTexture(GpuTextureView textureView, GpuSampler sampler) {
+	}
+
+	/** Answers the binder's by-name lookups from the state Blaze3D pushed into this pass. */
+	private final class PassBindingSource implements DxResourceBinder.Source {
+		@Override
+		public ByteBuffer uniformBytes(String name) {
+			GpuBufferSlice slice = DxRenderPassBackend.this.uniformSlices.get(name);
+			if (slice != null) {
+				return ((DxBuffer) slice.buffer()).sliceStorage(slice.offset(), slice.length());
+			}
+
+			GpuBuffer whole = DxRenderPassBackend.this.uniformBuffers.get(name);
+			return whole == null ? null : ((DxBuffer) whole).logicalStorage();
+		}
+
+		@Override
+		public long textureViewHandle(String name) {
+			BoundTexture bound = DxRenderPassBackend.this.boundTextures.get(name);
+			if (bound != null && bound.textureView() instanceof DxTextureView view && view.hasNativeViewHandle()) {
+				return view.nativeViewHandle();
+			}
+			return 0L;
+		}
+
+		@Override
+		public long samplerHandle(String name) {
+			BoundTexture bound = DxRenderPassBackend.this.boundTextures.get(name);
+			if (bound != null && bound.sampler() instanceof DxSampler sampler && sampler.hasNativeSamplerHandle()) {
+				return sampler.nativeSamplerHandle();
+			}
+			return 0L;
+		}
 	}
 }

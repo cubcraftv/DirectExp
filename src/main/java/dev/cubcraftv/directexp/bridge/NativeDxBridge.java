@@ -195,6 +195,71 @@ public final class NativeDxBridge implements DxBridge {
 	}
 
 	@Override
+	public void setRenderTargets(long colorViewHandle, long depthViewHandle, int width, int height) {
+		setRenderTargets0(colorViewHandle, depthViewHandle, width, height);
+	}
+
+	@Override
+	public void clearRenderTarget(long colorViewHandle, float red, float green, float blue, float alpha) {
+		clearRenderTarget0(colorViewHandle, red, green, blue, alpha);
+	}
+
+	@Override
+	public void clearDepthStencil(long depthViewHandle, float depth) {
+		clearDepthStencil0(depthViewHandle, depth);
+	}
+
+	@Override
+	public void clearDepthTexture(long nativeTextureHandle, float depth) {
+		clearDepthTexture0(nativeTextureHandle, depth);
+	}
+
+	@Override
+	public void setScissor(int x, int y, int width, int height) {
+		setScissor0(x, y, width, height);
+	}
+
+	@Override
+	public void bindPipeline(long nativePipelineHandle) {
+		bindPipeline0(nativePipelineHandle);
+	}
+
+	@Override
+	public void bindVertexBuffer(int slot, long nativeBufferHandle, int byteOffset) {
+		bindVertexBuffer0(slot, nativeBufferHandle, byteOffset);
+	}
+
+	@Override
+	public void bindIndexBuffer(long nativeBufferHandle, boolean wideIndices, int byteOffset) {
+		bindIndexBuffer0(nativeBufferHandle, wideIndices, byteOffset);
+	}
+
+	@Override
+	public void bindConstantBuffer(int slot, long nativeBufferHandle, int stageMask) {
+		bindConstantBuffer0(slot, nativeBufferHandle, stageMask);
+	}
+
+	@Override
+	public void bindShaderResource(int slot, long nativeTextureViewHandle, int stageMask) {
+		bindShaderResource0(slot, nativeTextureViewHandle, stageMask);
+	}
+
+	@Override
+	public void bindSampler(int slot, long nativeSamplerHandle, int stageMask) {
+		bindSampler0(slot, nativeSamplerHandle, stageMask);
+	}
+
+	@Override
+	public void draw(int vertexCount, int firstVertex) {
+		draw0(vertexCount, firstVertex);
+	}
+
+	@Override
+	public void drawIndexed(int indexCount, int instanceCount, int firstIndex, int baseVertex) {
+		drawIndexed0(indexCount, instanceCount, firstIndex, baseVertex);
+	}
+
+	@Override
 	public void blitSurfaceTexture(long nativeCommandContextHandle, long nativeSurfaceHandle, long nativeTextureHandle) {
 		blitSurfaceTexture0(nativeCommandContextHandle, nativeSurfaceHandle, nativeTextureHandle);
 	}
@@ -620,6 +685,34 @@ public final class NativeDxBridge implements DxBridge {
 	private static native void releaseTextureView0(long nativeTextureViewHandle);
 
 	private static native void blitSurfaceTexture0(long nativeCommandContextHandle, long nativeSurfaceHandle, long nativeTextureHandle);
+
+	// Milestone 4.6 commit 4: draw path. Suffix "0" because the public
+	// overrides above share names and parameter lists with these.
+	private static native void setRenderTargets0(long colorViewHandle, long depthViewHandle, int width, int height);
+
+	private static native void clearRenderTarget0(long colorViewHandle, float red, float green, float blue, float alpha);
+
+	private static native void clearDepthStencil0(long depthViewHandle, float depth);
+
+	private static native void clearDepthTexture0(long nativeTextureHandle, float depth);
+
+	private static native void setScissor0(int x, int y, int width, int height);
+
+	private static native void bindPipeline0(long nativePipelineHandle);
+
+	private static native void bindVertexBuffer0(int slot, long nativeBufferHandle, int byteOffset);
+
+	private static native void bindIndexBuffer0(long nativeBufferHandle, boolean wideIndices, int byteOffset);
+
+	private static native void bindConstantBuffer0(int slot, long nativeBufferHandle, int stageMask);
+
+	private static native void bindShaderResource0(int slot, long nativeTextureViewHandle, int stageMask);
+
+	private static native void bindSampler0(int slot, long nativeSamplerHandle, int stageMask);
+
+	private static native void draw0(int vertexCount, int firstVertex);
+
+	private static native void drawIndexed0(int indexCount, int instanceCount, int firstIndex, int baseVertex);
 
 	// Named "...0" per this file's convention for a native method whose
 	// public-facing override (compileGlslToSpirv) has a different

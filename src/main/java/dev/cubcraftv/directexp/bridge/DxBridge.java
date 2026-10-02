@@ -216,6 +216,104 @@ public interface DxBridge {
 	default void releasePipeline(long nativePipelineHandle) {
 	}
 
+	// ---- Milestone 4.6 commit 4: draw path (binding, clears, draws) ----
+	//
+	// All of these act on the single active immediate context, exactly like the
+	// resource methods above. Binding state is sticky (D3D11 semantics): it stays
+	// until replaced, so the client only re-sends what changed. A handle of 0
+	// where a view/buffer/sampler is expected means "unbind that slot".
+
+	/** Shader-stage bits for the {@code bind*} calls below. */
+	int STAGE_VERTEX = 1;
+	int STAGE_FRAGMENT = 2;
+
+	/**
+	 * Binds the render target and depth-stencil views carried by two
+	 * texture-view handles (see {@link #createTextureView}) and sets the
+	 * viewport to {@code (0, 0, width, height)}, depth 0..1. Either handle may
+	 * be 0 (no color target / no depth target). Throws {@link IllegalStateException}
+	 * if a non-zero handle carries no render-target / depth-stencil view.
+	 */
+	default void setRenderTargets(long colorViewHandle, long depthViewHandle, int width, int height) {
+		throw new UnsupportedOperationException("DirectX render target binding is not implemented by this bridge yet.");
+	}
+
+	/** {@code ClearRenderTargetView} on the render-target view of a texture-view handle. Components are 0..1. */
+	default void clearRenderTarget(long colorViewHandle, float red, float green, float blue, float alpha) {
+		throw new UnsupportedOperationException("DirectX render target clear is not implemented by this bridge yet.");
+	}
+
+	/** {@code ClearDepthStencilView} (depth and stencil, stencil to 0) on the depth-stencil view of a texture-view handle. */
+	default void clearDepthStencil(long depthViewHandle, float depth) {
+		throw new UnsupportedOperationException("DirectX depth clear is not implemented by this bridge yet.");
+	}
+
+	/**
+	 * Clears mip 0 of a depth texture that has no view at hand (Blaze3D's
+	 * texture-level {@code clearDepthTexture}); the native side uses a
+	 * transient depth-stencil view.
+	 */
+	default void clearDepthTexture(long nativeTextureHandle, float depth) {
+		throw new UnsupportedOperationException("DirectX depth texture clear is not implemented by this bridge yet.");
+	}
+
+	/**
+	 * Sets the scissor rectangle in D3D pixel coordinates (origin top-left).
+	 * Every pipeline's rasterizer state has scissor enabled, so "scissor off"
+	 * is expressed by passing the full target rectangle.
+	 */
+	default void setScissor(int x, int y, int width, int height) {
+		throw new UnsupportedOperationException("DirectX scissor is not implemented by this bridge yet.");
+	}
+
+	/**
+	 * Binds every object of a pipeline: shaders (geometry stage cleared when the
+	 * pipeline has none), input layout, topology, and blend / depth-stencil /
+	 * rasterizer state. For a pipeline with a geometry stage it also binds the
+	 * viewport constants at {@link #GEOMETRY_VIEWPORT_CBUFFER_SLOT} and refreshes
+	 * them when the viewport from {@link #setRenderTargets} changed, so the client
+	 * never calls {@link #setPipelineViewport} itself. The pipeline's vertex
+	 * stride is what {@link #bindVertexBuffer} uses.
+	 */
+	default void bindPipeline(long nativePipelineHandle) {
+		throw new UnsupportedOperationException("DirectX pipeline binding is not implemented by this bridge yet.");
+	}
+
+	/** {@code IASetVertexBuffers} for one slot, stride taken from the bound pipeline. Needs {@link #bindPipeline} first. */
+	default void bindVertexBuffer(int slot, long nativeBufferHandle, int byteOffset) {
+		throw new UnsupportedOperationException("DirectX vertex buffer binding is not implemented by this bridge yet.");
+	}
+
+	/** {@code IASetIndexBuffer}; {@code wideIndices} selects R32_UINT over R16_UINT. */
+	default void bindIndexBuffer(long nativeBufferHandle, boolean wideIndices, int byteOffset) {
+		throw new UnsupportedOperationException("DirectX index buffer binding is not implemented by this bridge yet.");
+	}
+
+	/** {@code VSSetConstantBuffers}/{@code PSSetConstantBuffers} for the stages in {@code stageMask}. */
+	default void bindConstantBuffer(int slot, long nativeBufferHandle, int stageMask) {
+		throw new UnsupportedOperationException("DirectX constant buffer binding is not implemented by this bridge yet.");
+	}
+
+	/** Binds the shader-resource view of a texture-view handle to {@code t<slot>} of the given stages. */
+	default void bindShaderResource(int slot, long nativeTextureViewHandle, int stageMask) {
+		throw new UnsupportedOperationException("DirectX shader resource binding is not implemented by this bridge yet.");
+	}
+
+	/** Binds a sampler state to {@code s<slot>} of the given stages. */
+	default void bindSampler(int slot, long nativeSamplerHandle, int stageMask) {
+		throw new UnsupportedOperationException("DirectX sampler binding is not implemented by this bridge yet.");
+	}
+
+	/** {@code Draw(vertexCount, firstVertex)}. */
+	default void draw(int vertexCount, int firstVertex) {
+		throw new UnsupportedOperationException("DirectX draw is not implemented by this bridge yet.");
+	}
+
+	/** {@code DrawIndexedInstanced(indexCount, instanceCount, firstIndex, baseVertex, 0)}. */
+	default void drawIndexed(int indexCount, int instanceCount, int firstIndex, int baseVertex) {
+		throw new UnsupportedOperationException("DirectX indexed draw is not implemented by this bridge yet.");
+	}
+
 	default void presentSurface(long nativeSurfaceHandle) {
 		throw new UnsupportedOperationException("DirectX surface present is not implemented by this bridge yet.");
 	}

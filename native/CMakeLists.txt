@@ -11,6 +11,7 @@ add_library(directexp_native SHARED
 	src/directexp_bridge_texture.cpp
 	src/directexp_bridge_resource.cpp
 	src/directexp_bridge_pipeline.cpp
+	src/directexp_bridge_draw.cpp
 	src/directexp_bridge_shader.cpp
 	src/directexp_shader_toolchain.cpp
 	src/directexp_shader_reflection.cpp
