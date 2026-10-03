@@ -1,10 +1,15 @@
-# Milestone 4.7: Main-Menu Visual Completion
+# Current Pending Change: Milestone 4.7 Visual Completion
 
-**Created:** 2026-10-02. **Scope:** resolve the three visible startup gaps
-reported after the first DirectX draw path: the initial clear appears blue
-instead of red, main-menu buttons show their labels without their visual
-backgrounds, and the panorama is absent because cube textures are not yet
-supported.
+**Created:** 2026-10-02. **Status:** active, prioritized target. **Scope:**
+resolve the three visible startup gaps reported after the first DirectX draw
+path: the initial clear appears blue instead of red, main-menu buttons show
+their labels without their visual backgrounds, and the panorama is absent
+because cube textures are not yet supported.
+
+This is the repository's current prioritized target. It is the only active
+implementation item in the plan stack that is currently expected to move
+forward immediately; the other plan docs separate verified progress, known
+but deferred issues, and unverified theory.
 
 Companion docs: `docs/plans/2026-09-25-directexp-milestone4-breakdown.md`
 for the 4.1-4.6 shader/draw work, and

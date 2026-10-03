@@ -11,11 +11,9 @@ import com.mojang.blaze3d.textures.GpuSampler;
 import com.mojang.blaze3d.textures.GpuTextureView;
 import com.mojang.blaze3d.vertex.VertexFormat;
 import dev.cubcraftv.directexp.bridge.DxBridge;
+import dev.cubcraftv.directexp.bridge.DxResourceKind;
 import dev.cubcraftv.directexp.DirectExpMod;
-import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.Sheets;
-import net.minecraft.client.renderer.texture.TextureAtlasSprite;
-import net.minecraft.client.resources.model.sprite.SpriteId;
 import net.minecraft.resources.Identifier;
 
 import java.nio.ByteBuffer;
@@ -64,7 +62,6 @@ import java.util.Arrays;
  */
 final class DxRenderPassBackend implements RenderPassBackend {
 	private static final Identifier DEBUG_BUTTON_SPRITE = Identifier.withDefaultNamespace("widget/button");
-	private static final AtomicBoolean LOGGED_GUI_BUTTON_MIRROR = new AtomicBoolean(false);
 	private static final AtomicBoolean LOGGED_GUI_ATLAS_COMPOSITION_DRAW = new AtomicBoolean(false);
 
 	private final DxTextureView colorView;
@@ -323,14 +320,25 @@ final class DxRenderPassBackend implements RenderPassBackend {
 		}
 
 		BoundTexture sprite = this.boundTextures.get("Sprite");
-		if (sprite == null || !(sprite.textureView() instanceof DxTextureView view)
+		if (sprite == null
+			|| !(sprite.textureView() instanceof DxTextureView view)
 			|| !(view.texture() instanceof DxTexture texture)
 			|| !texture.debugLabel().equals(DEBUG_BUTTON_SPRITE.toString())
 			|| !LOGGED_GUI_ATLAS_COMPOSITION_DRAW.compareAndSet(false, true)) {
 			return;
 		}
 
-		String sourceDescription = "view=" + view.nativeViewHandle() + ", " + texture.debugDescription();
+		String sourceDescription = "view=" + view.nativeViewHandle()
+			+ ", closed=" + view.isClosed()
+			+ ", texture=" + texture.debugDescription();
+		String srvBinding = this.boundPipeline == null ? "layout unavailable" : this.boundPipeline.layout()
+			.find("Sprite", DxResourceKind.SAMPLED_TEXTURE)
+			.map(entry -> "slot=" + entry.slot() + ", stageMask=" + DxResourceBinder.stageMask(entry))
+			.orElse("Sprite SRV absent from pipeline layout");
+		String samplerBinding = this.boundPipeline == null ? "layout unavailable" : this.boundPipeline.layout()
+			.find("Sprite", DxResourceKind.SAMPLER)
+			.map(entry -> "slot=" + entry.slot() + ", stageMask=" + DxResourceBinder.stageMask(entry))
+			.orElse("Sprite sampler absent from pipeline layout");
 		ByteBuffer spriteInfo = this.bindingSource.uniformBytes("SpriteAnimationInfo");
 		String spriteInfoValues = "unavailable";
 		String spriteInfoBytes = "unavailable";
@@ -349,10 +357,12 @@ final class DxRenderPassBackend implements RenderPassBackend {
 			);
 		}
 		DirectExpMod.LOGGER.info(
-			"DirectExp GUI button atlas draw issued: pipeline={}, target={} targetView={}, source={}, firstVertex={}, vertexCount={}, SpriteAnimationInfoMatrices={}, leadingBytes={}",
+			"DirectExp GUI atlas composition draw: pipeline={}, target={} targetView={}, Sprite source={}, SRV binding={} handle={}, sampler binding={} handle={}, firstVertex={}, vertexCount={}, SpriteAnimationInfoMatrices={}, leadingBytes={}",
 			this.pipeline.getLocation(), this.colorTarget.debugDescription(),
 			this.colorView == null ? 0L : this.colorView.nativeViewHandle(),
-			sourceDescription, firstVertex, vertexCount, spriteInfoValues, spriteInfoBytes
+			sourceDescription, srvBinding, this.bindingSource.textureViewHandle("Sprite"),
+			samplerBinding, this.bindingSource.samplerHandle("Sprite"),
+			firstVertex, vertexCount, spriteInfoValues, spriteInfoBytes
 		);
 	}
 
@@ -545,41 +555,7 @@ final class DxRenderPassBackend implements RenderPassBackend {
 			if (!(view.texture() instanceof DxTexture texture)) {
 				return "non-DirectExp texture (" + view.texture().getClass().getSimpleName() + ")";
 			}
-			logGuiButtonMirror(texture);
 			return texture.debugDescription();
-		}
-
-		private void logGuiButtonMirror(DxTexture texture) {
-			if (!texture.debugLabel().equals(Sheets.GUI_SHEET.toString())
-				|| !LOGGED_GUI_BUTTON_MIRROR.compareAndSet(false, true)) {
-				return;
-			}
-
-			TextureAtlasSprite sprite = Minecraft.getInstance().getAtlasManager().get(new SpriteId(Sheets.GUI_SHEET, DEBUG_BUTTON_SPRITE));
-			if (!sprite.contents().name().equals(DEBUG_BUTTON_SPRITE)) {
-				dev.cubcraftv.directexp.DirectExpMod.LOGGER.warn(
-					"DirectExp could not find GUI button sprite {} in atlas {} for CPU mirror sampling.",
-					DEBUG_BUTTON_SPRITE, Sheets.GUI_SHEET
-				);
-				return;
-			}
-
-			int x = Math.round(sprite.getU0() * texture.getWidth(0));
-			int y = Math.round(sprite.getV0() * texture.getHeight(0));
-			int width = sprite.contents().width();
-			int height = sprite.contents().height();
-			ByteBuffer pixels = texture.readRegion(0, x, y, width, height);
-			int nonZeroPixels = 0;
-			for (int offset = 0; offset < pixels.limit(); offset += 4) {
-				if (pixels.get(offset) != 0 || pixels.get(offset + 1) != 0 || pixels.get(offset + 2) != 0 || pixels.get(offset + 3) != 0) {
-					nonZeroPixels++;
-				}
-			}
-
-			dev.cubcraftv.directexp.DirectExpMod.LOGGER.info(
-				"DirectExp GUI button CPU mirror sample: sprite={} atlas={} region=({},{} {}x{}) nonZeroPixels={}/{}",
-				DEBUG_BUTTON_SPRITE, texture.debugLabel(), x, y, width, height, nonZeroPixels, width * height
-			);
 		}
 
 		@Override

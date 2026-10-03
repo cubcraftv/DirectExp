@@ -161,7 +161,12 @@ public final class NativeDxBridge implements DxBridge {
 
 	@Override
 	public long createTexture(int format, int width, int height, int arrayLayers, int mipLevels, int bindMask, boolean cubemap) {
-		return createTextureNative(format, width, height, arrayLayers, mipLevels, bindMask, cubemap);
+		return createTexture(format, width, height, arrayLayers, mipLevels, bindMask, cubemap, "DirectExp texture");
+	}
+
+	@Override
+	public long createTexture(int format, int width, int height, int arrayLayers, int mipLevels, int bindMask, boolean cubemap, String debugLabel) {
+		return createTextureNative(format, width, height, arrayLayers, mipLevels, bindMask, cubemap, debugLabel);
 	}
 
 	@Override
@@ -662,7 +667,7 @@ public final class NativeDxBridge implements DxBridge {
 	private static native void releaseBuffer0(long nativeBufferHandle);
 
 	// Milestone 4.6 commit 2 (directexp_bridge_resource.cpp / directexp_bridge_pipeline.cpp).
-	private static native long createTextureNative(int format, int width, int height, int arrayLayers, int mipLevels, int bindMask, boolean cubemap);
+	private static native long createTextureNative(int format, int width, int height, int arrayLayers, int mipLevels, int bindMask, boolean cubemap, String debugLabel);
 
 	private static native long createPipelineNative(
 		byte[] vertexBytecode, byte[] pixelBytecode, byte[] geometryBytecode,

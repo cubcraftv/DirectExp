@@ -32,6 +32,7 @@ final class DxTexture extends GpuTexture {
 	private final long nativeTextureHandle;
 	private final int nativeBindMask;
 	private final AtomicBoolean loggedNativeTextureUploadFailure = new AtomicBoolean(false);
+	private volatile String lastNativeUpload = "not uploaded";
 	private boolean closed;
 
 	DxTexture(DxBridge dxBridge, int usage, String label, GpuFormat format, int width, int height, int depthOrLayers, int mipLevels) {
@@ -43,6 +44,9 @@ final class DxTexture extends GpuTexture {
 		this.cubemap = (usage & DxTextureBinding.USAGE_CUBEMAP) != 0;
 		this.nativeBindMask = DxTextureBinding.bindMask(usage, format.hasDepthAspect());
 		this.nativeTextureHandle = createNativeTextureHandle(format, width, height, depthOrLayers, mipLevels, this.cubemap);
+		if (this.nativeTextureHandle == 0L) {
+			this.lastNativeUpload = "not attempted: no native texture";
+		}
 
 		for (int mipLevel = 0; mipLevel < mipLevels; mipLevel++) {
 			int mipWidth = getWidth(mipLevel);
@@ -213,7 +217,7 @@ final class DxTexture extends GpuTexture {
 	}
 
 	String debugDescription() {
-		return this.debugLabel + " " + getWidth(0) + "x" + getHeight(0) + " (" + getMipLevels() + " mips)";
+		return this.debugLabel + " " + getWidth(0) + "x" + getHeight(0) + " (" + getMipLevels() + " mips, nativeUpload=" + this.lastNativeUpload + ")";
 	}
 
 	boolean hasNativeTextureHandle() {
@@ -268,7 +272,9 @@ final class DxTexture extends GpuTexture {
 		}
 
 		try {
-			long handle = this.dxBridge.createTexture(formatCode, width, height, depthOrLayers, mipLevels, this.nativeBindMask, cubemap);
+			long handle = this.dxBridge.createTexture(
+				formatCode, width, height, depthOrLayers, mipLevels, this.nativeBindMask, cubemap, this.debugLabel
+			);
 			if (handle != 0L && LOGGED_NATIVE_TEXTURE_SUCCESS.compareAndSet(false, true)) {
 				DirectExpMod.LOGGER.info(
 					"DirectExp: native GPU texture path active (first native texture created, {}x{}, {} mip levels).",
@@ -314,7 +320,10 @@ final class DxTexture extends GpuTexture {
 				getWidth(mipLevel),
 				getHeight(mipLevel)
 			);
+			this.lastNativeUpload = "UpdateSubresource returned for mip " + mipLevel + ", layer " + layer
+				+ " (" + getWidth(mipLevel) + "x" + getHeight(mipLevel) + ")";
 		} catch (UnsupportedOperationException | IllegalStateException error) {
+			this.lastNativeUpload = "failed for mip " + mipLevel + ", layer " + layer + ": " + error.getMessage();
 			if (this.loggedNativeTextureUploadFailure.compareAndSet(false, true)) {
 				DirectExpMod.LOGGER.warn(
 					"DirectExp: native texture upload failed (texture {}, mip {}, layer {}, {}x{}): {}; GPU-sampled textures may contain stale or empty texels.",

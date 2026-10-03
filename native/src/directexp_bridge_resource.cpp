@@ -47,6 +47,20 @@ namespace {
 // so createBufferNative rejects them and Java falls back to CPU-only.
 constexpr UINT kMaxConstantBufferBytes = 4096u * 16u;
 
+constexpr GUID kD3DDebugObjectName = {
+	0x429b8c22, 0x9188, 0x4b0c, { 0x87, 0x42, 0xac, 0xb0, 0xbf, 0x85, 0xc2, 0x00 }
+};
+
+bool SetDebugObjectName(JNIEnv* env, ID3D11DeviceChild* object, const std::string& name, const char* objectType) {
+	const UINT byteCount = static_cast<UINT>(name.size() + 1);
+	HRESULT hr = object->SetPrivateData(kD3DDebugObjectName, byteCount, name.c_str());
+	if (FAILED(hr)) {
+		ThrowIllegalState(env, std::string("Could not assign the D3D11 debug name for ") + objectType + ".");
+		return false;
+	}
+	return true;
+}
+
 } // namespace
 
 extern "C" JNIEXPORT jlong JNICALL
@@ -269,7 +283,7 @@ Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_releaseSampler0(JNIEnv*, jcla
 // (CPU upload via uploadTextureRgba8Native works on any RGBA8 texture).
 extern "C" JNIEXPORT jlong JNICALL
 Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_createTextureNative(
-	JNIEnv* env, jclass, jint formatCode, jint width, jint height, jint arrayLayers, jint mipLevels, jint bindMask, jboolean cubemap
+	JNIEnv* env, jclass, jint formatCode, jint width, jint height, jint arrayLayers, jint mipLevels, jint bindMask, jboolean cubemap, jstring debugLabel
 ) {
 	if (g_activeDevice == nullptr) {
 		ThrowIllegalState(env, "createTextureNative called with no active DirectX device (no surface bootstrapped yet?).");
@@ -280,6 +294,16 @@ Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_createTextureNative(
 		ThrowIllegalState(env, "createTextureNative requires positive dimensions, arrayLayers, and mipLevels.");
 		return 0;
 	}
+	if (debugLabel == nullptr) {
+		ThrowIllegalState(env, "createTextureNative requires a non-null debug label.");
+		return 0;
+	}
+	const char* labelChars = env->GetStringUTFChars(debugLabel, nullptr);
+	if (labelChars == nullptr) {
+		return 0;
+	}
+	std::string textureLabel(labelChars);
+	env->ReleaseStringUTFChars(debugLabel, labelChars);
 
 	TextureFormatInfo info = {};
 	if (!ResolveTextureFormat(formatCode, info)) {
@@ -336,6 +360,12 @@ Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_createTextureNative(
 		ThrowIllegalState(env, "ID3D11Device::CreateTexture2D failed (unsupported format/bind-flag combination, or out of memory).");
 		return 0;
 	}
+	const std::string nativeDebugName = textureLabel + " [" + std::to_string(width) + "x" + std::to_string(height)
+		+ ", mips=" + std::to_string(mipLevels) + ", layers=" + std::to_string(arrayLayers) + "]";
+	if (!SetDebugObjectName(env, texture, nativeDebugName, "texture")) {
+		texture->Release();
+		return 0;
+	}
 
 	Texture* wrapper = new Texture();
 	wrapper->texture = texture;
@@ -344,6 +374,7 @@ Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_createTextureNative(
 	wrapper->mipLevels = static_cast<UINT>(mipLevels);
 	wrapper->arrayLayers = static_cast<UINT>(arrayLayers);
 	wrapper->cubemap = isCubemap;
+	wrapper->debugLabel = textureLabel;
 	wrapper->bindFlags = bindFlags;
 	wrapper->formatCode = formatCode;
 	return PointerToHandle(wrapper);
@@ -406,6 +437,13 @@ Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_createTextureViewNative(
 		if (FAILED(g_activeDevice->CreateShaderResourceView(texture->texture, &desc, &wrapper->shaderView))) {
 			return fail("ID3D11Device::CreateShaderResourceView failed.");
 		}
+		const std::string name = texture->debugLabel + " [SRV mips " + std::to_string(baseMipLevel)
+			+ ".." + std::to_string(baseMipLevel + mipLevels - 1) + "]";
+		if (!SetDebugObjectName(env, wrapper->shaderView, name, "shader-resource view")) {
+			wrapper->shaderView->Release();
+			wrapper->shaderView = nullptr;
+			return fail("Could not assign the D3D11 debug name for the shader-resource view.");
+		}
 	}
 
 	if ((texture->bindFlags & D3D11_BIND_RENDER_TARGET) != 0) {
@@ -415,6 +453,12 @@ Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_createTextureViewNative(
 		desc.Texture2D.MipSlice = static_cast<UINT>(baseMipLevel);
 		if (FAILED(g_activeDevice->CreateRenderTargetView(texture->texture, &desc, &wrapper->renderTargetView))) {
 			return fail("ID3D11Device::CreateRenderTargetView failed.");
+		}
+		const std::string name = texture->debugLabel + " [RTV mip " + std::to_string(baseMipLevel) + "]";
+		if (!SetDebugObjectName(env, wrapper->renderTargetView, name, "render-target view")) {
+			wrapper->renderTargetView->Release();
+			wrapper->renderTargetView = nullptr;
+			return fail("Could not assign the D3D11 debug name for the render-target view.");
 		}
 	}
 
@@ -426,6 +470,12 @@ Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_createTextureViewNative(
 		desc.Texture2D.MipSlice = static_cast<UINT>(baseMipLevel);
 		if (FAILED(g_activeDevice->CreateDepthStencilView(texture->texture, &desc, &wrapper->depthStencilView))) {
 			return fail("ID3D11Device::CreateDepthStencilView failed.");
+		}
+		const std::string name = texture->debugLabel + " [DSV mip " + std::to_string(baseMipLevel) + "]";
+		if (!SetDebugObjectName(env, wrapper->depthStencilView, name, "depth-stencil view")) {
+			wrapper->depthStencilView->Release();
+			wrapper->depthStencilView = nullptr;
+			return fail("Could not assign the D3D11 debug name for the depth-stencil view.");
 		}
 	}
 
@@ -476,7 +526,7 @@ Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_releaseSampler0(JNIEnv*, jcla
 }
 
 extern "C" JNIEXPORT jlong JNICALL
-Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_createTextureNative(JNIEnv*, jclass, jint, jint, jint, jint, jint, jint, jboolean) {
+Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_createTextureNative(JNIEnv*, jclass, jint, jint, jint, jint, jint, jint, jboolean, jstring) {
 	return 0;
 }
 

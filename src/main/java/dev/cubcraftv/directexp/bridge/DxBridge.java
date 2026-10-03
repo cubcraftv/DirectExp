@@ -170,6 +170,10 @@ public interface DxBridge {
 		throw new UnsupportedOperationException("DirectX render/depth texture creation is not implemented by this bridge yet.");
 	}
 
+	default long createTexture(int format, int width, int height, int arrayLayers, int mipLevels, int bindMask, boolean cubemap, String debugLabel) {
+		return createTexture(format, width, height, arrayLayers, mipLevels, bindMask, cubemap);
+	}
+
 	/**
 	 * Builds the immutable D3D11 objects for one render pipeline (vertex and
 	 * pixel shader, input layout, blend / depth-stencil / rasterizer state) from
