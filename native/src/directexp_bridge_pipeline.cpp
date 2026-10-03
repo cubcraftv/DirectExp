@@ -248,19 +248,13 @@ Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_createPipelineNative(
 	D3D11_RASTERIZER_DESC raster = {};
 	raster.FillMode = static_cast<D3D11_FILL_MODE>(st.data[STATE_FILL_MODE]);
 	raster.CullMode = static_cast<D3D11_CULL_MODE>(st.data[STATE_CULL_MODE]);
-	// TRUE (front face = counter-clockwise), i.e. GL's convention, kept as
-	// is -- confirmed correct, not just assumed, by Milestone 4.6 commit 3's
-	// shader-interface investigation. Summary (full reasoning in the source
-	// of truth doc's "Does it flip Y" section): D3D11's NDC is Y-up, the
-	// same as OpenGL/GLSL's; Vulkan is the outlier with a Y-down NDC. The
-	// decompiled glsl package (GlslCompiler/IntermediaryShaderModule) never
-	// touches gl_Position, so Vulkan's own Y-down NDC must be compensated
-	// for elsewhere (most likely a backend-specific projection matrix, not
-	// in the supplied decompile) -- and Vulkan's frontFace(CLOCKWISE) is
-	// that compensation's paired front-face flip, not something intrinsic
-	// to GLSL->SPIR-V compilation. D3D11 needs neither: it shares GL's Y-up
-	// convention already, so it also keeps GL's front face.
-	raster.FrontCounterClockwise = TRUE;
+	// FALSE (front face = clockwise). Vertex shaders negate gl_Position.y
+	// (see EmitHlsl) so D3D framebuffer positions match Vulkan's: Blaze3D's
+	// Vulkan backend uses a positive-height viewport (NDC Y=-1 -> row 0) with
+	// frontFace(CLOCKWISE). With identical framebuffer positions, identical
+	// winding rules apply, i.e. D3D's default clockwise front face. The earlier
+	// TRUE was only right while geometry was NOT flipped.
+	raster.FrontCounterClockwise = FALSE;
 	raster.DepthBias = st.data[STATE_DEPTH_BIAS];
 	raster.DepthBiasClamp = 0.0f;
 	raster.SlopeScaledDepthBias = fs[FSTATE_SLOPE_SCALED_DEPTH_BIAS];

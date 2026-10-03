@@ -25,16 +25,19 @@ import java.util.concurrent.atomic.AtomicBoolean;
  */
 final class DxTexture extends GpuTexture {
 	private final DxBridge dxBridge;
+	private final String debugLabel;
 	private final ByteBuffer[] mipStorage;
 	private final int layerCount;
 	private final boolean cubemap;
 	private final long nativeTextureHandle;
 	private final int nativeBindMask;
+	private final AtomicBoolean loggedNativeTextureUploadFailure = new AtomicBoolean(false);
 	private boolean closed;
 
 	DxTexture(DxBridge dxBridge, int usage, String label, GpuFormat format, int width, int height, int depthOrLayers, int mipLevels) {
 		super(usage, label, format, width, height, depthOrLayers, mipLevels);
 		this.dxBridge = dxBridge;
+		this.debugLabel = label;
 		this.mipStorage = new ByteBuffer[mipLevels];
 		this.layerCount = depthOrLayers;
 		this.cubemap = (usage & DxTextureBinding.USAGE_CUBEMAP) != 0;
@@ -75,7 +78,7 @@ final class DxTexture extends GpuTexture {
 
 		for (int row = 0; row < height; row++) {
 			for (int column = 0; column < width; column++) {
-				int sourcePixelOffset = ((srcY + row) * sourceStride + (srcX + column)) * sourceBytesPerPixel;
+				int sourcePixelOffset = sourceCopy.position() + ((srcY + row) * sourceStride + (srcX + column)) * sourceBytesPerPixel;
 				int destinationPixelOffset = (layer * mipWidth * getHeight(mipLevel) + (dstY + row) * mipWidth + (dstX + column)) * destinationBytesPerPixel;
 
 				for (int byteIndex = 0; byteIndex < destinationBytesPerPixel; byteIndex++) {
@@ -85,7 +88,67 @@ final class DxTexture extends GpuTexture {
 			}
 		}
 
+		logButtonSpriteUpload(sourceCopy, sourceBytesPerPixel, sourceStride, mipLevel, dstX, dstY, width, height, srcX, srcY);
 		syncMipToNative(mipLevel, layer);
+	}
+
+	private void logButtonSpriteUpload(
+		ByteBuffer source,
+		int sourceBytesPerPixel,
+		int sourceStride,
+		int mipLevel,
+		int dstX,
+		int dstY,
+		int width,
+		int height,
+		int srcX,
+		int srcY
+	) {
+		if (!this.debugLabel.equals("minecraft:widget/button") || !LOGGED_BUTTON_SPRITE_UPLOAD.compareAndSet(false, true)) {
+			return;
+		}
+
+		int nonZeroPixels = 0;
+		int nonZeroAlphaPixels = 0;
+		int mirroredNonZeroPixels = 0;
+		int mirroredNonZeroAlphaPixels = 0;
+		for (int row = 0; row < height; row++) {
+			for (int column = 0; column < width; column++) {
+				int offset = source.position() + ((srcY + row) * sourceStride + (srcX + column)) * sourceBytesPerPixel;
+				int destinationOffset = ((dstY + row) * getWidth(mipLevel) + dstX + column) * getFormat().pixelSize();
+				boolean sourcePixelNonZero = false;
+				boolean mirrorPixelNonZero = false;
+				for (int channel = 0; channel < sourceBytesPerPixel; channel++) {
+					if (source.get(offset + channel) != 0) {
+						sourcePixelNonZero = true;
+					}
+				}
+				for (int channel = 0; channel < getFormat().pixelSize(); channel++) {
+					if (this.mipStorage[mipLevel].get(destinationOffset + channel) != 0) {
+						mirrorPixelNonZero = true;
+					}
+				}
+				if (sourcePixelNonZero) {
+					nonZeroPixels++;
+				}
+				if (sourceBytesPerPixel >= 4 && source.get(offset + 3) != 0) {
+					nonZeroAlphaPixels++;
+				}
+				if (mirrorPixelNonZero) {
+					mirroredNonZeroPixels++;
+				}
+				if (getFormat().pixelSize() >= 4 && this.mipStorage[mipLevel].get(destinationOffset + 3) != 0) {
+					mirroredNonZeroAlphaPixels++;
+				}
+			}
+		}
+
+		DirectExpMod.LOGGER.info(
+			"DirectExp button sprite source write: texture={} format={} mip={} layer=0 dst=({}, {}) size={}x{} srcPos={} srcLimit={} sourceNonZero={}/{} sourceAlphaNonZero={}/{} mirrorNonZero={}/{} mirrorAlphaNonZero={}/{}",
+			this.debugLabel, getFormat(), mipLevel, dstX, dstY, width, height, source.position(), source.limit(),
+			nonZeroPixels, width * height, nonZeroAlphaPixels, width * height,
+			mirroredNonZeroPixels, width * height, mirroredNonZeroAlphaPixels, width * height
+		);
 	}
 
 	ByteBuffer readRegion(int mipLevel, int srcX, int srcY, int width, int height) {
@@ -145,6 +208,14 @@ final class DxTexture extends GpuTexture {
 		return this.nativeTextureHandle;
 	}
 
+	String debugLabel() {
+		return this.debugLabel;
+	}
+
+	String debugDescription() {
+		return this.debugLabel + " " + getWidth(0) + "x" + getHeight(0) + " (" + getMipLevels() + " mips)";
+	}
+
 	boolean hasNativeTextureHandle() {
 		return this.nativeTextureHandle != 0L;
 	}
@@ -174,7 +245,7 @@ final class DxTexture extends GpuTexture {
 	// actually gets used; this only reports whether the *handle* exists.
 	private static final AtomicBoolean LOGGED_NATIVE_TEXTURE_SUCCESS = new AtomicBoolean(false);
 	private static final AtomicBoolean LOGGED_NATIVE_TEXTURE_FALLBACK = new AtomicBoolean(false);
-	private static final AtomicBoolean LOGGED_NATIVE_TEXTURE_UPLOAD_FAILURE = new AtomicBoolean(false);
+	private static final AtomicBoolean LOGGED_BUTTON_SPRITE_UPLOAD = new AtomicBoolean(false);
 
 	/** DxBridge.TEXTURE_FORMAT_* for a format the native path supports, else 0 (CPU-only). */
 	static int nativeFormatCode(GpuFormat format) {
@@ -244,10 +315,10 @@ final class DxTexture extends GpuTexture {
 				getHeight(mipLevel)
 			);
 		} catch (UnsupportedOperationException | IllegalStateException error) {
-			if (LOGGED_NATIVE_TEXTURE_UPLOAD_FAILURE.compareAndSet(false, true)) {
+			if (this.loggedNativeTextureUploadFailure.compareAndSet(false, true)) {
 				DirectExpMod.LOGGER.warn(
-					"DirectExp: native texture upload failed (mip {}, layer {}, {}x{}): {}; GPU-sampled textures may contain stale or empty texels.",
-					mipLevel, layer, getWidth(mipLevel), getHeight(mipLevel), error.getMessage()
+					"DirectExp: native texture upload failed (texture {}, mip {}, layer {}, {}x{}): {}; GPU-sampled textures may contain stale or empty texels.",
+					this.nativeTextureHandle, mipLevel, layer, getWidth(mipLevel), getHeight(mipLevel), error.getMessage()
 				);
 			}
 		}

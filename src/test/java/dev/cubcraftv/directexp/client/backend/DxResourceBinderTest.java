@@ -106,11 +106,43 @@ class DxResourceBinderTest {
 
 	@Test
 	void texturesAndSamplersBindToTheirSlotsAndAMissingTextureUnbindsItsSlot() {
-		this.binder.bindTextures(this.layout, this.source);
+		this.binder.bindTextures(this.layout, this.source, true);
 
 		assertTrue(this.calls.contains("bindSRV(0,9001," + DxBridge.STAGE_FRAGMENT + ")"));
 		assertTrue(this.calls.contains("bindSampler(0,9002," + DxBridge.STAGE_FRAGMENT + ")"));
 		assertTrue(this.calls.contains("bindSRV(1,0," + (DxBridge.STAGE_VERTEX | DxBridge.STAGE_FRAGMENT) + ")"));
-		assertTrue(this.reports.contains("texture-missing:NoTex"));
+		assertTrue(this.reports.contains("texture-missing:test:NoTex"));
+	}
+
+	@Test
+	void missingTextureDiagnosticsAreReportedPerPipeline() {
+		DxResourceLayout firstPipeline = new DxResourceLayout("first", List.of(
+			new DxResourceLayoutEntry("Sampler0", DxResourceKind.SAMPLED_TEXTURE, 0, 0, false, true)
+		));
+		DxResourceLayout secondPipeline = new DxResourceLayout("second", List.of(
+			new DxResourceLayoutEntry("Sampler0", DxResourceKind.SAMPLED_TEXTURE, 0, 0, false, true)
+		));
+		DxResourceBinder.Source missingSource = new DxResourceBinder.Source() {
+			@Override
+			public ByteBuffer uniformBytes(String name) {
+				return null;
+			}
+
+			@Override
+			public long textureViewHandle(String name) {
+				return 0L;
+			}
+
+			@Override
+			public long samplerHandle(String name) {
+				return 0L;
+			}
+		};
+
+		this.binder.bindTextures(firstPipeline, missingSource, true);
+		this.binder.bindTextures(secondPipeline, missingSource, true);
+
+		assertTrue(this.reports.contains("texture-missing:first:Sampler0"));
+		assertTrue(this.reports.contains("texture-missing:second:Sampler0"));
 	}
 }

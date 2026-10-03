@@ -27,9 +27,11 @@ import java.util.regex.Pattern;
  * {@code viewportCbufferSlot} that the native pipeline owns
  * ({@code DxBridge#setPipelineViewport}).
  *
- * <p>Corner order is (-,-), (+,-), (-,+), (+,+): a counter-clockwise first
- * triangle, matching the rasterizer's {@code FrontCounterClockwise = TRUE}
- * so the quad is not back-face culled.
+ * <p>Corner order is (-,-), (-,+), (+,-), (+,+): a clockwise first
+ * triangle, matching the rasterizer's {@code FrontCounterClockwise = FALSE}
+ * so the quad is not back-face culled. (The vertex stage negates
+ * {@code gl_Position.y} to emulate Vulkan's orientation, which also reverses
+ * the winding Blaze3D's CCW front faces end up with in D3D.)
  */
 public final class DxPointSpriteGeometryShader {
 	static final String VERTEX_OUTPUT_STRUCT = "SPIRV_Cross_Output";
@@ -71,7 +73,7 @@ public final class DxPointSpriteGeometryShader {
 		hlsl.append("\tfloat4 center = input[0].gl_Position;\n");
 		hlsl.append("\tfloat2 offset = (").append(size).append(" / directexp_viewport) * center.w;\n");
 		hlsl.append("\t").append(VERTEX_OUTPUT_STRUCT).append(" v = input[0];\n");
-		float[][] corners = {{-1F, -1F}, {1F, -1F}, {-1F, 1F}, {1F, 1F}};
+		float[][] corners = {{-1F, -1F}, {-1F, 1F}, {1F, -1F}, {1F, 1F}};
 		for (float[] corner : corners) {
 			hlsl.append("\tv.gl_Position = float4(center.x ").append(corner[0] < 0 ? "-" : "+")
 				.append(" offset.x, center.y ").append(corner[1] < 0 ? "-" : "+")

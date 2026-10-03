@@ -4,6 +4,7 @@ import dev.cubcraftv.directexp.bridge.DxBridge;
 import dev.cubcraftv.directexp.bridge.DxResourceKind;
 import dev.cubcraftv.directexp.client.shader.DxResourceLayout;
 import dev.cubcraftv.directexp.client.shader.DxResourceLayoutEntry;
+import dev.cubcraftv.directexp.DirectExpMod;
 
 import java.nio.ByteBuffer;
 import java.util.Objects;
@@ -29,6 +30,16 @@ final class DxResourceBinder {
 
 		/** Native texture-view handle bound under this name, or 0 when none / CPU-only. */
 		long textureViewHandle(String name);
+
+		/** Explains why {@link #textureViewHandle(String)} returned 0. */
+		default String textureViewFailureReason(String name) {
+			return "no native texture view is available";
+		}
+
+		/** Describes the texture behind a bound view for temporary draw diagnostics. */
+		default String textureViewDescription(String name) {
+			return "unavailable";
+		}
 
 		/** Native sampler handle bound under this name, or 0 when none / CPU-only. */
 		long samplerHandle(String name);
@@ -78,22 +89,35 @@ final class DxResourceBinder {
 	}
 
 	/** Binds every sampled texture and sampler of the layout; a missing native object unbinds its slot. */
-	void bindTextures(DxResourceLayout layout, Source source) {
+	void bindTextures(DxResourceLayout layout, Source source, boolean bindNativeState) {
 		for (DxResourceLayoutEntry entry : layout.entries()) {
 			switch (entry.kind()) {
 				case SAMPLED_TEXTURE -> {
 					long view = source.textureViewHandle(entry.name());
-					if (view == 0L) {
-						this.diagnostics.reportOnce("texture-missing:" + entry.name(), "pipeline " + layout.pipelineDebugLabel() + " samples '" + entry.name() + "' but no native texture view is bound under that name");
+					if (entry.name().equals("Sampler0")) {
+						String description = source.textureViewDescription(entry.name());
+						if (layout.pipelineDebugLabel().contains("pipeline/gui") && description.contains("textures/atlas/gui.png")) {
+							DirectExpMod.LOGGER.info(
+								"DirectExp texture draw: pipeline={}, Sampler0 viewHandle={}, texture={}",
+								layout.pipelineDebugLabel(), view, description
+							);
+						}
 					}
-					this.dxBridge.bindShaderResource(entry.slot(), view, stageMask(entry));
+					if (view == 0L) {
+						this.diagnostics.reportOnce("texture-missing:" + layout.pipelineDebugLabel() + ":" + entry.name(), "pipeline " + layout.pipelineDebugLabel() + " samples '" + entry.name() + "' but " + source.textureViewFailureReason(entry.name()));
+					}
+					if (bindNativeState) {
+						this.dxBridge.bindShaderResource(entry.slot(), view, stageMask(entry));
+					}
 				}
 				case SAMPLER -> {
 					long sampler = source.samplerHandle(entry.name());
 					if (sampler == 0L) {
 						this.diagnostics.reportOnce("sampler-missing:" + entry.name(), "pipeline " + layout.pipelineDebugLabel() + " uses sampler '" + entry.name() + "' but no native sampler is bound under that name");
 					}
-					this.dxBridge.bindSampler(entry.slot(), sampler, stageMask(entry));
+					if (bindNativeState) {
+						this.dxBridge.bindSampler(entry.slot(), sampler, stageMask(entry));
+					}
 				}
 				case STRUCTURED_BUFFER -> this.diagnostics.reportOnce("structured-buffer:" + entry.name(), "structured buffer '" + entry.name() + "' is not supported by the draw path yet");
 				case CONSTANT_BUFFER -> {

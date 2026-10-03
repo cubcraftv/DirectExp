@@ -913,3 +913,13 @@ not a bug in what's implemented so far).
   null; provider/resource-pack sources still take precedence. The focused
   `DxShaderSourceStageTest` passes. A fresh client run and first-logo screenshot
   are still needed to verify the runtime result.
+
+- **2026-10-02 -- GUI atlas SRV/upload diagnostics.** Fixed `DxTexture.writeRegion`
+  to read from the input `ByteBuffer.position()`, made missing-SRV diagnostics
+  pipeline-qualified and specific about absent bindings, closed/non-native views,
+  or failed SRV creation, and made native upload-failure logging once per texture
+  rather than once per process. Added regression tests for positioned writes and
+  per-pipeline missing-texture reports. Focused tests and `./gradlew.bat test`
+  pass. `runClient` created `minecraft:textures/atlas/gui.png-atlas` (1024x1024)
+  but produced no draw-time SRV/upload diagnostics before the client stopped
+  advancing; the run was terminated, so the atlas root cause remains unconfirmed.

@@ -1,6 +1,8 @@
 # Gradle
 .gradle/
 build/
+run/
+logs/
 
 # Native C++
 native/build/

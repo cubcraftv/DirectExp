@@ -183,14 +183,31 @@ Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_blitSurfaceTexture0(
 		return;
 	}
 
-	// NOTE: CopyResource requires matching resource dimensions and
-	// compatible formats. If the source texture's mip 0 doesn't match the
-	// back buffer's current size (e.g. a stale texture after a resize),
-	// D3D11 skips the copy and emits a debug-layer warning rather than
-	// crashing -- but the visible result is simply nothing being drawn
-	// that frame. Revisit if this turns out to matter in practice; no
-	// explicit dimension check is done here yet.
-	surface->context->CopyResource(backBuffer, wrapper->texture);
+	// Vulkan-orientation emulation: Blaze3D's render targets are stored
+	// bottom-up (vertex shaders are Y-flipped to match, see EmitHlsl) and
+	// VulkanGpuSurface.blitFromTexture flips them vertically on present
+	// (dstOffsets y: height -> 0). CopyResource cannot flip, so copy one row
+	// at a time into the mirrored destination row.
+	//
+	// Like CopyResource before it, a size mismatch (e.g. a stale texture
+	// after a resize) copies nothing that frame rather than crashing.
+	D3D11_TEXTURE2D_DESC sourceDesc = {};
+	D3D11_TEXTURE2D_DESC backDesc = {};
+	wrapper->texture->GetDesc(&sourceDesc);
+	backBuffer->GetDesc(&backDesc);
+	if (sourceDesc.Width == backDesc.Width && sourceDesc.Height == backDesc.Height) {
+		const UINT height = sourceDesc.Height;
+		for (UINT row = 0; row < height; ++row) {
+			D3D11_BOX box = {};
+			box.left = 0;
+			box.right = sourceDesc.Width;
+			box.top = row;
+			box.bottom = row + 1;
+			box.front = 0;
+			box.back = 1;
+			surface->context->CopySubresourceRegion(backBuffer, 0, 0, height - 1 - row, 0, wrapper->texture, 0, &box);
+		}
+	}
 
 	backBuffer->Release();
 }

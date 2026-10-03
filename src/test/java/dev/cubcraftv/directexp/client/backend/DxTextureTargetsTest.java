@@ -107,6 +107,22 @@ class DxTextureTargetsTest {
 	}
 
 	@Test
+	void textureWriteReadsFromTheSourceBufferPosition() {
+		ByteBuffer source = ByteBuffer.allocateDirect(8).put(new byte[] {99, 99, 1, 2, 3, 4, 99, 99});
+		source.position(2);
+		source.limit(6);
+		DxTexture texture = new DxTexture(null, 0, "positioned-source", GpuFormat.RGBA8_UNORM, 1, 1, 1, 1);
+
+		texture.writeRegion(source, 4, 1, 0, 0, 0, 0, 1, 1, 0, 0);
+
+		ByteBuffer written = texture.readRegion(0, 0, 0, 1, 1);
+		assertEquals(1, written.get(0));
+		assertEquals(2, written.get(1));
+		assertEquals(3, written.get(2));
+		assertEquals(4, written.get(3));
+	}
+
+	@Test
 	void unsupportedCubemapShapesStayCpuOnly() {
 		RecordingDxBridge bridge = new RecordingDxBridge();
 		DxTexture nonsquare = new DxTexture(bridge, TEXTURE_BINDING | CUBEMAP, "cube", GpuFormat.RGBA8_UNORM, 4, 2, 6, 1);

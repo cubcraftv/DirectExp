@@ -41,14 +41,14 @@ class DxPointSpriteGeometryShaderTest {
 	}
 
 	@Test
-	void emitsFourCornersCounterClockwiseAndForwardsEverythingElse() throws Exception {
+	void emitsFourCornersClockwiseAndForwardsEverythingElse() throws Exception {
 		String gs = DxPointSpriteGeometryShader.generate(VERTEX_HLSL, 13);
 		assertEquals(4, gs.split("stream.Append\\(v\\);", -1).length - 1);
 		int a = gs.indexOf("center.x - offset.x, center.y - offset.y");
-		int b = gs.indexOf("center.x + offset.x, center.y - offset.y");
-		int c = gs.indexOf("center.x - offset.x, center.y + offset.y");
+		int b = gs.indexOf("center.x - offset.x, center.y + offset.y");
+		int c = gs.indexOf("center.x + offset.x, center.y - offset.y");
 		int d = gs.indexOf("center.x + offset.x, center.y + offset.y");
-		assertTrue(a > 0 && a < b && b < c && c < d, "corner order must be (-,-) (+,-) (-,+) (+,+)");
+		assertTrue(a > 0 && a < b && b < c && c < d, "corner order must be (-,-) (-,+) (+,-) (+,+)");
 		assertTrue(gs.contains("SPIRV_Cross_Output v = input[0];"));
 	}
 

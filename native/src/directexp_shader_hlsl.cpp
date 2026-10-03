@@ -233,6 +233,21 @@ std::string EmitHlsl(
 	options.shader_model = (g_activeFeatureLevel >= D3D_FEATURE_LEVEL_11_0) ? 50 : 41;
 	compiler.set_hlsl_options(options);
 
+	// Vulkan-orientation emulation. Blaze3D renders for Vulkan's convention:
+	// positive-height viewport, so NDC Y=-1 lands on texture row 0 and every
+	// render-to-texture image is stored bottom-up (VulkanGpuSurface flips it
+	// again when presenting). D3D11 puts NDC Y=+1 on row 0, so without this
+	// flip anything drawn into a texture (e.g. the animate_sprite_blit pass
+	// that assembles the GUI atlas) lands on the wrong rows. Negating
+	// gl_Position.y in the vertex stage makes D3D framebuffer positions equal
+	// Vulkan's; the rasterizer front face (FrontCounterClockwise = FALSE) and
+	// the surface blit (vertical flip) are the paired changes.
+	if (stage == ShaderExecutionStage::Vertex) {
+		spirv_cross::CompilerGLSL::Options common = compiler.get_common_options();
+		common.vertex.flip_vert_y = true;
+		compiler.set_common_options(common);
+	}
+
 	ApplyResourceBindings(compiler, ToExecutionModel(stage), assignments);
 
 	return compiler.compile();

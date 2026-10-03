@@ -85,7 +85,8 @@ class DxShaderSourceStageTest {
 		assertTrue(result.isReady());
 		assertTrue(result.source().vertex().rawSource().contains("in vec2 UV0;"));
 		assertTrue(result.source().fragment().rawSource().contains("uniform sampler2D Sampler0;"));
-		assertTrue(result.source().fragment().preprocessedSource().contains("texture(Sampler0, texCoord0)"));
+		assertTrue(result.source().fragment().preprocessedSource().contains("fragColor = color * ColorModulator;"));
+		assertTrue(result.source().fragment().preprocessedSource().contains("discard;"));
 	}
 
 	@Test
@@ -109,7 +110,6 @@ class DxShaderSourceStageTest {
 
 	@Test
 	void texturedGuiFragmentPreservesOriginalDiscardBehavior() {
-		Identifier texturedGuiId = Identifier.fromNamespaceAndPath("minecraft", "core/position_tex_color");
 		String fragment = "uniform sampler2D Sampler0;\n"
 			+ "in vec2 texCoord0;\n"
 			+ "out vec4 fragColor;\n"
@@ -120,8 +120,8 @@ class DxShaderSourceStageTest {
 			+ "}";
 		FakeShaderSource shaderSource = new FakeShaderSource()
 			.withSource(VERTEX_ID, ShaderType.VERTEX, "vertex-raw")
-			.withSource(texturedGuiId, ShaderType.FRAGMENT, fragment);
-		DxShaderPipelineDescriptor descriptor = new DxShaderPipelineDescriptor(VERTEX_ID, texturedGuiId, null, "test:pipeline");
+			.withSource(FRAGMENT_ID, ShaderType.FRAGMENT, fragment);
+		DxShaderPipelineDescriptor descriptor = new DxShaderPipelineDescriptor(VERTEX_ID, FRAGMENT_ID, null, "test:pipeline");
 
 		DxShaderSourceStageResult result = DxShaderSourceStage.load(descriptor, shaderSource, new FakeInjector());
 
