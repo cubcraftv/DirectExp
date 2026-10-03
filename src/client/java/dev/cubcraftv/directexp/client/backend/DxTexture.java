@@ -51,7 +51,7 @@ final class DxTexture extends GpuTexture {
 		for (int mipLevel = 0; mipLevel < mipLevels; mipLevel++) {
 			int mipWidth = getWidth(mipLevel);
 			int mipHeight = getHeight(mipLevel);
-			int mipBytes = Math.max(1, mipWidth * mipHeight * depthOrLayers * format.pixelSize());
+			int mipBytes = Math.max(1, mipWidth * mipHeight * depthOrLayers * format.blockSize());
 			this.mipStorage[mipLevel] = ByteBuffer.allocateDirect(mipBytes).order(ByteOrder.nativeOrder());
 		}
 	}
@@ -75,7 +75,7 @@ final class DxTexture extends GpuTexture {
 
 		ByteBuffer destination = this.mipStorage[mipLevel].duplicate().order(ByteOrder.nativeOrder());
 		ByteBuffer sourceCopy = source.duplicate().order(ByteOrder.nativeOrder());
-		int destinationBytesPerPixel = getFormat().pixelSize();
+		int destinationBytesPerPixel = getFormat().blockSize();
 		int copyBytesPerPixel = Math.min(sourceBytesPerPixel, destinationBytesPerPixel);
 		int mipWidth = getWidth(mipLevel);
 		int sourceStride = Math.max(sourceRowLength > 0 ? sourceRowLength : width, srcX + width);
@@ -119,7 +119,7 @@ final class DxTexture extends GpuTexture {
 		for (int row = 0; row < height; row++) {
 			for (int column = 0; column < width; column++) {
 				int offset = source.position() + ((srcY + row) * sourceStride + (srcX + column)) * sourceBytesPerPixel;
-				int destinationOffset = ((dstY + row) * getWidth(mipLevel) + dstX + column) * getFormat().pixelSize();
+				int destinationOffset = ((dstY + row) * getWidth(mipLevel) + dstX + column) * getFormat().blockSize();
 				boolean sourcePixelNonZero = false;
 				boolean mirrorPixelNonZero = false;
 				for (int channel = 0; channel < sourceBytesPerPixel; channel++) {
@@ -127,7 +127,7 @@ final class DxTexture extends GpuTexture {
 						sourcePixelNonZero = true;
 					}
 				}
-				for (int channel = 0; channel < getFormat().pixelSize(); channel++) {
+				for (int channel = 0; channel < getFormat().blockSize(); channel++) {
 					if (this.mipStorage[mipLevel].get(destinationOffset + channel) != 0) {
 						mirrorPixelNonZero = true;
 					}
@@ -141,7 +141,7 @@ final class DxTexture extends GpuTexture {
 				if (mirrorPixelNonZero) {
 					mirroredNonZeroPixels++;
 				}
-				if (getFormat().pixelSize() >= 4 && this.mipStorage[mipLevel].get(destinationOffset + 3) != 0) {
+				if (getFormat().blockSize() >= 4 && this.mipStorage[mipLevel].get(destinationOffset + 3) != 0) {
 					mirroredNonZeroAlphaPixels++;
 				}
 			}
@@ -164,7 +164,7 @@ final class DxTexture extends GpuTexture {
 			throw new IllegalArgumentException("Texture layer is outside the allocated layer range.");
 		}
 
-		int bytesPerPixel = getFormat().pixelSize();
+		int bytesPerPixel = getFormat().blockSize();
 		ByteBuffer source = this.mipStorage[mipLevel].duplicate().order(ByteOrder.nativeOrder());
 		ByteBuffer copy = ByteBuffer.allocateDirect(width * height * bytesPerPixel).order(ByteOrder.nativeOrder());
 		int mipWidth = getWidth(mipLevel);
@@ -184,12 +184,12 @@ final class DxTexture extends GpuTexture {
 	}
 
 	void copyRegionTo(DxTexture destination, int mipLevel, int dstX, int dstY, int srcX, int srcY, int width, int height) {
-		destination.writeRegion(readRegion(mipLevel, srcX, srcY, width, height), getFormat().pixelSize(), width, mipLevel, 0, dstX, dstY, width, height, 0, 0);
+		destination.writeRegion(readRegion(mipLevel, srcX, srcY, width, height), getFormat().blockSize(), width, mipLevel, 0, dstX, dstY, width, height, 0, 0);
 	}
 
 	void fillRegion(int mipLevel, int dstX, int dstY, int width, int height, int packedValue) {
 		ByteBuffer destination = this.mipStorage[mipLevel].duplicate().order(ByteOrder.nativeOrder());
-		int bytesPerPixel = getFormat().pixelSize();
+		int bytesPerPixel = getFormat().blockSize();
 		int mipWidth = getWidth(mipLevel);
 
 		for (int row = 0; row < height; row++) {

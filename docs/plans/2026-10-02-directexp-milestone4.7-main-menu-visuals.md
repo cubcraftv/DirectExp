@@ -17,12 +17,32 @@ for the 4.1-4.6 shader/draw work, and
 Vulkan comparisons and current open items. This document takes priority for
 these three user-visible outcomes.
 
-**Implementation status (2026-10-02):** all three code paths are implemented.
-The focused texture tests, client compilation, and Windows native bridge build
-pass. A fresh `runClient` reached GUI atlas creation without repeat missing-
-shader spam, an invalid textured pipeline, a panorama missing-view warning, or
-a JVM crash. Verify the clear hue and button pixels in a screenshot before
-calling the visual acceptance criteria fully closed.
+**Implementation status (2026-10-03):** the clear, button-texture, and
+panorama code paths have implementation work in place, but visual acceptance
+is not complete. The focused texture tests, client compilation, and Windows
+native bridge build pass. The latest user-reported runtime result confirms
+mob textures look correct, while block textures are stretched (grass is an
+example), item textures are broken, and main-menu buttons appear filled black
+without their expected texture. These symptoms need diagnosis; they do not yet
+identify a shared root cause.
+
+## Latest Runtime Observation (2026-10-03)
+
+Reported visual results:
+
+- **Mob textures:** appear correct.
+- **Block textures:** broken; grass is visibly stretched.
+- **Item textures:** broken.
+- **Main-menu buttons:** expected texture is absent and the button fill appears
+  black.
+
+This is symptom-level evidence only; no screenshot or matching runtime log was
+included with the report. Do not infer that all four outcomes share one cause.
+In particular, working mob textures show that some textured rendering works,
+but do not establish that block, item, or GUI texture coordinates, formats,
+views, and sampling state are correct. Capture a screenshot and `latest.log`
+from the same run before attributing the defects to UV generation, atlases,
+pipeline state, or resource binding.
 
 ## Outcome And Order
 
@@ -85,9 +105,10 @@ finding and trace that draw instead of changing the clear helper blindly.
 
 ## Priority 2: Main-Menu Button Backgrounds
 
-**Observed:** button text is visible, but the button background/backplate is
-not. Text rendering alone does not prove that the button's fill, nine-slice
-texture, blend state, or atlas binding worked.
+**Observed:** the latest report says the expected button texture is absent and
+the button fill appears black. Earlier captures showed the button text and
+relevant draw calls, but that does not prove the textured backplate rendered
+correctly.
 
 **Work:**
 
@@ -107,6 +128,19 @@ texture, blend state, or atlas binding worked.
 existing labels, and normal, hovered, and keyboard-focused states remain
 visible in a fresh screenshot. The test run is free of new invalid-pipeline,
 missing-view, or skipped-draw warnings for those backplates.
+
+## Additional Reported Texture Symptoms
+
+The same runtime report says mob textures look correct, block textures are
+stretched (including grass), and item textures are broken. Keep these as
+separate observations while investigating; do not assume the main-menu button,
+block, and item symptoms share a defect just because each involves textures.
+After capturing a matching screenshot and log, trace a representative block
+and item draw independently through vertex UVs, texture/view selection,
+resource binding, and sampling. Preserve the working mob-texture path as a
+comparison point. Record whether each result is fixed or remains open in the
+progress ledger; do not mark general texture correctness complete based only
+on mob rendering.
 
 ## Priority 3: Cubemap Panorama
 

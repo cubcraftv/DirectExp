@@ -9,7 +9,7 @@ import dev.cubcraftv.directexp.bridge.DxBridge;
  * destination, 2 = copy source, 4 = texture binding (sampled), 8 = render
  * attachment (color or depth depending on the format), 16 = cubemap
  * compatible. Raw ints for the same reasons as {@link DxBufferBinding};
- * re-verify on every snapshot bump.
+ * re-verify on every Minecraft version retarget.
  */
 final class DxTextureBinding {
 	static final int USAGE_TEXTURE_BINDING = 4;

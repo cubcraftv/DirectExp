@@ -20,8 +20,8 @@ import java.util.Objects;
  * GLSL text -- turning that into SPIR-V is Milestone 4.3's job.
  * <p>
  * Confirmed against the decompiled {@code com.mojang.blaze3d.vulkan}
- * package for Minecraft {@code 26.2-snapshot-1} (this project's own
- * {@code minecraft_version}), specifically {@code VulkanDevice}:
+ * package for Minecraft {@code 26.2} release, specifically
+ * {@code VulkanDevice}:
  * <pre>
  * private IntermediaryShaderModule compileShader(ShaderCompilationKey key, ShaderSource shaderSource) {
  *    String source = shaderSource.get(key.id, key.type);

@@ -123,7 +123,7 @@ public final class DxShaderInterfaceLayout {
 	 * the preprocessed text, so pipelines that share a shader but differ in
 	 * vertex format correctly get distinct cache entries.
 	 *
-	 * @param vertexInputNames {@code pipeline.getVertexFormat().getElementAttributeNames()}
+	 * @param vertexInputNames attribute names in the first vertex binding's element order
 	 */
 	public static DxPreprocessedShaderPipelineSource apply(DxPreprocessedShaderPipelineSource source, List<String> vertexInputNames) throws DxShaderInterfaceException {
 		Objects.requireNonNull(source, "source");

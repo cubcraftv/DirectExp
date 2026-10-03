@@ -1,15 +1,16 @@
 package dev.cubcraftv.directexp.client.backend;
 
 import com.mojang.blaze3d.GpuFormat;
+import com.mojang.blaze3d.IndexType;
 import com.mojang.blaze3d.buffers.GpuBuffer;
 import com.mojang.blaze3d.buffers.GpuBufferSlice;
 import com.mojang.blaze3d.pipeline.RenderPipeline;
 import com.mojang.blaze3d.systems.GpuQueryPool;
 import com.mojang.blaze3d.systems.RenderPass;
 import com.mojang.blaze3d.systems.RenderPassBackend;
+import com.mojang.blaze3d.systems.RenderPassDescriptor;
 import com.mojang.blaze3d.textures.GpuSampler;
 import com.mojang.blaze3d.textures.GpuTextureView;
-import com.mojang.blaze3d.vertex.VertexFormat;
 import dev.cubcraftv.directexp.bridge.DxBridge;
 import dev.cubcraftv.directexp.bridge.DxResourceKind;
 import dev.cubcraftv.directexp.DirectExpMod;
@@ -18,15 +19,18 @@ import net.minecraft.resources.Identifier;
 
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.nio.IntBuffer;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.OptionalDouble;
-import java.util.OptionalInt;
+import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.BiConsumer;
 import java.util.function.Supplier;
 import java.util.Arrays;
+import org.joml.Vector4fc;
+import org.lwjgl.PointerBuffer;
 
 /**
  * One Blaze3D render pass on the D3D11 immediate context (Milestone 4.6,
@@ -70,6 +74,7 @@ final class DxRenderPassBackend implements RenderPassBackend {
 	private final int colorTargetMipLevel;
 	private final int targetWidth;
 	private final int targetHeight;
+	private final boolean fullRenderArea;
 	private final DxDrawContext drawContext;
 	private final DxBridge dxBridge;
 	private final DxResourceBinder resourceBinder;
@@ -77,13 +82,13 @@ final class DxRenderPassBackend implements RenderPassBackend {
 	private final Map<String, BoundTexture> boundTextures = new HashMap<>();
 	private final Map<String, GpuBuffer> uniformBuffers = new HashMap<>();
 	private final Map<String, GpuBufferSlice> uniformSlices = new HashMap<>();
-	private final Map<Integer, DxBuffer> vertexBuffers = new HashMap<>();
+	private final Map<Integer, GpuBufferSlice> vertexBuffers = new HashMap<>();
 	private final DxTriangleFanExpander fanExpander = new DxTriangleFanExpander();
 	private final boolean nativeTargetsBound;
 
 	private RenderPipeline pipeline;
 	private DxBuffer indexBuffer;
-	private VertexFormat.IndexType indexType;
+	private IndexType indexType;
 	private boolean scissorEnabled;
 	private int scissorX;
 	private int scissorY;
@@ -98,10 +103,24 @@ final class DxRenderPassBackend implements RenderPassBackend {
 	private boolean indexBufferDirty = true;
 	private boolean texturesDirty = true;
 
-	DxRenderPassBackend(DxDrawContext drawContext, GpuTextureView colorTextureView, OptionalInt clearColor, GpuTextureView depthTextureView, OptionalDouble clearDepth) {
+	DxRenderPassBackend(DxDrawContext drawContext, RenderPassDescriptor descriptor) {
 		this.drawContext = drawContext;
 		this.dxBridge = drawContext == null ? null : drawContext.dxBridge();
 		this.resourceBinder = drawContext == null ? null : new DxResourceBinder(drawContext.dxBridge(), drawContext.scratch(), drawContext.diagnostics());
+
+		if (descriptor.colorAttachments().size() != 1 || descriptor.colorAttachments().get(0) == null) {
+			throw new UnsupportedOperationException("DirectX render passes currently require exactly one color attachment.");
+		}
+		RenderPassDescriptor.Attachment<Optional<Vector4fc>> colorAttachment = descriptor.colorAttachments().get(0);
+		GpuTextureView colorTextureView = colorAttachment.textureView();
+		RenderPassDescriptor.Attachment<OptionalDouble> depthAttachment = descriptor.depthAttachment();
+		GpuTextureView depthTextureView = depthAttachment == null ? null : depthAttachment.textureView();
+		Optional<Vector4fc> clearColor = colorAttachment.clearValue();
+		OptionalDouble clearDepth = depthAttachment == null ? OptionalDouble.empty() : depthAttachment.clearValue();
+		RenderPass.RenderArea renderArea = descriptor.renderArea;
+		if (renderArea == null) {
+			throw new IllegalArgumentException("DirectX render pass requires an explicit render area.");
+		}
 
 		if (colorTextureView == null || colorTextureView.isClosed()) {
 			throw new IllegalArgumentException("DirectX render pass requires a live color texture view.");
@@ -121,7 +140,16 @@ final class DxRenderPassBackend implements RenderPassBackend {
 		this.depthView = depthTextureView instanceof DxTextureView dxDepthView && !dxDepthView.isClosed() ? dxDepthView : null;
 		this.targetWidth = colorTextureView.getWidth(0);
 		this.targetHeight = colorTextureView.getHeight(0);
+		this.fullRenderArea = renderArea.x() == 0 && renderArea.y() == 0
+			&& renderArea.width() == this.targetWidth && renderArea.height() == this.targetHeight;
 		this.nativeTargetsBound = beginNativePass(clearColor, clearDepth);
+		if (!this.fullRenderArea) {
+			this.scissorEnabled = true;
+			this.scissorX = renderArea.x();
+			this.scissorY = renderArea.y();
+			this.scissorWidth = renderArea.width();
+			this.scissorHeight = renderArea.height();
+		}
 	}
 
 	/**
@@ -129,7 +157,7 @@ final class DxRenderPassBackend implements RenderPassBackend {
 	 *
 	 * @return false when the pass has no native targets (CPU-only texture, no bridge, or a native failure); its draws are then skipped
 	 */
-	private boolean beginNativePass(OptionalInt clearColor, OptionalDouble clearDepth) {
+	private boolean beginNativePass(Optional<Vector4fc> clearColor, OptionalDouble clearDepth) {
 		if (this.dxBridge == null) {
 			return false;
 		}
@@ -146,12 +174,16 @@ final class DxRenderPassBackend implements RenderPassBackend {
 
 		try {
 			this.dxBridge.setRenderTargets(this.colorView.nativeViewHandle(), hasDepthTarget ? this.depthView.nativeViewHandle() : 0L, this.targetWidth, this.targetHeight);
-			if (clearColor != null && clearColor.isPresent()) {
-				float[] rgba = DxClearColor.unpackArgb(clearColor.getAsInt());
-				this.dxBridge.clearRenderTarget(this.colorView.nativeViewHandle(), rgba[0], rgba[1], rgba[2], rgba[3]);
+			if (clearColor.isPresent() && this.fullRenderArea) {
+				Vector4fc rgba = clearColor.get();
+				this.dxBridge.clearRenderTarget(this.colorView.nativeViewHandle(), rgba.x(), rgba.y(), rgba.z(), rgba.w());
+			} else if (clearColor.isPresent()) {
+				report("partial-color-clear", "a partial-rectangle color clear was requested; it is skipped (no D3D11.0 equivalent)");
 			}
-			if (hasDepthTarget && clearDepth != null && clearDepth.isPresent()) {
+			if (hasDepthTarget && clearDepth.isPresent() && this.fullRenderArea) {
 				this.dxBridge.clearDepthStencil(this.depthView.nativeViewHandle(), (float) clearDepth.getAsDouble());
+			} else if (hasDepthTarget && clearDepth.isPresent()) {
+				report("partial-depth-clear", "a partial-rectangle depth clear was requested; it is skipped (no D3D11.0 equivalent)");
 			}
 			return true;
 		} catch (UnsupportedOperationException | IllegalStateException error) {
@@ -218,20 +250,28 @@ final class DxRenderPassBackend implements RenderPassBackend {
 	}
 
 	@Override
-	public void setVertexBuffer(int slot, GpuBuffer gpuBuffer) {
-		this.vertexBuffers.put(slot, (DxBuffer) gpuBuffer);
+	public void setVertexBuffer(int slot, GpuBufferSlice gpuBufferSlice) {
+		if (gpuBufferSlice == null) {
+			this.vertexBuffers.remove(slot);
+		} else {
+			this.vertexBuffers.put(slot, gpuBufferSlice);
+		}
 		this.vertexBuffersDirty = true;
 	}
 
 	@Override
-	public void setIndexBuffer(GpuBuffer gpuBuffer, VertexFormat.IndexType indexType) {
+	public void setIndexBuffer(GpuBuffer gpuBuffer, IndexType indexType) {
 		this.indexBuffer = (DxBuffer) gpuBuffer;
 		this.indexType = indexType;
 		this.indexBufferDirty = true;
 	}
 
 	@Override
-	public void drawIndexed(int baseVertex, int firstIndex, int indexCount, int instanceCount) {
+	public void drawIndexed(int indexCount, int instanceCount, int firstIndex, int baseVertex, int firstInstance) {
+		if (firstInstance != 0) {
+			report("draw-indexed-first-instance", "a non-zero first instance is not supported; draw skipped");
+			return;
+		}
 		boolean fan = isTriangleFanPipeline();
 		if (this.indexBuffer == null || this.indexType == null) {
 			report("draw-no-index-buffer", "drawIndexed without an index buffer; draw skipped");
@@ -264,7 +304,28 @@ final class DxRenderPassBackend implements RenderPassBackend {
 	}
 
 	@Override
-	public <T> void drawMultipleIndexed(Collection<RenderPass.Draw<T>> draws, GpuBuffer defaultIndexBuffer, VertexFormat.IndexType defaultIndexType, Collection<String> dynamicUniforms, T userContext) {
+	public void multiDrawIndexed(IntBuffer drawParameters, int instanceCount, int firstInstance, int drawCount) {
+		IntBuffer parameters = drawParameters.duplicate();
+		for (int drawIndex = 0; drawIndex < drawCount; drawIndex++) {
+			int firstIndex = parameters.get();
+			int indexCount = parameters.get();
+			int baseVertex = parameters.get();
+			drawIndexed(indexCount, instanceCount, firstIndex, baseVertex, firstInstance);
+		}
+	}
+
+	@Override
+	public void multiDrawIndexed(PointerBuffer firstIndexOffsets, IntBuffer indexCounts, IntBuffer vertexOffsets, int drawCount) {
+		throw new UnsupportedOperationException("separate-parameter multi-draw is not supported by the DirectX backend");
+	}
+
+	@Override
+	public void drawIndexedIndirect(GpuBufferSlice commands, int drawCount) {
+		throw new UnsupportedOperationException("indirect indexed draws are not supported by the DirectX backend");
+	}
+
+	@Override
+	public <T> void drawMultipleIndexed(Collection<RenderPass.Draw<T>> draws, GpuBuffer defaultIndexBuffer, IndexType defaultIndexType, Collection<String> dynamicUniforms, T userContext) {
 		// Mirrors VulkanRenderPass.drawMultipleIndexed: per draw, let the draw's
 		// uploader replace uniforms (chunk-section offsets etc.), pick the draw's
 		// index buffer or the default, bind vertex buffer 0, draw one instance.
@@ -276,20 +337,24 @@ final class DxRenderPassBackend implements RenderPassBackend {
 			}
 
 			GpuBuffer indexBuffer = draw.indexBuffer() == null ? defaultIndexBuffer : draw.indexBuffer();
-			VertexFormat.IndexType indexType = draw.indexType() == null ? defaultIndexType : draw.indexType();
+			IndexType indexType = draw.indexType() == null ? defaultIndexType : draw.indexType();
 			if (indexBuffer == null || indexType == null) {
 				report("draw-multiple-no-index", "a batched draw has neither its own nor a default index buffer/type; draw skipped");
 				continue;
 			}
 
 			setIndexBuffer(indexBuffer, indexType);
-			setVertexBuffer(0, draw.vertexBuffer());
-			drawIndexed(draw.baseVertex(), draw.firstIndex(), draw.indexCount(), 1);
+			setVertexBuffer(draw.slot(), draw.vertexBuffer().slice());
+			drawIndexed(draw.indexCount(), 1, draw.firstIndex(), draw.baseVertex(), 0);
 		}
 	}
 
 	@Override
-	public void draw(int firstVertex, int vertexCount) {
+	public void draw(int vertexCount, int instanceCount, int firstVertex, int firstInstance) {
+		if (instanceCount != 1 || firstInstance != 0) {
+			report("draw-instance-parameters", "instanced non-indexed draws are not supported; draw skipped");
+			return;
+		}
 		boolean fan = isTriangleFanPipeline();
 		if (fan) {
 			// Expanded into absolute vertex numbers; drawn indexed with base vertex 0.
@@ -310,6 +375,30 @@ final class DxRenderPassBackend implements RenderPassBackend {
 		} catch (UnsupportedOperationException | IllegalStateException error) {
 			report("draw", "Draw failed: " + error.getMessage());
 		}
+	}
+
+	@Override
+	public void multiDraw(IntBuffer drawParameters, int instanceCount, int firstInstance, int drawCount) {
+		IntBuffer parameters = drawParameters.duplicate();
+		for (int drawIndex = 0; drawIndex < drawCount; drawIndex++) {
+			int firstVertex = parameters.get();
+			int vertexCount = parameters.get();
+			draw(vertexCount, instanceCount, firstVertex, firstInstance);
+		}
+	}
+
+	@Override
+	public void multiDraw(IntBuffer firstVertices, IntBuffer vertexCounts, int drawCount) {
+		IntBuffer vertices = firstVertices.duplicate();
+		IntBuffer counts = vertexCounts.duplicate();
+		for (int drawIndex = 0; drawIndex < drawCount; drawIndex++) {
+			draw(counts.get(), 1, vertices.get(), 0);
+		}
+	}
+
+	@Override
+	public void drawIndirect(GpuBufferSlice commands, int drawCount) {
+		throw new UnsupportedOperationException("indirect draws are not supported by the DirectX backend");
 	}
 
 	private void logGuiAtlasCompositionDraw(int vertexCount, int firstVertex) {
@@ -372,15 +461,12 @@ final class DxRenderPassBackend implements RenderPassBackend {
 
 	/** D3D11 has no fan topology: fan pipelines are TRIANGLELIST and every draw expands its indices. */
 	boolean isTriangleFanPipeline() {
-		return this.pipeline != null && this.pipeline.getVertexFormatMode() == VertexFormat.Mode.TRIANGLE_FAN;
+		return this.pipeline != null && this.pipeline.getPrimitiveTopology() == com.mojang.blaze3d.PrimitiveTopology.TRIANGLE_FAN;
 	}
 
 	/** Expands the bound index buffer's fan range into {@link #fanExpander()}; indices stay relative to the draw's base vertex. */
 	void expandIndexedFan(int firstIndex, int indexCount) {
-		int indexBytes = switch (this.indexType) {
-			case SHORT -> 2;
-			case INT -> 4;
-		};
+		int indexBytes = this.indexType.bytes;
 		this.fanExpander.expandIndexed(this.indexBuffer.logicalStorage(), indexBytes, firstIndex, indexCount);
 	}
 
@@ -439,13 +525,13 @@ final class DxRenderPassBackend implements RenderPassBackend {
 			}
 
 			if (this.vertexBuffersDirty) {
-				for (Map.Entry<Integer, DxBuffer> entry : this.vertexBuffers.entrySet()) {
-					DxBuffer buffer = entry.getValue();
+				for (Map.Entry<Integer, GpuBufferSlice> entry : this.vertexBuffers.entrySet()) {
+					DxBuffer buffer = (DxBuffer) entry.getValue().buffer();
 					if (!buffer.hasNativeBufferHandle()) {
 						report("vertex-buffer-no-native", "a vertex buffer has no native handle; draws using it are skipped");
 						return false;
 					}
-					this.dxBridge.bindVertexBuffer(entry.getKey(), buffer.nativeBufferHandle(), 0);
+					this.dxBridge.bindVertexBuffer(entry.getKey(), buffer.nativeBufferHandle(), Math.toIntExact(entry.getValue().offset()));
 				}
 				this.vertexBuffersDirty = false;
 			}
@@ -471,7 +557,7 @@ final class DxRenderPassBackend implements RenderPassBackend {
 			report("index-buffer-no-native", "an index buffer has no native handle; draws using it are skipped");
 			return false;
 		}
-		this.dxBridge.bindIndexBuffer(this.indexBuffer.nativeBufferHandle(), this.indexType == VertexFormat.IndexType.INT, 0);
+		this.dxBridge.bindIndexBuffer(this.indexBuffer.nativeBufferHandle(), this.indexType == IndexType.INT, 0);
 		this.indexBufferDirty = false;
 		return true;
 	}

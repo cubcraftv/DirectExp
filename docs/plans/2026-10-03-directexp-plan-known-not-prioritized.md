@@ -27,7 +27,7 @@ These are important, but they are not the active target while the front-end star
 
 ## Deferred investigations
 
-- The GUI black-button root cause remains unresolved and is intentionally deferred while the project is retargeting the Minecraft build to the stable `26.3` release.
+- The GUI black-button root cause remains unresolved and is intentionally deferred while the project is retargeting the Minecraft build to the stable `26.2` release.
 - Follow-up RenderDoc pixel-history work and shader-output inspection remain useful, but they are not the immediate next step while the branch is being retargeted.
 
 ## Rule for this file

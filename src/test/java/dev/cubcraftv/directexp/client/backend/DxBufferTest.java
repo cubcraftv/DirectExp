@@ -1,6 +1,7 @@
 package dev.cubcraftv.directexp.client.backend;
 
 import dev.cubcraftv.directexp.bridge.DxBridge;
+import com.mojang.blaze3d.buffers.GpuBufferSlice;
 import org.junit.jupiter.api.Test;
 
 import java.nio.ByteBuffer;
@@ -107,11 +108,11 @@ class DxBufferTest {
 		DxBuffer buffer = new DxBuffer(bridge, 32, 64);
 		bridge.calls.clear();
 
-		DxMappedBufferView readView = new DxMappedBufferView(buffer.sliceStorage(0, 16), null);
+		GpuBufferSlice.MappedView readView = buffer.map(0, 16, true, false);
 		readView.close();
 		assertTrue(bridge.calls.isEmpty());
 
-		DxMappedBufferView writeView = new DxMappedBufferView(buffer.sliceStorage(16, 16), () -> buffer.syncRange(16, 16));
+		GpuBufferSlice.MappedView writeView = buffer.map(16, 16, false, true);
 		writeView.data().put(0, (byte) 9);
 		assertTrue(bridge.calls.isEmpty(), "nothing is pushed until the view is closed");
 		writeView.close();

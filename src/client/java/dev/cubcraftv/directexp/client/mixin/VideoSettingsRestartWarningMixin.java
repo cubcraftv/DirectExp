@@ -13,10 +13,10 @@ public abstract class VideoSettingsRestartWarningMixin {
 		method = {"addTitle", "tick"},
 		at = @At(
 			value = "INVOKE",
-			target = "Lnet/minecraft/client/Options;hasPreferredGraphicsBackendChanged()Z"
+			target = "Lnet/minecraft/client/Options;isRestartRequiredToApplyVideoSettings()Z"
 		)
 	)
 	private boolean directExp$includeDirectExpGraphicsApiChange(Options options) {
-		return options.hasPreferredGraphicsBackendChanged() || DirectExpGraphicsApiSelectionState.hasPendingRestart();
+		return options.isRestartRequiredToApplyVideoSettings() || DirectExpGraphicsApiSelectionState.hasPendingRestart();
 	}
 }

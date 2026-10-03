@@ -1,11 +1,11 @@
 package dev.cubcraftv.directexp.client.backend;
 
 import com.mojang.blaze3d.GpuFormat;
+import com.mojang.blaze3d.PrimitiveTopology;
 import com.mojang.blaze3d.platform.BlendFactor;
 import com.mojang.blaze3d.platform.BlendOp;
 import com.mojang.blaze3d.platform.CompareOp;
 import com.mojang.blaze3d.platform.PolygonMode;
-import com.mojang.blaze3d.vertex.VertexFormat.Mode;
 import dev.cubcraftv.directexp.bridge.DxPipelineStateDescriptor;
 import org.junit.jupiter.api.Test;
 
@@ -16,15 +16,15 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class DxPipelineStateMappingTest {
 	@Test
 	void quadsLinesAndFansUseTriangleList() {
-		assertEquals(DxPipelineStateMapping.TOPOLOGY_TRIANGLELIST, DxPipelineStateMapping.topology(Mode.QUADS));
-		assertEquals(DxPipelineStateMapping.TOPOLOGY_TRIANGLELIST, DxPipelineStateMapping.topology(Mode.LINES));
-		assertEquals(DxPipelineStateMapping.TOPOLOGY_TRIANGLELIST, DxPipelineStateMapping.topology(Mode.TRIANGLES));
+		assertEquals(DxPipelineStateMapping.TOPOLOGY_TRIANGLELIST, DxPipelineStateMapping.topology(PrimitiveTopology.QUADS));
+		assertEquals(DxPipelineStateMapping.TOPOLOGY_TRIANGLELIST, DxPipelineStateMapping.topology(PrimitiveTopology.LINES));
+		assertEquals(DxPipelineStateMapping.TOPOLOGY_TRIANGLELIST, DxPipelineStateMapping.topology(PrimitiveTopology.TRIANGLES));
 		// D3D11 has no fan topology: the pipeline is a triangle list and the draw path expands the indices.
-		assertEquals(DxPipelineStateMapping.TOPOLOGY_TRIANGLELIST, DxPipelineStateMapping.topology(Mode.TRIANGLE_FAN));
-		assertEquals(DxPipelineStateMapping.TOPOLOGY_TRIANGLESTRIP, DxPipelineStateMapping.topology(Mode.TRIANGLE_STRIP));
-		assertEquals(DxPipelineStateMapping.TOPOLOGY_LINELIST, DxPipelineStateMapping.topology(Mode.DEBUG_LINES));
-		assertEquals(DxPipelineStateMapping.TOPOLOGY_LINESTRIP, DxPipelineStateMapping.topology(Mode.DEBUG_LINE_STRIP));
-		assertEquals(DxPipelineStateMapping.TOPOLOGY_POINTLIST, DxPipelineStateMapping.topology(Mode.POINTS));
+		assertEquals(DxPipelineStateMapping.TOPOLOGY_TRIANGLELIST, DxPipelineStateMapping.topology(PrimitiveTopology.TRIANGLE_FAN));
+		assertEquals(DxPipelineStateMapping.TOPOLOGY_TRIANGLESTRIP, DxPipelineStateMapping.topology(PrimitiveTopology.TRIANGLE_STRIP));
+		assertEquals(DxPipelineStateMapping.TOPOLOGY_LINELIST, DxPipelineStateMapping.topology(PrimitiveTopology.DEBUG_LINES));
+		assertEquals(DxPipelineStateMapping.TOPOLOGY_LINESTRIP, DxPipelineStateMapping.topology(PrimitiveTopology.DEBUG_LINE_STRIP));
+		assertEquals(DxPipelineStateMapping.TOPOLOGY_POINTLIST, DxPipelineStateMapping.topology(PrimitiveTopology.POINTS));
 	}
 
 	@Test

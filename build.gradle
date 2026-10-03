@@ -5,7 +5,7 @@ plugins {
 
 version = project.mod_version
 group = project.maven_group
-def junitJupiterVersion = '5.10.0'
+def junitVersion = '6.1.3'
 def isWindows = System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("windows")
 // Keep CMake/Ninja's dependency and object cache outside build/ so
 // `gradlew clean` does not force Shaderc and SPIRV-Tools to rebuild.
@@ -41,9 +41,9 @@ dependencies {
 	minecraft "com.mojang:minecraft:${project.minecraft_version}"
 	implementation "net.fabricmc:fabric-loader:${project.loader_version}"
 	implementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
-	testImplementation "org.junit.jupiter:junit-jupiter-api:${junitJupiterVersion}"
-	testRuntimeOnly "org.junit.jupiter:junit-jupiter-engine:${junitJupiterVersion}"
-	testRuntimeOnly "org.junit.platform:junit-platform-launcher:1.10.0"
+	testImplementation "org.junit.jupiter:junit-jupiter-api:${junitVersion}"
+	testRuntimeOnly "org.junit.jupiter:junit-jupiter-engine:${junitVersion}"
+	testRuntimeOnly "org.junit.platform:junit-platform-launcher:${junitVersion}"
 }
 
 // By default Loom's splitEnvironmentSourceSets() only wires the `test`

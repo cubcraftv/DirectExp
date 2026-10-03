@@ -1,6 +1,7 @@
 package dev.cubcraftv.directexp.client.backend;
 
 import com.mojang.blaze3d.GpuFormat;
+import com.mojang.blaze3d.PrimitiveTopology;
 import com.mojang.blaze3d.pipeline.BlendFunction;
 import com.mojang.blaze3d.pipeline.ColorTargetState;
 import com.mojang.blaze3d.pipeline.RenderPipeline;
@@ -99,14 +100,22 @@ final class DxPipelineStateMapping {
 	 * express yet -- the caller marks that one pipeline invalid rather than failing.
 	 */
 	static DxPipelineStateDescriptor describe(RenderPipeline pipeline) {
-		VertexFormat vertexFormat = pipeline.getVertexFormat();
-		List<VertexFormatElement> elements = vertexFormat.getElements();
+		VertexFormat vertexFormat = pipeline.getVertexFormatBinding(0);
+		VertexFormat[] bindings = pipeline.getVertexFormatBindings();
+		if (bindings != null) {
+			for (int binding = 1; binding < bindings.length; binding++) {
+				if (bindings[binding] != null) {
+					throw new UnsupportedOperationException("multiple vertex-buffer bindings are not supported yet");
+				}
+			}
+		}
+		List<VertexFormatElement> elements = vertexFormat == null ? List.of() : vertexFormat.getElements();
 		int[] formats = new int[elements.size()];
 		int[] offsets = new int[elements.size()];
 		for (int i = 0; i < elements.size(); i++) {
 			VertexFormatElement element = elements.get(i);
 			formats[i] = vertexAttributeFormat(element.format());
-			offsets[i] = vertexFormat.getOffset(element);
+			offsets[i] = element.offset();
 		}
 
 		var depthStencil = pipeline.getDepthStencilState();
@@ -131,7 +140,7 @@ final class DxPipelineStateMapping {
 		}
 
 		return new DxPipelineStateDescriptor(
-			topology(pipeline.getVertexFormatMode()),
+			topology(pipeline.getPrimitiveTopology()),
 			blend != null,
 			colorFactors[0], colorFactors[1], colorOp,
 			alphaFactors[0], alphaFactors[1], alphaOp,
@@ -141,7 +150,7 @@ final class DxPipelineStateMapping {
 			fillMode(pipeline.getPolygonMode()),
 			biasEnabled ? Math.round(biasConstant) : 0,
 			biasEnabled ? biasScale : 0.0F,
-			formats, offsets, vertexFormat.getVertexSize()
+			formats, offsets, vertexFormat == null ? 0 : vertexFormat.getVertexSize()
 		);
 	}
 
@@ -199,8 +208,8 @@ final class DxPipelineStateMapping {
 		};
 	}
 
-	static int topology(VertexFormat.Mode mode) {
-		return switch (mode) {
+	static int topology(PrimitiveTopology topology) {
+		return switch (topology) {
 			case POINTS -> TOPOLOGY_POINTLIST;
 			case DEBUG_LINES -> TOPOLOGY_LINELIST;
 			case DEBUG_LINE_STRIP -> TOPOLOGY_LINESTRIP;

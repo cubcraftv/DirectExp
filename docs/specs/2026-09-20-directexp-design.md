@@ -3,8 +3,9 @@
 ## Summary
 
 `DirectExp` is an experimental, private Fabric mod project that aims to add
-a native DirectX 11 rendering backend to modern Minecraft snapshot builds on
-Windows, targeting feature level 10.1 hardware at minimum.
+a native DirectX 11 rendering backend to modern Minecraft builds on Windows,
+targeting the Minecraft 26.2 release APIs and feature level 10.1 hardware at
+minimum.
 
 The project is explicitly **not** a lightweight compatibility patch. It is a
 backend program delivered in mod form, structurally mirroring the `MetalExp`
@@ -15,9 +16,9 @@ sibling project:
 - the renderer itself is implemented as a first-class backend stack
 - the project includes a native Windows bridge for Win32 and D3D11/DXGI APIs
 
-The first target is the modern Blaze3D architecture line represented by
-Minecraft `26.2-snapshot-1` (matching MetalExp exactly), with the
-expectation that snapshot drift will require active maintenance.
+The current target is the modern Blaze3D architecture in Minecraft `26.2`
+(release). Initial backend research was done against `26.2-snapshot-1`;
+the release retarget requires active maintenance of Minecraft-facing code.
 
 ## Goals
 
@@ -51,7 +52,7 @@ experiment, with the same honesty MetalExp commits to if it is ever shared
 further:
 
 - Windows only
-- snapshot-sensitive
+- Minecraft-version-sensitive
 - renderer-mod incompatible unless explicitly documented otherwise
 - diagnostics-first support model
 - feature level 10.1 is the hard floor; devices below it are rejected with a
@@ -59,9 +60,11 @@ further:
 
 ## Background
 
-Research on Minecraft `26.2-snapshot-1` (validated against the `MetalExp`
-reference project in this same workspace) shows that Blaze3D is structured
-around an explicit backend boundary:
+Initial research on Minecraft `26.2-snapshot-1` (validated against the
+`MetalExp` reference project in this same workspace) showed Blaze3D's
+explicit backend boundary. The active target is now Minecraft 26.2 release;
+its checked-in decompile and assets are the source of truth for current API
+and shader behavior:
 
 - `GpuBackend`
 - `GpuDeviceBackend`
@@ -512,14 +515,15 @@ Sodium/Iris-equivalent render-stack rewrites.
 
 ## Versioning and Maintenance Strategy
 
-Because the target line is a snapshot, the codebase must separate:
+Because Minecraft's backend APIs can change between releases, the codebase
+must separate:
 
 - Minecraft-version-sensitive adaptation code
 - backend core code
 - shader/toolchain core code
 - native bridge code
 
-This allows snapshot retargeting work to concentrate in the adaptation layer
+This keeps release retargeting work concentrated in the adaptation layer
 instead of destabilizing the entire renderer. Since `gradle.properties`
 intentionally tracks the same `minecraft_version` as MetalExp, retargeting
 both projects together (when the user chooses to) keeps their Blaze3D
@@ -596,7 +600,7 @@ assumptions from silently drifting apart.
 - D3D11's implicit synchronization model producing subtly different
   ordering bugs than the explicit command-buffer models Blaze3D's Vulkan
   path assumes
-- snapshot-driven hook drift
+- Minecraft-version-driven hook drift
 
 ### Medium Risk
 

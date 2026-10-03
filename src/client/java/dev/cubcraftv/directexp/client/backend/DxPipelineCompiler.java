@@ -81,7 +81,11 @@ final class DxPipelineCompiler {
 
 			DxPreprocessedShaderPipelineSource laidOut;
 			try {
-				laidOut = DxShaderInterfaceLayout.apply(layoutInput, pipeline.getVertexFormat().getElementAttributeNames());
+				VertexFormat vertexFormat = pipeline.getVertexFormatBinding(0);
+				laidOut = DxShaderInterfaceLayout.apply(
+					layoutInput,
+					vertexFormat == null ? java.util.List.of() : vertexFormat.getElements().stream().map(element -> element.name()).toList()
+				);
 			} catch (DxShaderInterfaceException error) {
 				return DxRenderPipeline.invalid(pipeline, "shader interface: " + error.getMessage());
 			}
@@ -104,7 +108,7 @@ final class DxPipelineCompiler {
 			}
 
 			byte[] geometryBytecode = null;
-			if (pointSize.usesPointSize() && pipeline.getVertexFormatMode() == VertexFormat.Mode.POINTS) {
+			if (pointSize.usesPointSize() && pipeline.getPrimitiveTopology() == com.mojang.blaze3d.PrimitiveTopology.POINTS) {
 				String geometryHlsl;
 				try {
 					geometryHlsl = DxPointSpriteGeometryShader.generate(hlsl.modules().vertex().hlsl(), DxBridge.GEOMETRY_VIEWPORT_CBUFFER_SLOT);

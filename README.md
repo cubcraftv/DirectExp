@@ -1,8 +1,8 @@
 # DirectExp
 
 Experimental Fabric-delivered backend project that adds a native DirectX 11
-rendering backend to Minecraft snapshot builds on Windows, targeting
-feature level 10.1 devices at minimum.
+rendering backend to Minecraft on Windows, targeting the 26.2 release APIs
+and feature level 10.1 devices at minimum.
 
 This is a structural sibling of `MetalExp` (the same approach applied to
 Apple's Metal API on macOS): rather than patching Mojang's OpenGL/Vulkan
@@ -11,12 +11,9 @@ backend negotiation, and implements a first-class `DxBackend` against the
 same Blaze3D backend boundary (`GpuBackend` / `GpuDeviceBackend` /
 `GpuSurfaceBackend` / `CommandEncoderBackend` / `RenderPassBackend`).
 
-**Status: Milestones 1-3 complete and runtime-verified on Windows (MSYS2
-UCRT64) -- `./gradlew.bat runClient` reaches a real, presenting DirectX
-window, and the native GPU-texture path (real `ID3D11Texture2D`
-creation/upload and a GPU-to-GPU back-buffer blit) is confirmed active via
-the `native GPU texture path active` diagnostic log line, not just
-compiling. Milestone 4 (shader/pipeline core) has not started.** See
+**Status: Milestones 1-3 and the native texture path are runtime-verified on
+Windows (MSYS2 UCRT64). Milestone 4 shader/pipeline work is underway; the
+26.2 release retarget still needs runtime verification.** See
 `docs/plans/2026-09-20-directexp-bootstrap-plan.md` for exactly what's real
 vs. stubbed, and its Progress Log for session-to-session history.
 
@@ -24,9 +21,11 @@ vs. stubbed, and its Progress Log for session-to-session history.
 
 | | |
 |---|---|
-| Minecraft version | `26.2-snapshot-1` (tracks the `MetalExp` reference project) |
-| Fabric Loader | `0.19.0` |
-| Fabric Loom | `1.15-SNAPSHOT` |
+| Minecraft version | `26.2` (release) |
+| Fabric Loader | `0.19.5` |
+| Fabric Loom | `1.18.2` |
+| Gradle | `9.8.0` |
+| Fabric API | `0.161.0+26.2` |
 | Java | 25 |
 | Graphics API | DirectX 11, feature level **10.1 minimum** (10.0 devices are rejected, not silently downgraded) |
 | Platform | Windows only |

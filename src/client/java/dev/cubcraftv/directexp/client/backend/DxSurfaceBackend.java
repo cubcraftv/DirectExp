@@ -5,6 +5,7 @@ import com.mojang.blaze3d.systems.CommandEncoderBackend;
 import com.mojang.blaze3d.systems.GpuSurface;
 import com.mojang.blaze3d.systems.GpuSurfaceBackend;
 import com.mojang.blaze3d.systems.SurfaceException;
+import com.mojang.blaze3d.systems.GpuSurface.PresentMode;
 import com.mojang.blaze3d.textures.GpuTextureView;
 
 import java.nio.ByteBuffer;
@@ -31,7 +32,8 @@ final class DxSurfaceBackend implements GpuSurfaceBackend {
 		}
 
 		try {
-			this.surfaceLease.configure(configuration.width(), configuration.height(), configuration.vsync());
+			boolean vsync = configuration.presentMode() == PresentMode.FIFO || configuration.presentMode() == PresentMode.FIFO_RELAXED;
+			this.surfaceLease.configure(configuration.width(), configuration.height(), vsync);
 		} catch (IllegalStateException | IllegalArgumentException | UnsupportedOperationException error) {
 			throw new SurfaceException(error.getMessage());
 		}
@@ -128,6 +130,11 @@ final class DxSurfaceBackend implements GpuSurfaceBackend {
 		this.closed = true;
 		this.acquired = false;
 		this.surfaceLease.close();
+	}
+
+	@Override
+	public java.util.Collection<PresentMode> supportedPresentModes() {
+		return java.util.List.of(PresentMode.IMMEDIATE, PresentMode.FIFO);
 	}
 
 	boolean isAcquired() {

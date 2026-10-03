@@ -705,9 +705,23 @@ not a bug in what's implemented so far).
   development target. Resume with RenderDoc pixel history and shader output
   inspection on the release build.
 
-- **2026-10-03 -- Retargeting from snapshot to stable Minecraft release.**
-  The Mojang version manifest identifies `26.3` as the latest release. The
-  project is being moved from `26.2-snapshot-1` to `26.3`, with matching stable
-  Fabric Loader, Loom, and Fabric API versions. Revalidate and repair
-  Minecraft-facing integration against the release APIs before resuming the
-  deferred GUI investigation.
+- **2026-10-03 -- Initial release retarget proposal (superseded).** The
+  project was initially set to move from `26.2-snapshot-1` to Minecraft
+  `26.3`. The active target was subsequently changed to the `26.2` release;
+  see the following entry.
+
+- **2026-10-03 -- Retargeted to Minecraft 26.2 release.** Gradle is now
+  `9.8.0`, Fabric Loom `1.18.2`, Fabric Loader `0.19.5`, Fabric API
+  `0.161.0+26.2`, and the JUnit test dependencies `6.1.3`; the game and Java
+  toolchains target release 26.2 / Java 25. The release's decompiled
+  `com.mojang.blaze3d` sources and shader assets were used to migrate backend
+  contracts that changed since `26.2-snapshot-1` (buffer mapping, render-pass
+  descriptors, topology/index types, and bind-group layouts). Partial render
+  area clears are now explicitly skipped with diagnostics rather than
+  clearing the whole target. The final `./gradlew.bat test` passes (138 tests),
+  and `./gradlew.bat build` succeeds on Windows with the native DLL built. A
+  user-reported runtime check finds mob textures correct, stretched block
+  textures (grass is an example), broken item textures, and black-filled main
+  menu buttons with their expected texture missing. These are visual symptoms,
+  not diagnosed causes; a matching screenshot and runtime log are still needed.
+  See [the Milestone 4.7 visual plan](./2026-10-02-directexp-milestone4.7-main-menu-visuals.md).

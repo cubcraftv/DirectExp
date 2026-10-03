@@ -3,41 +3,41 @@ package dev.cubcraftv.directexp.client.backend;
 import com.mojang.blaze3d.buffers.GpuBuffer;
 import com.mojang.blaze3d.buffers.GpuBufferSlice;
 import com.mojang.blaze3d.buffers.GpuFence;
-import com.mojang.blaze3d.platform.NativeImage;
 import com.mojang.blaze3d.systems.CommandEncoderBackend;
 import com.mojang.blaze3d.systems.GpuQueryPool;
 import com.mojang.blaze3d.systems.RenderPassBackend;
+import com.mojang.blaze3d.systems.RenderPassDescriptor;
+import com.mojang.blaze3d.systems.TransientMemory;
 import com.mojang.blaze3d.textures.GpuTexture;
-import com.mojang.blaze3d.textures.GpuTextureView;
-import org.lwjgl.system.MemoryUtil;
+import org.joml.Vector4fc;
 
 import java.nio.ByteBuffer;
-import java.util.OptionalDouble;
-import java.util.OptionalInt;
-import java.util.function.Supplier;
 
 final class DxCommandEncoderBackend implements CommandEncoderBackend {
 	private final DxSurfaceLease surfaceLease;
 	private final DxDrawContext drawContext;
+	private final DxTransientMemory transientMemory;
 
 	DxCommandEncoderBackend(DxSurfaceLease surfaceLease, DxDrawContext drawContext) {
 		this.surfaceLease = surfaceLease;
 		this.drawContext = drawContext;
+		this.transientMemory = new DxTransientMemory(surfaceLease.dxBridge());
 	}
 
 	@Override
 	public void submit() {
 		this.surfaceLease.submitPendingCommands();
+		this.transientMemory.reset();
 	}
 
 	@Override
-	public RenderPassBackend createRenderPass(Supplier<String> label, GpuTextureView colorTextureView, OptionalInt clearColor) {
-		return new DxRenderPassBackend(this.drawContext, colorTextureView, clearColor, null, OptionalDouble.empty());
+	public TransientMemory transientMemory() {
+		return this.transientMemory;
 	}
 
 	@Override
-	public RenderPassBackend createRenderPass(Supplier<String> label, GpuTextureView colorTextureView, OptionalInt clearColor, GpuTextureView depthTextureView, OptionalDouble clearDepth) {
-		return new DxRenderPassBackend(this.drawContext, colorTextureView, clearColor, depthTextureView, clearDepth);
+	public RenderPassBackend createRenderPass(RenderPassDescriptor descriptor) {
+		return new DxRenderPassBackend(this.drawContext, descriptor);
 	}
 
 	@Override
@@ -45,19 +45,19 @@ final class DxCommandEncoderBackend implements CommandEncoderBackend {
 	}
 
 	@Override
-	public void clearColorTexture(GpuTexture gpuTexture, int packedColor) {
-		((DxTexture) gpuTexture).fillRegion(0, 0, 0, gpuTexture.getWidth(0), gpuTexture.getHeight(0), packedColor);
+	public void clearColorTexture(GpuTexture gpuTexture, Vector4fc clearColor) {
+		((DxTexture) gpuTexture).fillRegion(0, 0, 0, gpuTexture.getWidth(0), gpuTexture.getHeight(0), DxClearColor.packArgb(clearColor));
 	}
 
 	@Override
-	public void clearColorAndDepthTextures(GpuTexture gpuTexture, int packedColor, GpuTexture depthTexture, double depth) {
-		clearColorTexture(gpuTexture, packedColor);
+	public void clearColorAndDepthTextures(GpuTexture gpuTexture, Vector4fc clearColor, GpuTexture depthTexture, double depth) {
+		clearColorTexture(gpuTexture, clearColor);
 		clearDepthTexture(depthTexture, depth);
 	}
 
 	@Override
-	public void clearColorAndDepthTextures(GpuTexture gpuTexture, int packedColor, GpuTexture depthTexture, double depth, int x, int y, int width, int height) {
-		((DxTexture) gpuTexture).fillRegion(0, x, y, width, height, packedColor);
+	public void clearColorAndDepthTextures(GpuTexture gpuTexture, Vector4fc clearColor, GpuTexture depthTexture, double depth, int x, int y, int width, int height) {
+		((DxTexture) gpuTexture).fillRegion(0, x, y, width, height, DxClearColor.packArgb(clearColor));
 		if (x == 0 && y == 0 && width >= depthTexture.getWidth(0) && height >= depthTexture.getHeight(0)) {
 			clearDepthTexture(depthTexture, depth);
 		} else {
@@ -86,34 +86,25 @@ final class DxCommandEncoderBackend implements CommandEncoderBackend {
 	}
 
 	@Override
-	public GpuBuffer.MappedView mapBuffer(GpuBufferSlice gpuBufferSlice, boolean read, boolean write) {
-		DxBuffer buffer = (DxBuffer) gpuBufferSlice.buffer();
-		long offset = gpuBufferSlice.offset();
-		long length = gpuBufferSlice.length();
-		// A write-mapped view pushes its slice to the GPU copy when closed
-		// (the "unmap"); a read-only view has nothing to push.
-		Runnable onClose = write ? () -> buffer.syncRange(offset, length) : null;
-		return new DxMappedBufferView(buffer.sliceStorage(offset, length), onClose);
-	}
-
-	@Override
 	public void copyToBuffer(GpuBufferSlice source, GpuBufferSlice destination) {
 		ByteBuffer sourceBytes = ((DxBuffer) source.buffer()).sliceStorage(source.offset(), source.length());
 		((DxBuffer) destination.buffer()).write(destination.offset(), sourceBytes);
 	}
 
 	@Override
-	public void writeToTexture(GpuTexture gpuTexture, NativeImage nativeImage, int mipLevel, int layer, int dstX, int dstY, int width, int height, int srcX, int srcY) {
-		ByteBuffer source = MemoryUtil.memByteBuffer(
-			nativeImage.getPointer(),
-			nativeImage.getWidth() * nativeImage.getHeight() * nativeImage.format().components()
-		);
-		((DxTexture) gpuTexture).writeRegion(source, nativeImage.format().components(), nativeImage.getWidth(), mipLevel, layer, dstX, dstY, width, height, srcX, srcY);
+	public void writeToTexture(GpuTexture gpuTexture, ByteBuffer byteBuffer, int mipLevel, int layer, int dstX, int dstY, int width, int height) {
+		int bytesPerPixel = gpuTexture.getFormat().blockSize();
+		((DxTexture) gpuTexture).writeRegion(byteBuffer, bytesPerPixel, width, mipLevel, layer, dstX, dstY, width, height, 0, 0);
 	}
 
 	@Override
-	public void writeToTexture(GpuTexture gpuTexture, ByteBuffer byteBuffer, NativeImage.Format format, int mipLevel, int layer, int dstX, int dstY, int width, int height) {
-		((DxTexture) gpuTexture).writeRegion(byteBuffer, format.components(), width, mipLevel, layer, dstX, dstY, width, height, 0, 0);
+	public void copyBufferToTexture(GpuBufferSlice source, int sourceX, int sourceY, int sourceWidth, int sourceHeight, GpuTexture destination, int destinationX, int destinationY, int copyWidth, int copyHeight, int mipLevel, int arrayLayer) {
+		ByteBuffer sourceBytes = ((DxBuffer) source.buffer()).sliceStorage(source.offset(), source.length());
+		int bytesPerPixel = destination.getFormat().blockSize();
+		((DxTexture) destination).writeRegion(
+			sourceBytes, bytesPerPixel, sourceWidth, mipLevel, arrayLayer,
+			destinationX, destinationY, copyWidth, copyHeight, sourceX, sourceY
+		);
 	}
 
 	@Override

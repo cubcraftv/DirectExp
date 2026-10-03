@@ -8,9 +8,12 @@ import com.mojang.blaze3d.shaders.ShaderSource;
 import com.mojang.blaze3d.systems.CommandEncoderBackend;
 import com.mojang.blaze3d.systems.DeviceInfo;
 import com.mojang.blaze3d.systems.DeviceLimits;
+import com.mojang.blaze3d.systems.DeviceFeatures;
+import com.mojang.blaze3d.systems.DeviceType;
 import com.mojang.blaze3d.systems.GpuDeviceBackend;
 import com.mojang.blaze3d.systems.GpuQueryPool;
 import com.mojang.blaze3d.systems.GpuSurfaceBackend;
+import com.mojang.blaze3d.systems.HintsAndWorkarounds;
 import com.mojang.blaze3d.textures.AddressMode;
 import com.mojang.blaze3d.textures.FilterMode;
 import com.mojang.blaze3d.textures.GpuSampler;
@@ -39,7 +42,7 @@ import java.util.function.Supplier;
  * (see docs/plans's Milestone 3 scope).
  */
 final class DxDeviceBackend implements GpuDeviceBackend {
-	private static final DeviceLimits DEFAULT_LIMITS = new DeviceLimits(16, 256, 16384);
+	private static final DeviceLimits DEFAULT_LIMITS = new DeviceLimits(16, 256, 16384, Long.MAX_VALUE, 0, 1);
 
 	private final DxSurfaceLease surfaceLease;
 	private final DeviceInfo deviceInfo;
@@ -78,7 +81,10 @@ final class DxDeviceBackend implements GpuDeviceBackend {
 			"Direct3D 11 (feature level 10.1 floor)",
 			1.0F,
 			DEFAULT_LIMITS,
-			Set.of()
+			new DeviceFeatures(false, false, false, false, false, false, false),
+			Set.of(),
+			new HintsAndWorkarounds(false, false),
+			DeviceType.OTHER
 		);
 	}
 

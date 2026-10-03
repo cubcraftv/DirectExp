@@ -11,19 +11,18 @@ import dev.cubcraftv.directexp.bridge.NativeDxBridge;
 import org.lwjgl.glfw.GLFW;
 
 import java.util.Objects;
-import java.util.function.BiFunction;
 
 public final class DxBackend implements GpuBackend {
 	private static final String WINDOW_CREATION_FAILURE_MESSAGE = "Failed to create window for DirectX";
 	private final DxBridge dxBridge;
 	private final Win32HostSurfaceResolver win32HostSurfaceResolver;
-	private final BiFunction<DxSurfaceLease, ShaderSource, GpuDevice> gpuDeviceFactory;
+	private final GpuDeviceFactory gpuDeviceFactory;
 
 	public DxBackend() {
 		this(
 			NativeDxBridge.getInstance(),
 			new LwjglWin32HostSurfaceResolver(),
-			(surfaceLease, defaultShaderSource) -> new GpuDevice(new DxDeviceBackend(surfaceLease, defaultShaderSource))
+			(surfaceLease, defaultShaderSource, criticalShaderLoader) -> new GpuDevice(new DxDeviceBackend(surfaceLease, defaultShaderSource), criticalShaderLoader)
 		);
 	}
 
@@ -31,7 +30,7 @@ public final class DxBackend implements GpuBackend {
 		this(
 			dxBridge,
 			new LwjglWin32HostSurfaceResolver(),
-			(surfaceLease, defaultShaderSource) -> new GpuDevice(new DxDeviceBackend(surfaceLease, defaultShaderSource))
+			(surfaceLease, defaultShaderSource, criticalShaderLoader) -> new GpuDevice(new DxDeviceBackend(surfaceLease, defaultShaderSource), criticalShaderLoader)
 		);
 	}
 
@@ -39,11 +38,11 @@ public final class DxBackend implements GpuBackend {
 		this(
 			dxBridge,
 			win32HostSurfaceResolver,
-			(surfaceLease, defaultShaderSource) -> new GpuDevice(new DxDeviceBackend(surfaceLease, defaultShaderSource))
+			(surfaceLease, defaultShaderSource, criticalShaderLoader) -> new GpuDevice(new DxDeviceBackend(surfaceLease, defaultShaderSource), criticalShaderLoader)
 		);
 	}
 
-	DxBackend(DxBridge dxBridge, Win32HostSurfaceResolver win32HostSurfaceResolver, BiFunction<DxSurfaceLease, ShaderSource, GpuDevice> gpuDeviceFactory) {
+	DxBackend(DxBridge dxBridge, Win32HostSurfaceResolver win32HostSurfaceResolver, GpuDeviceFactory gpuDeviceFactory) {
 		this.dxBridge = Objects.requireNonNull(dxBridge, "dxBridge");
 		this.win32HostSurfaceResolver = Objects.requireNonNull(win32HostSurfaceResolver, "win32HostSurfaceResolver");
 		this.gpuDeviceFactory = Objects.requireNonNull(gpuDeviceFactory, "gpuDeviceFactory");
@@ -70,7 +69,7 @@ public final class DxBackend implements GpuBackend {
 	}
 
 	@Override
-	public GpuDevice createDevice(long window, ShaderSource defaultShaderSource, GpuDebugOptions debugOptions) throws BackendCreationException {
+	public GpuDevice createDevice(long window, ShaderSource defaultShaderSource, GpuDebugOptions debugOptions, Runnable criticalShaderLoader) throws BackendCreationException {
 		try (DxBackendBootstrapContext bootstrapContext = DxBackendBootstrapContext.bootstrap(
 			this.dxBridge,
 			this.win32HostSurfaceResolver,
@@ -79,11 +78,17 @@ public final class DxBackend implements GpuBackend {
 			DxSurfaceLease surfaceLease = bootstrapContext.detachSurfaceLease();
 
 			try {
-				return this.gpuDeviceFactory.apply(surfaceLease, defaultShaderSource);
+				return this.gpuDeviceFactory.create(surfaceLease, defaultShaderSource, criticalShaderLoader);
 			} catch (RuntimeException | Error error) {
 				surfaceLease.close();
 				throw error;
 			}
 		}
+
+	}
+
+	@FunctionalInterface
+	interface GpuDeviceFactory {
+		GpuDevice create(DxSurfaceLease surfaceLease, ShaderSource defaultShaderSource, Runnable criticalShaderLoader);
 	}
 }

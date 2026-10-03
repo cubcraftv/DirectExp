@@ -14,7 +14,7 @@ import dev.cubcraftv.directexp.bridge.DxBridge;
  * tests bit 128. Deliberately raw ints rather than {@code GpuBuffer.USAGE_*}
  * references so this class stays Minecraft-free and unit-testable, and so a
  * future rename of those constants cannot silently change behaviour.
- * Re-verify against the decompile on every Minecraft snapshot bump.
+ * Re-verify against the decompile on every Minecraft version retarget.
  */
 final class DxBufferBinding {
 	static final int USAGE_VERTEX = 32;

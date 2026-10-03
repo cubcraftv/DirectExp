@@ -8,8 +8,8 @@ It applies to the repository root and all git worktrees created from it.
 
 `DirectExp` is not a lightweight tweak mod. It is an experimental Fabric-delivered
 backend program whose goal is to add a real native DirectX 11 backend to
-modern Minecraft snapshot builds on Windows, targeting feature level 10.1
-devices at minimum.
+modern Minecraft on Windows, targeting the 26.2 release APIs and feature
+level 10.1 devices at minimum.
 
 The intended architecture is:
 
@@ -22,7 +22,7 @@ The intended architecture is:
 ## Reference Project
 
 `DirectExp` is a structural sibling of `MetalExp` (same author's Metal-backend
-equivalent for macOS, same Minecraft snapshot line). Where a design question
+equivalent for macOS, same Minecraft architecture line). Where a design question
 has already been answered by MetalExp and nothing about DirectX 11 forces a
 different answer, follow MetalExp's precedent instead of re-deriving it from
 scratch. Where DirectX 11 genuinely differs (see "Where DirectExp Diverges

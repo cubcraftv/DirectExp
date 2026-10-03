@@ -1,10 +1,12 @@
 package dev.cubcraftv.directexp.client.backend;
 
 import com.mojang.blaze3d.buffers.GpuBuffer;
+import com.mojang.blaze3d.buffers.GpuBufferSlice;
 import dev.cubcraftv.directexp.bridge.DxBridge;
 
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * CPU-side buffer storage (always authoritative and always correct) plus a
@@ -112,6 +114,27 @@ final class DxBuffer extends GpuBuffer {
 	@Override
 	public boolean isClosed() {
 		return this.closed;
+	}
+
+	@Override
+	public GpuBufferSlice.MappedView map(long offset, long length, boolean read, boolean write) {
+		if (!read && !write) {
+			throw new IllegalArgumentException("A mapped buffer view must be readable or writable.");
+		}
+
+		ByteBuffer data = sliceStorage(offset, length);
+		if (!write) {
+			data = data.asReadOnlyBuffer().order(ByteOrder.nativeOrder());
+		}
+		AtomicBoolean closedView = new AtomicBoolean(false);
+		Runnable onClose = write
+			? () -> {
+				if (closedView.compareAndSet(false, true)) {
+					syncRange(offset, length);
+				}
+			}
+			: () -> {};
+		return new GpuBufferSlice.MappedView(slice(offset, length), data, onClose);
 	}
 
 	@Override

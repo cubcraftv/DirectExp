@@ -4,7 +4,7 @@ This file tracks hypotheses that are plausible, useful, and worth investigating,
 
 ## 1. Black-button cause is still a hypothesis, not a diagnosis
 
-Current evidence rules out a few classes of failure, but it does not establish the actual root cause of the black main-menu button background.
+The latest user-reported runtime result is that the main-menu button fill appears black and its expected texture is absent. This confirms the symptom, but not the root cause.
 
 - The RenderDoc capture shows the button source texture binding at the expected sampler slot.
 - The GUI atlas is being used as the render target and the relevant draw calls are present.
@@ -16,6 +16,12 @@ What is still unverified:
 - whether the button path uses the wrong clear or blend state,
 - whether a native SRV or RTV is valid at the moment the draw occurs,
 - whether the current issue is in the copy stage or in later atlas composition.
+
+The same report says mob textures look correct, block textures are stretched
+(grass is an example), and item textures are broken. These are additional
+observations, not evidence that the button has the same cause. There is no
+matching screenshot or runtime log attached to this update, so exact draw and
+resource correlation remains outstanding.
 
 ## 2. Clear-color mismatch may be a channel-order mismatch rather than a draw bug
 
