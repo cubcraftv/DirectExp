@@ -210,6 +210,7 @@ Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_uploadTextureRegionRgba8Nativ
 	g_activeContext->UpdateSubresource(wrapper->texture, subresource, &box, rectData, static_cast<UINT>(rowPitch), 0);
 }
 
+// Diagnostics-only JNI entrypoint; the Java debug-probe layer gates all calls behind directexp.debug.probes.
 extern "C" JNIEXPORT jint JNICALL
 Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_readTexturePixelRgba8Native(JNIEnv* env, jclass, jlong nativeTextureHandle, jint mipLevel, jint x, jint y) {
 	Texture* wrapper = HandleToPointer<Texture>(nativeTextureHandle);

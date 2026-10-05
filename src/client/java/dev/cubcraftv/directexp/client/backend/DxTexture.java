@@ -92,68 +92,17 @@ final class DxTexture extends GpuTexture {
 			}
 		}
 
-		traceCpuAccess("writeRegion(CPU upload)", mipLevel, dstX, dstY, width, height);
-		logButtonSpriteUpload(sourceCopy, sourceBytesPerPixel, sourceStride, mipLevel, dstX, dstY, width, height, srcX, srcY);
-		syncRegionToNative(mipLevel, layer, dstX, dstY, width, height);
-	}
-
-	private void logButtonSpriteUpload(
-		ByteBuffer source,
-		int sourceBytesPerPixel,
-		int sourceStride,
-		int mipLevel,
-		int dstX,
-		int dstY,
-		int width,
-		int height,
-		int srcX,
-		int srcY
-	) {
-		if (!this.debugLabel.equals("minecraft:widget/button") || !LOGGED_BUTTON_SPRITE_UPLOAD.compareAndSet(false, true)) {
-			return;
-		}
-
-		int nonZeroPixels = 0;
-		int nonZeroAlphaPixels = 0;
-		int mirroredNonZeroPixels = 0;
-		int mirroredNonZeroAlphaPixels = 0;
-		for (int row = 0; row < height; row++) {
-			for (int column = 0; column < width; column++) {
-				int offset = source.position() + ((srcY + row) * sourceStride + (srcX + column)) * sourceBytesPerPixel;
-				int destinationOffset = ((dstY + row) * getWidth(mipLevel) + dstX + column) * getFormat().blockSize();
-				boolean sourcePixelNonZero = false;
-				boolean mirrorPixelNonZero = false;
-				for (int channel = 0; channel < sourceBytesPerPixel; channel++) {
-					if (source.get(offset + channel) != 0) {
-						sourcePixelNonZero = true;
-					}
-				}
-				for (int channel = 0; channel < getFormat().blockSize(); channel++) {
-					if (this.mipStorage[mipLevel].get(destinationOffset + channel) != 0) {
-						mirrorPixelNonZero = true;
-					}
-				}
-				if (sourcePixelNonZero) {
-					nonZeroPixels++;
-				}
-				if (sourceBytesPerPixel >= 4 && source.get(offset + 3) != 0) {
-					nonZeroAlphaPixels++;
-				}
-				if (mirrorPixelNonZero) {
-					mirroredNonZeroPixels++;
-				}
-				if (getFormat().blockSize() >= 4 && this.mipStorage[mipLevel].get(destinationOffset + 3) != 0) {
-					mirroredNonZeroAlphaPixels++;
-				}
-			}
-		}
-
-		DirectExpMod.LOGGER.info(
-			"DirectExp button sprite source write: texture={} format={} mip={} layer=0 dst=({}, {}) size={}x{} srcPos={} srcLimit={} sourceNonZero={}/{} sourceAlphaNonZero={}/{} mirrorNonZero={}/{} mirrorAlphaNonZero={}/{}",
-			this.debugLabel, getFormat(), mipLevel, dstX, dstY, width, height, source.position(), source.limit(),
-			nonZeroPixels, width * height, nonZeroAlphaPixels, width * height,
-			mirroredNonZeroPixels, width * height, mirroredNonZeroAlphaPixels, width * height
+		DxDebugProbes.traceCpuAccess(
+			this.debugLabel, hasNativeRenderTarget(), getWidth(0), getHeight(0),
+			"writeRegion(CPU upload)", mipLevel, dstX, dstY, width, height
 		);
+		if (DxDebugProbes.enabled()) {
+			DxDebugProbes.logButtonSpriteUpload(
+				this.debugLabel, getFormat().toString(), sourceCopy, destination, sourceBytesPerPixel, sourceStride, mipWidth,
+				destinationBytesPerPixel, mipLevel, dstX, dstY, width, height, srcX, srcY
+			);
+		}
+		syncRegionToNative(mipLevel, layer, dstX, dstY, width, height);
 	}
 
 	ByteBuffer readRegion(int mipLevel, int srcX, int srcY, int width, int height) {
@@ -161,7 +110,10 @@ final class DxTexture extends GpuTexture {
 	}
 
 	ByteBuffer readRegion(int mipLevel, int layer, int srcX, int srcY, int width, int height) {
-		traceCpuAccess("readRegion(CPU mirror read, GPU draws are NOT visible)", mipLevel, srcX, srcY, width, height);
+		DxDebugProbes.traceCpuAccess(
+			this.debugLabel, hasNativeRenderTarget(), getWidth(0), getHeight(0),
+			"readRegion(CPU mirror read, GPU draws are NOT visible)", mipLevel, srcX, srcY, width, height
+		);
 		if (layer < 0 || layer >= this.layerCount) {
 			throw new IllegalArgumentException("Texture layer is outside the allocated layer range.");
 		}
@@ -190,7 +142,10 @@ final class DxTexture extends GpuTexture {
 	}
 
 	void fillRegion(int mipLevel, int dstX, int dstY, int width, int height, int packedValue) {
-		traceCpuAccess("fillRegion(CPU clear)", mipLevel, dstX, dstY, width, height);
+		DxDebugProbes.traceCpuAccess(
+			this.debugLabel, hasNativeRenderTarget(), getWidth(0), getHeight(0),
+			"fillRegion(CPU clear)", mipLevel, dstX, dstY, width, height
+		);
 		ByteBuffer destination = this.mipStorage[mipLevel].duplicate().order(ByteOrder.nativeOrder());
 		int bytesPerPixel = getFormat().blockSize();
 		int mipWidth = getWidth(mipLevel);
@@ -252,9 +207,6 @@ final class DxTexture extends GpuTexture {
 	// actually gets used; this only reports whether the *handle* exists.
 	private static final AtomicBoolean LOGGED_NATIVE_TEXTURE_SUCCESS = new AtomicBoolean(false);
 	private static final AtomicBoolean LOGGED_NATIVE_TEXTURE_FALLBACK = new AtomicBoolean(false);
-	private static final java.util.concurrent.atomic.AtomicInteger CPU_ACCESS_TRACE_BUDGET = new java.util.concurrent.atomic.AtomicInteger(80);
-	private static final AtomicBoolean LOGGED_BUTTON_SPRITE_UPLOAD = new AtomicBoolean(false);
-
 	/** DxBridge.TEXTURE_FORMAT_* for a format the native path supports, else 0 (CPU-only). */
 	static int nativeFormatCode(GpuFormat format) {
 		return switch (format) {
@@ -298,19 +250,6 @@ final class DxTexture extends GpuTexture {
 			}
 			return 0L;
 		}
-	}
-
-	/**
-	 * Diagnostic: CPU-side access to a texture that the GPU also renders into. The CPU mirror never sees GPU draws,
-	 * so each of these is a place where GPU-rendered content (for example GUI item icons) can be lost or read stale.
-	 * Logged for the first {@code CPU_ACCESS_TRACE_BUDGET} occurrences only.
-	 */
-	private void traceCpuAccess(String operation, int mipLevel, int x, int y, int width, int height) {
-		if (!hasNativeRenderTarget() || CPU_ACCESS_TRACE_BUDGET.get() <= 0 || CPU_ACCESS_TRACE_BUDGET.getAndDecrement() <= 0) {
-			return;
-		}
-		DirectExpMod.LOGGER.info("DirectExp TRACE CPU access to render-target texture: {} on {} {}x{} mip={} rect=({},{}) {}x{}",
-			operation, this.debugLabel, getWidth(0), getHeight(0), mipLevel, x, y, width, height);
 	}
 
 	boolean hasNativeRenderTarget() {

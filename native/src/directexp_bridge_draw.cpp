@@ -364,6 +364,7 @@ Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_clearDepthRegion0(
 	g_viewportHeight = static_cast<UINT>(texture->height);
 }
 
+// Diagnostics-only JNI entrypoint. Java callers are isolated behind the opt-in DxDebugProbes gate.
 // Samples a texture through controlled shaders and restores the immediate context afterward.
 extern "C" JNIEXPORT jstring JNICALL
 Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_runSamplingExperiment0(JNIEnv* env, jclass, jlong textureViewHandle) {
@@ -602,6 +603,7 @@ Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_runSamplingExperiment0(JNIEnv
 }
 
 // Replays the just-issued draw into a scratch target, swapping only the pixel shader.
+// Diagnostics-only JNI entrypoint; reachable from the opt-in DxDebugProbes path only.
 extern "C" JNIEXPORT jstring JNICALL
 Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_runPixelSubstitutionProbe0(
 	JNIEnv* env, jclass, jint probeX, jint probeY, jint vertexCount, jint firstVertex
@@ -796,6 +798,7 @@ Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_runPixelSubstitutionProbe0(
 }
 
 // Diagnostics: describes the pipeline state the D3D11 context currently holds.
+// Diagnostics-only JNI entrypoint; reachable from the opt-in DxDebugProbes path only.
 extern "C" JNIEXPORT jstring JNICALL
 Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_describeDrawState0(JNIEnv* env, jclass, jint srvSlot, jlong expectedTextureHandle) {
 	if (g_activeContext == nullptr) {

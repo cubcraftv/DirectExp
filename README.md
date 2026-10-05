@@ -45,9 +45,9 @@ full rationale.
 ```
 src/main    - Fabric entrypoint, backend-agnostic bootstrap/config/diagnostics, bridge interfaces
 src/client  - client-only entrypoint, DxBackend + Blaze3D backend implementations, settings UI, mixins
-shared/     - reserved for cross-cutting model types (currently a placeholder)
 native/     - Win32 + D3D11/DXGI native bridge (C++, built via CMake, Windows-only)
 docs/       - design spec, bootstrap plan + progress log, research notes
+reference/  - read-only Minecraft Blaze3D source and shader snapshots; not compiled
 ```
 
 ## Building
@@ -67,6 +67,13 @@ Windows SDK).
 ```
 
 Unit tests are OS-independent and do not require the native toolchain.
+
+## Button/atlas debug probes
+
+The temporary rendering probes are disabled by default. To enable them for a
+Minecraft client run, add `-Ddirectexp.debug.probes=true` to the client JVM
+arguments. They can perform synchronous GPU readbacks and diagnostic draw
+replays; remove the probes after the button/atlas hypotheses are settled.
 
 ## Author / license
 

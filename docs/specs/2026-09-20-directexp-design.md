@@ -120,11 +120,8 @@ reason" -- this distinction matters for triage on unfamiliar hardware.
   - mixins
   - mod resources
   - configuration wiring
-- `shared/`
-  - backend selection models
-  - diagnostics payloads
-  - capability summaries
-  - shared error types
+- `reference/blaze3d/` and `reference/shaders/`
+  - read-only Minecraft 26.2 reference snapshots; not compiled
 - `native/`
   - Win32 bridge
   - `IDXGISwapChain` management
@@ -161,7 +158,8 @@ Responsibilities:
 - backend failure and fallback descriptions
 - shared configuration DTOs
 
-This layer exists to prevent the Fabric bootstrap layer and the renderer
+This is a logical layer within `src/main`, not a separate source set or
+module. It exists to prevent the Fabric bootstrap layer and the renderer
 backend from tightly coupling to each other.
 
 #### 3. Java Backend Layer

@@ -7,7 +7,7 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Supplier;
 
-public final class NativeDxBridge implements DxBridge {
+public final class NativeDxBridge implements DxBridge, DxDebugProbeBridge {
 	private static final NativeDxBridge INSTANCE = new NativeDxBridge();
 
 	// D3D11's immediate-context model means there is no real object to
@@ -229,6 +229,7 @@ public final class NativeDxBridge implements DxBridge {
 		clearDepthRegion0(nativeTextureHandle, x, y, width, height, depth);
 	}
 
+	// Debug-probe operations are separated from DxBridge and invoked by the client only when enabled.
 	@Override
 	public int readTexturePixelRgba8(long nativeTextureHandle, int mipLevel, int x, int y) {
 		return readTexturePixelRgba8Native(nativeTextureHandle, mipLevel, x, y);

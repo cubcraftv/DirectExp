@@ -4,13 +4,9 @@ import dev.cubcraftv.directexp.bridge.DxBridge;
 import dev.cubcraftv.directexp.bridge.DxResourceKind;
 import dev.cubcraftv.directexp.client.shader.DxResourceLayout;
 import dev.cubcraftv.directexp.client.shader.DxResourceLayoutEntry;
-import dev.cubcraftv.directexp.DirectExpMod;
 
 import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
-import java.util.HashSet;
 import java.util.Objects;
-import java.util.Set;
 
 /**
  * Turns a pipeline's Milestone 4.4 {@link DxResourceLayout} plus what the
@@ -39,7 +35,7 @@ final class DxResourceBinder {
 			return "no native texture view is available";
 		}
 
-		/** Describes the texture behind a bound view for temporary draw diagnostics. */
+		/** Describes the texture behind a bound view for opt-in debug probes. */
 		default String textureViewDescription(String name) {
 			return "unavailable";
 		}
@@ -51,7 +47,7 @@ final class DxResourceBinder {
 	private final DxBridge dxBridge;
 	private final DxDrawScratch scratch;
 	private final DxDrawDiagnostics diagnostics;
-	private final Set<String> probedUniforms = new HashSet<>();
+	private final DxDebugProbes.UniformProbe uniformProbe = new DxDebugProbes.UniformProbe();
 
 	DxResourceBinder(DxBridge dxBridge, DxDrawScratch scratch, DxDrawDiagnostics diagnostics) {
 		this.dxBridge = Objects.requireNonNull(dxBridge, "dxBridge");
@@ -82,7 +78,7 @@ final class DxResourceBinder {
 				continue;
 			}
 
-			probeUniformOnce(layout, entry, bytes);
+			this.uniformProbe.logOnce(layout, entry, bytes);
 			long handle = this.scratch.stageConstants(entry.slot(), bytes);
 			if (handle == 0L) {
 				complete = false;
@@ -93,28 +89,6 @@ final class DxResourceBinder {
 		return complete;
 	}
 
-	/** One-shot diagnostic: what the terrain-related uniform blocks actually contain when bound (std140 offsets). */
-	private void probeUniformOnce(DxResourceLayout layout, DxResourceLayoutEntry entry, ByteBuffer bytes) {
-		String name = entry.name();
-		if (!(name.equals("ChunkSection") || name.equals("Globals")) || !this.probedUniforms.add(layout.pipelineDebugLabel() + ":" + name)) {
-			return;
-		}
-		ByteBuffer v = bytes.duplicate().order(ByteOrder.nativeOrder());
-		int b = v.position();
-		String values;
-		if (name.equals("ChunkSection") && v.remaining() >= 92) {
-			values = "ChunkVisibility=" + v.getFloat(b + 64) + " TextureSize=(" + v.getInt(b + 72) + "," + v.getInt(b + 76) + ") ChunkPosition=("
-				+ v.getInt(b + 80) + "," + v.getInt(b + 84) + "," + v.getInt(b + 88) + ")";
-		} else if (name.equals("Globals") && v.remaining() >= 56) {
-			values = "CameraBlockPos=(" + v.getInt(b) + "," + v.getInt(b + 4) + "," + v.getInt(b + 8) + ") ScreenSize=(" + v.getFloat(b + 32) + "," + v.getFloat(b + 36)
-				+ ") MenuBlurRadius=" + v.getInt(b + 48) + " UseRgss=" + v.getInt(b + 52);
-		} else {
-			values = "(too short to decode)";
-		}
-		DirectExpMod.LOGGER.info("DirectExp PROBE uniform: pipeline={} block={} slot={} reflectedSize={} boundBytes={} {}",
-			layout.pipelineDebugLabel(), name, entry.slot(), entry.sizeBytes(), bytes.remaining(), values);
-	}
-
 	/** Binds every sampled texture and sampler of the layout; a missing native object unbinds its slot. */
 	void bindTextures(DxResourceLayout layout, Source source, boolean bindNativeState) {
 		for (DxResourceLayoutEntry entry : layout.entries()) {
@@ -122,12 +96,8 @@ final class DxResourceBinder {
 				case SAMPLED_TEXTURE -> {
 					long view = source.textureViewHandle(entry.name());
 					if (entry.name().equals("Sampler0")) {
-						String description = source.textureViewDescription(entry.name());
-						if (layout.pipelineDebugLabel().contains("pipeline/gui") && description.contains("textures/atlas/gui.png")) {
-							DirectExpMod.LOGGER.info(
-								"DirectExp texture draw: pipeline={}, Sampler0 viewHandle={}, texture={}",
-								layout.pipelineDebugLabel(), view, description
-							);
+						if (DxDebugProbes.enabled()) {
+							DxDebugProbes.logGuiTextureBinding(layout, view, source.textureViewDescription(entry.name()));
 						}
 					}
 					if (view == 0L) {

@@ -746,3 +746,12 @@ not a bug in what's implemented so far).
   initially visible but stops working after a while; duration and a matching
   log/capture are not yet recorded, so treat that as a separate open symptom.
   `.\gradlew.bat build` and the full test suite pass.
+
+- **2026-10-05 -- Quarantined temporary button/atlas probes.** Centralized the
+  GUI-atlas readback/draw diagnostics, button upload log, binder investigations,
+  and CPU render-target access trace under `-Ddirectexp.debug.probes=true`
+  (disabled by default). Diagnostic bridge operations now live in a separate
+  `DxDebugProbeBridge` interface, leaving the production `DxBridge` contract
+  free of probe-only methods. Added default-off/opt-in tests and documented
+  the launch property. `.\gradlew.bat test` passes; hypotheses A/B remain
+  unsettled, so the native and Java probe implementations are retained.

@@ -276,29 +276,6 @@ public interface DxBridge {
 		throw new UnsupportedOperationException("DirectX rectangle depth clear is not implemented by this bridge yet.");
 	}
 
-	/** Diagnostics only: synchronously reads one texel of a native RGBA8 texture as {@code R | G<<8 | B<<16 | A<<24}. */
-	default int readTexturePixelRgba8(long nativeTextureHandle, int mipLevel, int x, int y) {
-		throw new UnsupportedOperationException("DirectX texel readback is not implemented by this bridge yet.");
-	}
-
-	/** Diagnostics only: describes the D3D11 state currently bound for the pixel stage. */
-	default String describeDrawState(int srvSlot, long expectedTextureHandle) {
-		return "(unsupported by this bridge)";
-	}
-
-	/** Diagnostics only: samples a texture view's centre through known-good shaders and reports the results. */
-	default String runSamplingExperiment(long nativeTextureViewHandle) {
-		return "(unsupported by this bridge)";
-	}
-
-	/**
-	 * Diagnostics only: re-issues the draw that just ran into a scratch target with the real vertex stage and
-	 * every other bound state, substituting controlled pixel shaders, and reports the texel at (x, y) per variant.
-	 */
-	default String runPixelSubstitutionProbe(int x, int y, int vertexCount, int firstVertex) {
-		return "(unsupported by this bridge)";
-	}
-
 	/**
 	 * Sets the scissor rectangle in D3D pixel coordinates (origin top-left).
 	 * Every pipeline's rasterizer state has scissor enabled, so "scissor off"
