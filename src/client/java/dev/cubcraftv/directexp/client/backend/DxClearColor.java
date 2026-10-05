@@ -4,24 +4,12 @@ import java.nio.ByteBuffer;
 import org.joml.Vector4fc;
 
 /**
- * Packed clear colors to the float components {@code ClearRenderTargetView}
- * takes. Blaze3D hands clear colors over as packed ARGB ints (the same layout
- * as {@code net.minecraft.util.ARGB}: alpha in the top byte, blue in the
- * bottom. RGBA8 CPU mirrors must explicitly write those channels in R, G, B,
- * A byte order rather than relying on the machine's integer byte order.
+ * Converts between packed ARGB colors and RGBA8 CPU texture storage.
+ * Blaze3D render-pass clears already arrive as float RGBA components and do
+ * not use this class.
  */
 final class DxClearColor {
 	private DxClearColor() {
-	}
-
-	/** {red, green, blue, alpha}, each 0..1. */
-	static float[] unpackArgb(int argb) {
-		return new float[] {
-			((argb >>> 16) & 0xFF) / 255.0F,
-			((argb >>> 8) & 0xFF) / 255.0F,
-			(argb & 0xFF) / 255.0F,
-			((argb >>> 24) & 0xFF) / 255.0F
-		};
 	}
 
 	static void writeRgba8(ByteBuffer destination, int offset, int argb) {

@@ -89,9 +89,9 @@ one of these three outcomes.
 current code has two distinct color paths, so do not change channel order
 based on the screenshot alone:
 
-- Render-pass clear: `DxRenderPassBackend.beginNativePass` calls
-  `DxClearColor.unpackArgb`, then `clearRenderTarget0` passes the four floats
-to `ID3D11DeviceContext::ClearRenderTargetView`.
+- Render-pass clear: Blaze3D supplies float RGBA components to
+`DxRenderPassBackend.beginNativePass`, which passes them directly to
+`ID3D11DeviceContext::ClearRenderTargetView`.
 - CPU texture clear/fallback: `DxCommandEncoderBackend.clearColorTexture`
   and `DxTexture.fillRegion` write packed bytes directly; the byte order may
   differ from the render-pass clear convention.

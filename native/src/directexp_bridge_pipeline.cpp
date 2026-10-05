@@ -21,9 +21,6 @@
 // element's index in VertexFormat.getElements(), all in vertex buffer slot 0
 // with per-vertex input rate. This file builds exactly that.
 //
-// NOTE ON VERIFICATION: not compiled against a real Windows toolchain by the
-// authoring agent (syntax-checked only); see the Milestone 4.6 source of truth.
-
 #include "directexp_common.h"
 
 #ifdef _WIN32

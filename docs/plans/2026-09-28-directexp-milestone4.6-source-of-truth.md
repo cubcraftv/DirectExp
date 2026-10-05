@@ -316,7 +316,7 @@ stand-in runner; **not yet run under real Gradle/JUnit**.
 ### 7.3 Bridge contract additions (`DxBridge` / `NativeDxBridge`)
 | Method | Contract |
 | --- | --- |
-| `long createTexture(format, w, h, mips, bindMask)` | `TEXTURE_FORMAT_*` (RGBA8_UNORM, D32_FLOAT, D24_UNORM_S8_UINT, D32_FLOAT_S8_UINT, D16_UNORM) x `TEXTURE_BIND_*` (SHADER_RESOURCE=1, RENDER_TARGET=2, DEPTH_STENCIL=4). RENDER_TARGET needs a color format, DEPTH_STENCIL a depth format. Throws `IllegalStateException` otherwise. `uploadTextureRgba8` still works on any RGBA8 texture. Old `createTexture2D` kept (unused by the client now). |
+| `long createTexture(format, w, h, mips, bindMask)` | `TEXTURE_FORMAT_*` (RGBA8_UNORM, D32_FLOAT, D24_UNORM_S8_UINT, D32_FLOAT_S8_UINT, D16_UNORM) x `TEXTURE_BIND_*` (SHADER_RESOURCE=1, RENDER_TARGET=2, DEPTH_STENCIL=4). RENDER_TARGET needs a color format, DEPTH_STENCIL a depth format. Throws `IllegalStateException` otherwise. `uploadTextureRgba8` still works on any RGBA8 texture. |
 | `long createTextureView(tex, baseMip, mips)` (extended) | Creates the SRV (if the texture has SHADER_RESOURCE) over the mip range, and an RTV *or* DSV (if the texture has one) on `baseMip` only. A view object may hold any subset; native handles the pointers, Java only knows the texture's bind purposes. |
 | `long createPipeline(byte[] vs, byte[] ps, DxPipelineStateDescriptor)` | VS, PS, input layout (`TEXCOORD<i>`, slot 0, per-vertex; none if zero attributes), blend, depth-stencil (stencil off), rasterizer (`FrontCounterClockwise = TRUE`, scissor always enabled, depth clip on), topology, vertex stride. Nothing bound. `IllegalStateException` on any failure. |
 | `void releasePipeline(long)` | releases all six COM objects + wrapper |

@@ -1,27 +1,11 @@
 // DirectExp native bridge - surface (swap chain) lifecycle entrypoints.
 //
-// Scope: this is the first real implementation past the capability probe
-// (see directexp_bridge_probe.cpp). It creates a persistent D3D11 device +
-// immediate context + flip-model IDXGISwapChain1 bound to the game's HWND,
-// and supports resize, a CPU-upload blit path, and present.
+// Scope: creates a persistent D3D11 device + immediate context +
+// flip-model IDXGISwapChain1 bound to the game's HWND, and supports resize,
+// GPU-texture presentation with a CPU-upload fallback, and present.
 //
-// Deliberately NOT in scope yet (see docs/plans's Milestone 3+ scope):
-//   - GPU-texture-to-backbuffer blit (blitSurfaceTexture) -- DxTexture never
-//     produces a native texture handle yet (createTexture2D is still a
-//     Java-side default-throw stub), so DxSurfaceBackend always takes the
-//     CPU-upload path (blitSurfaceRgba8/blitSurfaceRgba80 below) today.
-//   - Any real command context object -- createCommandContext/
-//     submitCommandContext/releaseCommandContext stay Java-only no-ops
-//     (see NativeDxBridge.java) because nothing currently calls
-//     commandContextHandle() while GPU textures don't exist yet. D3D11's
-//     single-immediate-context model means there is nothing to actually
-//     submit separately from the blit/UpdateSubresource calls below.
-//   - Occlusion/device-removed recovery beyond a basic detection-and-throw.
-//
-// NOTE ON VERIFICATION: this file has not been compiled by the authoring
-// agent (a Linux sandbox without an MSVC/Windows SDK toolchain available).
-// Check docs/plans's Progress Log for the most recent build verification
-// status on a real Windows machine before assuming this compiles cleanly.
+// Command contexts remain Java-side sentinel handles because D3D11 uses one
+// immediate context. Device-removed recovery is limited to basic detection.
 //
 // JNI naming: Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_<method>
 // mirrors the `native` method declarations in NativeDxBridge.java.

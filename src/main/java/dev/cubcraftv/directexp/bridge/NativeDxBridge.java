@@ -96,11 +96,6 @@ public final class NativeDxBridge implements DxBridge, DxDebugProbeBridge {
 	}
 
 	@Override
-	public long createTexture2D(int width, int height, int mipLevels) {
-		return createTexture2DNative(width, height, mipLevels);
-	}
-
-	@Override
 	public void uploadTextureRgba8(long nativeTextureHandle, int mipLevel, int layer, ByteBuffer rgbaPixels, int width, int height) {
 		uploadTextureRgba8Native(nativeTextureHandle, mipLevel, layer, rgbaPixels, width, height);
 	}
@@ -676,13 +671,8 @@ public final class NativeDxBridge implements DxBridge, DxDebugProbeBridge {
 
 	private static native void releaseSurface0(long nativeSurfaceHandle);
 
-	// Named "...Native"/"...0" rather than exactly matching the interface
-	// method names above (createTexture2D, uploadTextureRgba8) for the same
-	// signature-clash reason as blitSurfaceRgba80: a static native method
-	// and the public override that forwards to it can't share a name when
-	// their parameter lists are identical.
-	private static native long createTexture2DNative(int width, int height, int mipLevels);
-
+	// Named "...Native"/"...0" because a static native method and its public
+	// forwarding override cannot share a name when their parameter lists match.
 	private static native void uploadTextureRgba8Native(long nativeTextureHandle, int mipLevel, int layer, ByteBuffer rgbaPixels, int width, int height);
 	private static native void uploadTextureRegionRgba8Native(long nativeTextureHandle, int mipLevel, int layer, ByteBuffer rgbaPixels, int mipWidth, int mipHeight, int x, int y, int width, int height);
 
@@ -764,7 +754,7 @@ public final class NativeDxBridge implements DxBridge, DxDebugProbeBridge {
 	// Named "...0" per this file's convention for a native method whose
 	// public-facing override (compileGlslToSpirv) has a different
 	// signature (DxShaderStageKind vs. this method's raw int) rather than
-	// a same-signature clash like blitSurfaceRgba80/createTexture2DNative.
+	// a same-signature clash like blitSurfaceRgba80/uploadTextureRgba8Native.
 	private static native NativeDxIrCompilationResult compileGlslToSpirv0(String shaderName, String glslSource, int shaderStageKind);
 
 	// Milestone 4.4: reflects one shader stage's SPIR-V. Named "...0" per

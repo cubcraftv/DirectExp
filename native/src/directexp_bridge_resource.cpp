@@ -23,11 +23,6 @@
 // that is the render thread, the same assumption directexp_bridge_texture.cpp
 // already makes for uploadTextureRgba8Native.
 //
-// NOTE ON VERIFICATION: not compiled by the authoring agent (Linux sandbox,
-// no MSVC/MinGW + Windows SDK). Every D3D11 call shape below was checked
-// against Microsoft's documentation, but check docs/plans's Progress Log for
-// the actual build status on a real Windows machine.
-//
 // JNI naming: Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_<method>
 // mirrors the `native` declarations in NativeDxBridge.java.
 
@@ -279,8 +274,8 @@ Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_releaseSampler0(JNIEnv*, jcla
 // TEXTURE_BIND_* purposes (Milestone 4.6: render/depth target support). The
 // resource is typeless for depth formats so the same texture can be both a
 // DSV and an SRV; see ResolveTextureFormat. Contents undefined until
-// written/cleared. Color textures keep the old createTexture2D behaviour
-// (CPU upload via uploadTextureRgba8Native works on any RGBA8 texture).
+// written/cleared. RGBA8 textures can be uploaded through
+// uploadTextureRgba8Native when CPU-side content needs syncing.
 extern "C" JNIEXPORT jlong JNICALL
 Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_createTextureNative(
 	JNIEnv* env, jclass, jint formatCode, jint width, jint height, jint arrayLayers, jint mipLevels, jint bindMask, jboolean cubemap, jstring debugLabel

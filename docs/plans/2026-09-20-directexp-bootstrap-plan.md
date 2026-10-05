@@ -481,7 +481,7 @@ not a bug in what's implemented so far).
 - **Runtime-verified on Windows (MSYS2 UCRT64):** Milestones 1, 2, and 3 all
   confirmed working end to end: config -> plan -> negotiation -> settings UI
   -> `DxBackend` -> real D3D11 device/context -> flip-model swap chain ->
-  presenting window, with the GPU-texture path (`createTexture2DNative` /
+  presenting window, with the GPU-texture path (`createTextureNative` /
   `uploadTextureRgba8Native` / `blitSurfaceTexture0`) confirmed active via
   the `native GPU texture path active` diagnostic line.
 - **Still black on screen, but that's Milestone 4's gap, not Milestone 3's:**
@@ -746,6 +746,15 @@ not a bug in what's implemented so far).
   initially visible but stops working after a while; duration and a matching
   log/capture are not yet recorded, so treat that as a separate open symptom.
   `.\gradlew.bat build` and the full test suite pass.
+
+- **2026-10-05 -- Removed stale texture and clear-color paths.** Removed the
+  unused legacy `createTexture2D` bridge/JNI implementation; all production
+  texture creation goes through `createTexture`. Kept `blitSurfaceRgba8` as
+  the live CPU fallback when a texture cannot acquire a native handle.
+  `DxClearColor` now only packs ARGB colors and writes RGBA8 CPU storage;
+  render-pass clears already pass float RGBA directly. The Windows
+  `.\gradlew.bat build` passed, including compilation/linking of the native
+  DLL and the Java tests.
 
 - **2026-10-05 -- Quarantined temporary button/atlas probes.** Centralized the
   GUI-atlas readback/draw diagnostics, button upload log, binder investigations,

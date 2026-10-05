@@ -42,12 +42,6 @@
 // directexp_shader_reflection.h/.cpp (SPIRV-Cross reflection). This is
 // also the first `D3DCompile` call anywhere in this project.
 //
-// NOTE ON VERIFICATION: this file has not been compiled by the authoring
-// agent (a Linux sandbox without an MSVC/Windows SDK toolchain, shaderc, or
-// SPIRV-Cross available). Check docs/plans's Progress Log for the most
-// recent build verification status on a real Windows machine before
-// assuming this compiles cleanly.
-//
 // JNI naming: Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_<method>
 // mirrors the `native` method declarations in NativeDxBridge.java.
 

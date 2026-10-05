@@ -40,6 +40,7 @@ final class DxSurfaceLease implements AutoCloseable {
 
 	void blitRgba8(ByteBuffer rgbaPixels, int width, int height) {
 		this.ensureOpen();
+		// Fallback for textures whose native D3D11 allocation failed.
 		this.dxBridge.blitSurfaceRgba8(this.descriptor.nativeSurfaceHandle(), rgbaPixels, width, height);
 	}
 

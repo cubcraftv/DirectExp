@@ -45,7 +45,7 @@ struct Surface {
 	bool vsync = false;
 };
 
-// Persistent state for one GPU texture created via createTexture2D0.
+// Persistent state for one GPU texture created via createTextureNative.
 // Allocated on the heap, handed back to Java as an opaque jlong, released
 // in releaseTexture0.
 // Texture format codes for createTextureNative. Keep in sync with
@@ -177,7 +177,7 @@ struct TextureView {
 // bootstrapSurface0 and cleared by releaseSurface0 (directexp_bridge_surface.cpp).
 // Texture creation/upload (directexp_bridge_texture.cpp) has no
 // surface/device handle of its own to work with -- the DxBridge interface's
-// createTexture2D/uploadTextureRgba8 are deliberately surface-agnostic on
+// createTexture/uploadTextureRgba8 are deliberately surface-agnostic on
 // the Java side -- so it operates against whichever device is "active"
 // here. This assumes a single window/device for the whole process, which
 // matches every other part of this bridge (Win32HostSurfaceResolver

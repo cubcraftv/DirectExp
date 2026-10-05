@@ -12,7 +12,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 /**
  * CPU-side texture storage, with a best-effort attempt to also create a
  * real native D3D11 texture handle through {@link DxBridge} (Milestone 3:
- * {@code createTexture2D}/{@code uploadTextureRgba8} are real
+ * {@code createTexture}/{@code uploadTextureRgba8} are real
  * {@link dev.cubcraftv.directexp.bridge.NativeDxBridge} calls now, not
  * default-throw stubs). The attempt can still legitimately fail --
  * {@link #hasNativeTextureHandle()} is false whenever no DirectX surface

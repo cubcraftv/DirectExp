@@ -1,6 +1,9 @@
 package dev.cubcraftv.directexp.client.backend;
 
+import java.nio.ByteBuffer;
+
 import org.junit.jupiter.api.Test;
+import org.joml.Vector4f;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -8,16 +11,16 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class DxDrawHelpersTest {
 	@Test
-	void argbClearColorUnpacksToRgbaFloats() {
-		float[] rgba = DxClearColor.unpackArgb(0x80FF4020);
-		assertEquals(1.0F, rgba[0], 1e-6F);
-		assertEquals(0x40 / 255.0F, rgba[1], 1e-6F);
-		assertEquals(0x20 / 255.0F, rgba[2], 1e-6F);
-		assertEquals(0x80 / 255.0F, rgba[3], 1e-6F);
+	void packedArgbWritesRgbaByteOrder() {
+		ByteBuffer rgba = ByteBuffer.allocate(4);
+		DxClearColor.writeRgba8(rgba, 0, 0x80FF4020);
 
-		float[] opaqueBlack = DxClearColor.unpackArgb(0xFF000000);
-		assertEquals(0.0F, opaqueBlack[0]);
-		assertEquals(1.0F, opaqueBlack[3]);
+		assertArrayEquals(new byte[] { (byte) 0xFF, 0x40, 0x20, (byte) 0x80 }, rgba.array());
+	}
+
+	@Test
+	void clearColorVectorPacksAsArgb() {
+		assertEquals(0x80FF4020, DxClearColor.packArgb(new Vector4f(1.0F, 0x40 / 255.0F, 0x20 / 255.0F, 0x80 / 255.0F)));
 	}
 
 	@Test

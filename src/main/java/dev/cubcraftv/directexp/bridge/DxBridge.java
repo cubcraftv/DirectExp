@@ -6,13 +6,9 @@ import java.util.List;
 /**
  * Java-side surface for calling into the native D3D11/DXGI bridge.
  *
- * Scope note: as of Milestone 2's start, only {@link #probe()} has a real
- * native implementation. Every other method below documents the intended
- * contract (mirroring MetalExp's MetalBridge shape) but throws by default
- * until the corresponding native entrypoint and Java override exist. Do not
- * remove a default method just because it's unimplemented -- it's there so
- * the eventual real implementation has an agreed-upon signature to target,
- * and so callers written against this interface compile today.
+ * Methods with native implementations are overridden by
+ * {@link NativeDxBridge}; default implementations fail explicitly when a
+ * bridge does not support that operation.
  */
 public interface DxBridge {
 	DxBridgeProbe probe();
@@ -44,12 +40,9 @@ public interface DxBridge {
 	default void releaseCommandContext(long nativeCommandContextHandle) {
 	}
 
+	/** CPU-upload fallback for presenting an RGBA8 texture without a native GPU handle. */
 	default void blitSurfaceRgba8(long nativeSurfaceHandle, ByteBuffer rgbaPixels, int width, int height) {
 		throw new UnsupportedOperationException("DirectX surface blit is not implemented by this bridge yet.");
-	}
-
-	default long createTexture2D(int width, int height, int mipLevels) {
-		throw new UnsupportedOperationException("DirectX texture creation is not implemented by this bridge yet.");
 	}
 
 	default void uploadTextureRgba8(long nativeTextureHandle, int mipLevel, int layer, ByteBuffer rgbaPixels, int width, int height) {
@@ -142,7 +135,7 @@ public interface DxBridge {
 	/**
 	 * Creates an {@code ID3D11ShaderResourceView} over
 	 * {@code [baseMipLevel, baseMipLevel + mipLevels)} of a texture created by
-	 * {@link #createTexture2D}. The view keeps its own reference to the
+	 * {@link #createTexture}. The view keeps its own reference to the
 	 * texture, so it may outlive {@link #releaseTexture}.
 	 */
 	default long createTextureView(long nativeTextureHandle, int baseMipLevel, int mipLevels) {

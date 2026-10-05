@@ -2,19 +2,14 @@
 // Resource Core).
 //
 // Scope: real ID3D11Texture2D creation/upload/release, plus a GPU-to-GPU
-// blit (CopyResource) into the swap chain back buffer, replacing the
-// CPU-upload path (blitSurfaceRgba80 in directexp_bridge_surface.cpp) for
-// anything Blaze3D marks as texture-backed. The CPU path stays in place and
-// still runs for anything DxTexture couldn't get a native handle for (see
-// DxTexture.createNativeTextureHandle's try/catch) -- this file doesn't
-// replace it, it gives DxTexture something to succeed at getting a handle
-// from in the first place.
+// blit (CopyResource) into the swap chain back buffer. The CPU-upload
+// surface path remains as a fallback for textures without a native handle.
 //
 // Device ownership: texture creation/upload here operates against
 // g_activeDevice/g_activeContext (see the comment in directexp_common.h),
-// not a device handle passed in per-call, because DxBridge's
-// createTexture2D/uploadTextureRgba8 are deliberately surface-agnostic on
-// the Java side. This assumes a single window/device for the whole
+// not a device handle passed in per-call, because DxBridge's createTexture
+// and uploadTextureRgba8 are deliberately surface-agnostic on the Java side.
+// This assumes a single window/device for the whole
 // process, consistent with the rest of this bridge and with AGENTS.md's
 // Non-Goals (no multi-window support is a current project goal).
 //
@@ -27,11 +22,6 @@
 // nothing per-"context" to actually look up here. If deferred contexts are
 // ever adopted, this is the parameter that would start meaning something.
 //
-// NOTE ON VERIFICATION: this file has not been compiled by the authoring
-// agent (a Linux sandbox without an MSVC/Windows SDK toolchain available).
-// Check docs/plans's Progress Log for the most recent build verification
-// status on a real Windows machine before assuming this compiles cleanly.
-//
 // JNI naming: Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_<method>
 // mirrors the `native` method declarations in NativeDxBridge.java.
 
@@ -42,54 +32,6 @@
 #include <cstring>
 
 using namespace directexp;
-
-extern "C" JNIEXPORT jlong JNICALL
-Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_createTexture2DNative(
-	JNIEnv* env, jclass, jint width, jint height, jint mipLevels
-) {
-	if (g_activeDevice == nullptr) {
-		ThrowIllegalState(env, "createTexture2DNative called with no active DirectX device (no surface bootstrapped yet?).");
-		return 0;
-	}
-
-	if (width <= 0 || height <= 0 || mipLevels <= 0) {
-		ThrowIllegalState(env, "createTexture2DNative requires positive width, height, and mipLevels.");
-		return 0;
-	}
-
-	D3D11_TEXTURE2D_DESC desc = {};
-	desc.Width = static_cast<UINT>(width);
-	desc.Height = static_cast<UINT>(height);
-	desc.MipLevels = static_cast<UINT>(mipLevels);
-	desc.ArraySize = 1;
-	desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-	desc.SampleDesc.Count = 1;
-	desc.SampleDesc.Quality = 0;
-	desc.Usage = D3D11_USAGE_DEFAULT;
-	// SHADER_RESOURCE is not used by anything yet (Milestone 4 will bind it
-	// for real pipelines) but costs nothing to declare now and avoids a
-	// texture recreation later just to add the bind flag.
-	desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
-	desc.CPUAccessFlags = 0;
-	desc.MiscFlags = 0;
-
-	ID3D11Texture2D* texture = nullptr;
-	HRESULT hr = g_activeDevice->CreateTexture2D(&desc, nullptr, &texture);
-	if (FAILED(hr) || texture == nullptr) {
-		ThrowIllegalState(env, "ID3D11Device::CreateTexture2D failed.");
-		return 0;
-	}
-
-	Texture* wrapper = new Texture();
-	wrapper->texture = texture;
-	wrapper->width = static_cast<UINT>(width);
-	wrapper->height = static_cast<UINT>(height);
-	wrapper->mipLevels = static_cast<UINT>(mipLevels);
-	wrapper->bindFlags = D3D11_BIND_SHADER_RESOURCE;
-	wrapper->formatCode = TEXTURE_FORMAT_RGBA8_UNORM;
-
-	return PointerToHandle(wrapper);
-}
 
 extern "C" JNIEXPORT void JNICALL
 Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_uploadTextureRgba8Native(
@@ -324,11 +266,6 @@ Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_blitSurfaceTexture0(
 }
 
 #else // !_WIN32
-
-extern "C" JNIEXPORT jlong JNICALL
-Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_createTexture2DNative(JNIEnv*, jclass, jint, jint, jint) {
-	return 0;
-}
 
 extern "C" JNIEXPORT void JNICALL
 Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_uploadTextureRgba8Native(JNIEnv*, jclass, jlong, jint, jint, jobject, jint, jint) {

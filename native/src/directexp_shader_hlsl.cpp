@@ -1,28 +1,5 @@
-// See directexp_shader_hlsl.h for scope.
-//
-// NOTE ON VERIFICATION: like the rest of this native bridge, this file
-// has not been compiled by the authoring agent (a Linux sandbox without
-// an MSYS2/MSVC Windows toolchain, D3DCompile, or SPIRV-Cross available).
-// What *was* possible in this sandbox: this session fetched the real,
-// current upstream `spirv_hlsl.hpp` from
-// https://github.com/KhronosGroup/SPIRV-Cross (raw.githubusercontent.com
-// is reachable here) and checked `HLSLResourceBinding`,
-// `CompilerHLSL::Options`, `add_hlsl_resource_binding`, and
-// `set_hlsl_options` against it directly, rather than against the
-// authoring agent's own recollection of SPIRV-Cross's API -- see the
-// specific field names/comments below for what that check confirmed.
-// `D3DCompile`'s own signature (from `<d3dcompiler.h>`) was not similarly
-// fetched during authoring (Microsoft's Win32 headers are not on GitHub
-// the way SPIRV-Cross is), but the person driving this session pasted the
-// official signature from Microsoft's own documentation afterward, and
-// the call below was checked against it argument-by-argument (order and
-// type of all eleven parameters: pSrcData, SrcDataSize, pSourceName,
-// pDefines, pInclude, pEntrypoint, pTarget, Flags1, Flags2, ppCode,
-// ppErrorMsgs) -- it matches. That confirms the call's *shape* is right;
-// it does not substitute for an actual compile, since this sandbox still
-// has no MSVC/Windows SDK to build against. Check
-// docs/plans/2026-09-20-directexp-bootstrap-plan.md's Progress Log for
-// whether a later session has build/runtime-verified this file.
+// See directexp_shader_hlsl.h for scope. Windows build verification is
+// recorded in docs/plans/2026-09-20-directexp-bootstrap-plan.md.
 
 #include "directexp_shader_hlsl.h"
 #include "directexp_shader_resource_naming.h"

@@ -6,13 +6,6 @@
 // the window-bound probe (probeSurface0) and the real swap chain lifecycle
 // (bootstrapSurface0 onward).
 //
-// NOTE: this file has not been compiled by the authoring agent (a Linux
-// sandbox without an MSVC/Windows SDK toolchain available). It has been
-// compiled and built successfully by the project owner on a real Windows
-// MSYS2 UCRT64 toolchain as of the bootstrap-plan Progress Log entry below
-// this file's introduction -- check docs/plans's Progress Log for the most
-// recent verification status before assuming this is still unverified.
-//
 // JNI naming: Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_<method>
 // mirrors the `native` method declarations in NativeDxBridge.java.
 

@@ -91,11 +91,6 @@ final class RecordingDxBridge implements DxBridge {
 	}
 
 	@Override
-	public long createTexture2D(int width, int height, int mipLevels) {
-		return this.textureHandle;
-	}
-
-	@Override
 	public void releaseTexture(long handle) {
 		this.calls.add("releaseTexture(" + handle + ")");
 	}

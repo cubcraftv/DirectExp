@@ -24,10 +24,6 @@
 // set by setRenderTargets0 changed, so Java never calls setPipelineViewport0
 // itself.
 //
-// NOTE ON VERIFICATION: not compiled by the authoring agent (Linux sandbox,
-// no Windows SDK); every call shape follows the D3D11 documentation. See the
-// Milestone 4.6 source of truth for the actual build status.
-
 #include "directexp_common.h"
 
 #ifdef _WIN32

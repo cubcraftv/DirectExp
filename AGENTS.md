@@ -102,7 +102,7 @@ MetalExp used at its own bootstrap stage). Slice 5 (swap chain lifecycle --
 device/context/flip-model `IDXGISwapChain1`, resize, CPU-upload blit,
 present, release) is build-verified and runtime-verified, reachable end to
 end through `DxBackend` -> `DxBackendBootstrapContext` -> `DxSurfaceLease`.
-GPU-texture-backed resources (slice 6/Milestone 3 -- `createTexture2D` /
+GPU-texture-backed resources (slice 6/Milestone 3 -- `createTexture` /
 `uploadTextureRgba8` / `blitSurfaceTexture` against a real
 `ID3D11Texture2D`) are implemented and now runtime-verified too: the
 `native GPU texture path active` diagnostic log line confirms textures
