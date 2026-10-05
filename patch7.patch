@@ -1,0 +1,284 @@
+diff -ruN a/native/src/directexp_bridge_draw.cpp b/native/src/directexp_bridge_draw.cpp
+--- a/native/src/directexp_bridge_draw.cpp	2026-10-04 09:09:41.280102233 +0000
++++ b/native/src/directexp_bridge_draw.cpp	2026-10-04 09:09:41.357714554 +0000
+@@ -601,6 +601,193 @@
+ 	return env->NewStringUTF(resultText.c_str());
+ }
+ 
++// Diagnostics: after the real blit draw, re-issues the SAME draw (same vertex shader, input assembler, rasterizer,
++// viewport, scissor, blend, vertex constants, pixel SRV/sampler) into a scratch render target, changing only the
++// pixel shader, and reads back one texel per variant. Isolates the vertex->pixel UV linkage and the pixel stage's
++// constant buffer from everything else. Restores the render targets and pixel shader afterward.
++extern "C" JNIEXPORT jstring JNICALL
++Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_runPixelSubstitutionProbe0(JNIEnv* env, jclass, jint probeX, jint probeY, jint vertexCount, jint firstVertex) {
++	if (g_activeContext == nullptr || g_activeDevice == nullptr) {
++		return env->NewStringUTF("no active device");
++	}
++	if (probeX < 0 || probeY < 0 || vertexCount <= 0 || firstVertex < 0) {
++		return env->NewStringUTF("bad probe arguments");
++	}
++
++	ID3D11DeviceContext* context = g_activeContext;
++	ID3D11Device* device = g_activeDevice;
++
++	D3D11_VIEWPORT viewport = {};
++	UINT viewportCount = 1;
++	context->RSGetViewports(&viewportCount, &viewport);
++	if (viewportCount == 0 || viewport.TopLeftX != 0.0f || viewport.TopLeftY != 0.0f) {
++		return env->NewStringUTF("viewport is not origin-anchored; probe skipped");
++	}
++	const UINT width = static_cast<UINT>(viewport.Width + 0.5f);
++	const UINT height = static_cast<UINT>(viewport.Height + 0.5f);
++	if (width == 0 || height == 0 || static_cast<UINT>(probeX) >= width || static_cast<UINT>(probeY) >= height) {
++		return env->NewStringUTF("probe texel is outside the viewport; probe skipped");
++	}
++
++	const bool shaderModel5 = g_activeFeatureLevel >= D3D_FEATURE_LEVEL_11_0;
++	const char* profile = shaderModel5 ? "ps_5_0" : "ps_4_1";
++
++	struct Variant {
++		const char* name;
++		const char* source; // nullptr = the pixel shader that was bound for the real draw
++	};
++	// Texture2D / sampler declarations shared by the sampling variants.
++	#define DX_PROBE_DECL "Texture2D<float4> Sprite : register(t0);\n SamplerState S : register(s0);\n"
++	static const Variant kVariants[] = {
++		{ "realPS", nullptr },
++		{ "uvOnly(TEXCOORD1)",
++			"float4 main(float2 uv : TEXCOORD1) : SV_Target0 { return float4(uv, 0, 1); }\n" },
++		{ "uvFullSignature",
++			"float4 main(float4 p : SV_Position, float a : TEXCOORD0, float2 uv : TEXCOORD1) : SV_Target0 { return float4(uv, 0, 1); }\n" },
++		{ "fixedUvSample",
++			DX_PROBE_DECL "float4 main(float2 uv : TEXCOORD1) : SV_Target0 { return Sprite.SampleLevel(S, float2(0.5, 0.5), 0); }\n" },
++		{ "sampleTexcoord1Mip0",
++			DX_PROBE_DECL "float4 main(float2 uv : TEXCOORD1) : SV_Target0 { return Sprite.SampleLevel(S, uv, 0); }\n" },
++		{ "sampleFullSignature",
++			DX_PROBE_DECL "float4 main(float4 p : SV_Position, float a : TEXCOORD0, float2 uv : TEXCOORD1) : SV_Target0 { return Sprite.SampleLevel(S, uv, 0); }\n" },
++		{ "dumpedHlslCopy",
++			"cbuffer SpriteAnimationInfo : register(b0)\n"
++			"{\n"
++			"    row_major float4x4 _24_ProjectionMatrix : packoffset(c0);\n"
++			"    row_major float4x4 _24_SpriteMatrix : packoffset(c4);\n"
++			"    float _24_UPadding : packoffset(c8);\n"
++			"    float _24_VPadding : packoffset(c8.y);\n"
++			"    int _24_MipMapLevel : packoffset(c8.z);\n"
++			"};\n"
++			"Texture2D<float4> Sprite : register(t0);\n"
++			"SamplerState _Sprite_sampler : register(s0);\n"
++			"static float2 texCoord0;\n"
++			"static float4 fragColor;\n"
++			"struct SPIRV_Cross_Input { float2 texCoord0 : TEXCOORD1; };\n"
++			"struct SPIRV_Cross_Output { float4 fragColor : SV_Target0; };\n"
++			"void frag_main()\n"
++			"{\n"
++			"    float4 color = Sprite.SampleLevel(_Sprite_sampler, texCoord0, float(_24_MipMapLevel));\n"
++			"    fragColor = color;\n"
++			"}\n"
++			"SPIRV_Cross_Output main(SPIRV_Cross_Input stage_input)\n"
++			"{\n"
++			"    texCoord0 = stage_input.texCoord0;\n"
++			"    frag_main();\n"
++			"    SPIRV_Cross_Output stage_output;\n"
++			"    stage_output.fragColor = fragColor;\n"
++			"    return stage_output;\n"
++			"}\n" },
++	};
++	#undef DX_PROBE_DECL
++
++	ID3D11RenderTargetView* savedRenderTargets[D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT] = {};
++	ID3D11DepthStencilView* savedDepthTarget = nullptr;
++	context->OMGetRenderTargets(D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT, savedRenderTargets, &savedDepthTarget);
++	ID3D11PixelShader* savedPixelShader = nullptr;
++	context->PSGetShader(&savedPixelShader, nullptr, nullptr);
++
++	std::string resultText;
++	ID3D11Texture2D* target = nullptr;
++	ID3D11RenderTargetView* targetView = nullptr;
++	ID3D11Texture2D* staging = nullptr;
++
++	D3D11_TEXTURE2D_DESC textureDesc = {};
++	textureDesc.Width = width;
++	textureDesc.Height = height;
++	textureDesc.MipLevels = 1;
++	textureDesc.ArraySize = 1;
++	textureDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
++	textureDesc.SampleDesc.Count = 1;
++	textureDesc.Usage = D3D11_USAGE_DEFAULT;
++	textureDesc.BindFlags = D3D11_BIND_RENDER_TARGET;
++	bool ready = SUCCEEDED(device->CreateTexture2D(&textureDesc, nullptr, &target))
++		&& SUCCEEDED(device->CreateRenderTargetView(target, nullptr, &targetView));
++	if (ready) {
++		D3D11_TEXTURE2D_DESC stagingDesc = textureDesc;
++		stagingDesc.Width = 1;
++		stagingDesc.Height = 1;
++		stagingDesc.Usage = D3D11_USAGE_STAGING;
++		stagingDesc.BindFlags = 0;
++		stagingDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
++		ready = SUCCEEDED(device->CreateTexture2D(&stagingDesc, nullptr, &staging));
++	}
++	if (!ready) {
++		resultText = "scratch target / staging creation failed";
++	}
++
++	for (const Variant& variant : kVariants) {
++		if (!ready) {
++			break;
++		}
++		ID3DBlob* bytecode = nullptr;
++		ID3D11PixelShader* pixelShader = nullptr;
++		bool useSaved = variant.source == nullptr;
++		std::string failure;
++		if (useSaved) {
++			if (savedPixelShader == nullptr) {
++				failure = "no bound pixel shader";
++			}
++		} else {
++			ID3DBlob* errors = nullptr;
++			HRESULT compiled = D3DCompile(variant.source, std::strlen(variant.source), "directexp_pixel_substitution", nullptr, nullptr, "main", profile, 0, 0, &bytecode, &errors);
++			if (FAILED(compiled) || bytecode == nullptr) {
++				failure = "compile failed";
++				if (errors != nullptr) {
++					failure += ": ";
++					failure.append(static_cast<const char*>(errors->GetBufferPointer()), errors->GetBufferSize());
++				}
++			} else if (FAILED(device->CreatePixelShader(bytecode->GetBufferPointer(), bytecode->GetBufferSize(), nullptr, &pixelShader))) {
++				failure = "CreatePixelShader failed";
++			}
++			if (errors != nullptr) errors->Release();
++		}
++
++		if (!failure.empty()) {
++			resultText += variant.name;
++			resultText += "=" + failure + "; ";
++		} else {
++			const FLOAT clearColor[4] = { 1.0f, 0.0f, 1.0f, 0.0f }; // ff00ff00 = "nothing was drawn here"
++			context->ClearRenderTargetView(targetView, clearColor);
++			context->OMSetRenderTargets(1, &targetView, nullptr);
++			context->PSSetShader(useSaved ? savedPixelShader : pixelShader, nullptr, 0);
++			context->Draw(static_cast<UINT>(vertexCount), static_cast<UINT>(firstVertex));
++			context->OMSetRenderTargets(0, nullptr, nullptr);
++
++			const D3D11_BOX box = { static_cast<UINT>(probeX), static_cast<UINT>(probeY), 0, static_cast<UINT>(probeX) + 1, static_cast<UINT>(probeY) + 1, 1 };
++			context->CopySubresourceRegion(staging, 0, 0, 0, 0, target, 0, &box);
++			D3D11_MAPPED_SUBRESOURCE mapped = {};
++			char pixelText[96];
++			if (SUCCEEDED(context->Map(staging, 0, D3D11_MAP_READ, 0, &mapped)) && mapped.pData != nullptr) {
++				const unsigned char* rgba = static_cast<const unsigned char*>(mapped.pData);
++				std::snprintf(pixelText, sizeof(pixelText), "%s=%02x%02x%02x%02x; ", variant.name, rgba[0], rgba[1], rgba[2], rgba[3]);
++				context->Unmap(staging, 0);
++			} else {
++				std::snprintf(pixelText, sizeof(pixelText), "%s=map-failed; ", variant.name);
++			}
++			resultText += pixelText;
++		}
++
++		if (pixelShader != nullptr) pixelShader->Release();
++		if (bytecode != nullptr) bytecode->Release();
++	}
++
++	// Restore: only the render targets and the pixel shader were changed.
++	context->PSSetShader(savedPixelShader, nullptr, 0);
++	context->OMSetRenderTargets(D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT, savedRenderTargets, savedDepthTarget);
++
++	if (staging != nullptr) staging->Release();
++	if (targetView != nullptr) targetView->Release();
++	if (target != nullptr) target->Release();
++	for (ID3D11RenderTargetView* savedTarget : savedRenderTargets) {
++		if (savedTarget != nullptr) savedTarget->Release();
++	}
++	if (savedDepthTarget != nullptr) savedDepthTarget->Release();
++	if (savedPixelShader != nullptr) savedPixelShader->Release();
++
++	return env->NewStringUTF(resultText.c_str());
++}
++
+ // Diagnostics: describes the pipeline state the D3D11 context currently holds.
+ extern "C" JNIEXPORT jstring JNICALL
+ Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_describeDrawState0(JNIEnv* env, jclass, jint srvSlot, jlong expectedTextureHandle) {
+@@ -1004,6 +1191,11 @@
+ 	return nullptr;
+ }
+ 
++extern "C" JNIEXPORT jstring JNICALL
++Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_runPixelSubstitutionProbe0(JNIEnv*, jclass, jint, jint, jint, jint) {
++	return nullptr;
++}
++
+ extern "C" JNIEXPORT void JNICALL
+ Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_setScissor0(JNIEnv*, jclass, jint, jint, jint, jint) {
+ }
+diff -ruN a/src/client/java/dev/cubcraftv/directexp/client/backend/DxRenderPassBackend.java b/src/client/java/dev/cubcraftv/directexp/client/backend/DxRenderPassBackend.java
+--- a/src/client/java/dev/cubcraftv/directexp/client/backend/DxRenderPassBackend.java	2026-10-04 09:09:41.299894029 +0000
++++ b/src/client/java/dev/cubcraftv/directexp/client/backend/DxRenderPassBackend.java	2026-10-04 09:09:41.357286417 +0000
+@@ -498,7 +498,7 @@
+ 			samplerBinding, this.bindingSource.samplerHandle("Sprite"),
+ 			firstVertex, vertexCount, spriteInfoValues, spriteInfoBytes
+ 		);
+-		logAtlasPixelProbe(texture, spriteInfo, atlasBefore);
++		logAtlasPixelProbe(texture, spriteInfo, atlasBefore, vertexCount, firstVertex);
+ 	}
+ 
+ 	/**
+@@ -511,7 +511,7 @@
+ 	 *   <li>atlas texels match: the blit is fine and the problem is in how the atlas is sampled later.</li>
+ 	 * </ul>
+ 	 */
+-	private void logAtlasPixelProbe(DxTexture sprite, ByteBuffer spriteInfo, int[] atlasBefore) {
++	private void logAtlasPixelProbe(DxTexture sprite, ByteBuffer spriteInfo, int[] atlasBefore, int vertexCount, int firstVertex) {
+ 		try {
+ 			if (spriteInfo == null || spriteInfo.remaining() < 140 || !this.colorTarget.hasNativeTextureHandle()) {
+ 				return;
+@@ -547,6 +547,11 @@
+ 			int untouched = Integer.reverseBytes(this.dxBridge.readTexturePixelRgba8(this.colorTarget.nativeTextureHandle(), this.colorTargetMipLevel, 1, 1));
+ 			DirectExpMod.LOGGER.info("DirectExp PROBE atlas clear color: texel (1,1) outside every sprite = {} (RGBA)", String.format("%08x", untouched));
+ 			DirectExpMod.LOGGER.info("DirectExp PROBE draw state: {}", this.dxBridge.describeDrawState(0, sprite.nativeTextureHandle()));
++			// Same draw, same VS / IA / rasterizer / SRV / sampler / constants, only the pixel shader swapped, into a scratch target.
++			int centreX = Math.round(posX + 1.0F + 0.5F * (scaleX - 3.0F));
++			int centreY = Math.round(posY + 1.0F + 0.5F * (scaleY - 3.0F));
++			DirectExpMod.LOGGER.info("DirectExp PROBE pixel substitution at atlas({},{}) (expected 707070ff where a sample happens): {}",
++				centreX, centreY, this.dxBridge.runPixelSubstitutionProbe(centreX, centreY, vertexCount, firstVertex));
+ 			DirectExpMod.LOGGER.info("DirectExp PROBE sampling experiment (sprite centre texel, expected 707070ff): {}",
+ 				this.dxBridge.runSamplingExperiment(this.bindingSource.textureViewHandle("Sprite")));
+ 			DirectExpMod.LOGGER.info(
+diff -ruN a/src/main/java/dev/cubcraftv/directexp/bridge/DxBridge.java b/src/main/java/dev/cubcraftv/directexp/bridge/DxBridge.java
+--- a/src/main/java/dev/cubcraftv/directexp/bridge/DxBridge.java	2026-10-04 09:09:41.287067096 +0000
++++ b/src/main/java/dev/cubcraftv/directexp/bridge/DxBridge.java	2026-10-04 09:09:41.356540592 +0000
+@@ -282,6 +282,14 @@
+ 	}
+ 
+ 	/**
++	 * Diagnostics only: re-issues the draw that just ran into a scratch target with the real vertex stage and
++	 * every other bound state, substituting controlled pixel shaders, and reports the texel at (x, y) per variant.
++	 */
++	default String runPixelSubstitutionProbe(int x, int y, int vertexCount, int firstVertex) {
++		return "(unsupported by this bridge)";
++	}
++
++	/**
+ 	 * Sets the scissor rectangle in D3D pixel coordinates (origin top-left).
+ 	 * Every pipeline's rasterizer state has scissor enabled, so "scissor off"
+ 	 * is expressed by passing the full target rectangle.
+diff -ruN a/src/main/java/dev/cubcraftv/directexp/bridge/NativeDxBridge.java b/src/main/java/dev/cubcraftv/directexp/bridge/NativeDxBridge.java
+--- a/src/main/java/dev/cubcraftv/directexp/bridge/NativeDxBridge.java	2026-10-04 09:09:41.293328501 +0000
++++ b/src/main/java/dev/cubcraftv/directexp/bridge/NativeDxBridge.java	2026-10-04 09:09:41.356906666 +0000
+@@ -240,6 +240,11 @@
+ 	}
+ 
+ 	@Override
++	public String runPixelSubstitutionProbe(int x, int y, int vertexCount, int firstVertex) {
++		return runPixelSubstitutionProbe0(x, y, vertexCount, firstVertex);
++	}
++
++	@Override
+ 	public void setScissor(int x, int y, int width, int height) {
+ 		setScissor0(x, y, width, height);
+ 	}
+@@ -729,6 +734,8 @@
+ 
+ 	private static native String runSamplingExperiment0(long nativeTextureViewHandle);
+ 
++	private static native String runPixelSubstitutionProbe0(int x, int y, int vertexCount, int firstVertex);
++
+ 	private static native void setScissor0(int x, int y, int width, int height);
+ 
+ 	private static native void bindPipeline0(long nativePipelineHandle);

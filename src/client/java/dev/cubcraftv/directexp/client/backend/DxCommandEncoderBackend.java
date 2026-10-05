@@ -60,10 +60,14 @@ final class DxCommandEncoderBackend implements CommandEncoderBackend {
 		((DxTexture) gpuTexture).fillRegion(0, x, y, width, height, DxClearColor.packArgb(clearColor));
 		if (x == 0 && y == 0 && width >= depthTexture.getWidth(0) && height >= depthTexture.getHeight(0)) {
 			clearDepthTexture(depthTexture, depth);
-		} else {
-			// ClearDepthStencilView has no rectangle (ID3D11DeviceContext1::ClearView needs
-			// D3D11.1, above the 10.1 floor), so a partial depth clear is not expressible yet.
-			this.drawContext.diagnostics().reportOnce("partial-depth-clear", "a partial-rectangle depth clear was requested; it is skipped (no D3D11.0 equivalent)");
+		} else if (depthTexture instanceof DxTexture dxDepth && dxDepth.hasNativeDepthTarget()) {
+			// ClearDepthStencilView has no rectangle and ClearView needs D3D11.1 (above the
+			// 10.1 floor), so the native side draws a scissored depth-only triangle instead.
+			try {
+				this.drawContext.dxBridge().clearDepthRegion(dxDepth.nativeTextureHandle(), x, y, width, height, (float) depth);
+			} catch (UnsupportedOperationException | IllegalStateException error) {
+				this.drawContext.diagnostics().reportOnce("partial-depth-clear", "a partial-rectangle depth clear failed: " + error.getMessage());
+			}
 		}
 	}
 

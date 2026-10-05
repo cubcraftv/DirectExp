@@ -36,10 +36,11 @@ public final class DxHlslCompilationStage {
 	/**
 	 * Compiles both stages of {@code spirvModules} to D3D11 bytecode,
 	 * using {@code layout} to force each stage's resources to their
-	 * engine-assigned registers. Stops at the vertex stage's failure
-	 * without attempting the fragment stage if the vertex stage itself
-	 * failed, matching {@link DxReflectionStage#reflect}'s short-circuit
-	 * shape.
+	 * engine-assigned registers. Once both HLSL stages are emitted, the fragment
+	 * input struct is reordered to match the vertex output signature and the
+	 * fragment HLSL is recompiled. Stops at the vertex stage's failure without
+	 * attempting the fragment stage if the vertex stage itself failed, matching
+	 * {@link DxReflectionStage#reflect}'s short-circuit shape.
 	 */
 	public static DxHlslCompilationStageResult compile(DxSpirvPipelineModules spirvModules, DxResourceLayout layout, DxBridge bridge) {
 		Objects.requireNonNull(spirvModules, "spirvModules");
@@ -56,8 +57,52 @@ public final class DxHlslCompilationStage {
 			return DxHlslCompilationStageResult.failed(fragmentOutcome.status(), spirvModules.pipelineDebugLabel(), fragmentOutcome.detail());
 		}
 
+		String fragmentHlsl;
+		try {
+			fragmentHlsl = DxHlslInputSignatureRewriter.rewrite(
+				vertexOutcome.module().hlsl(),
+				fragmentOutcome.module().hlsl()
+			);
+		} catch (DxShaderInterfaceException error) {
+			return DxHlslCompilationStageResult.failed(
+				DxHlslCompilationStageStatus.FRAGMENT_INTERFACE_FAILED,
+				spirvModules.pipelineDebugLabel(),
+				error.getMessage()
+			);
+		}
+
+		if (fragmentHlsl.equals(fragmentOutcome.module().hlsl())) {
+			DxHlslPipelineModules modules = new DxHlslPipelineModules(
+				spirvModules.pipelineDebugLabel(), vertexOutcome.module(), fragmentOutcome.module()
+			);
+			return DxHlslCompilationStageResult.ready(spirvModules.pipelineDebugLabel(), modules);
+		}
+
+		String fragmentShaderName = spirvModules.pipelineDebugLabel() + "/FRAGMENT/" + spirvModules.fragment().id();
+		DxHlslCompilationResult fragmentCompileResult = bridge.compileHlsl(
+			fragmentShaderName,
+			fragmentHlsl,
+			DxShaderStageKind.FRAGMENT
+		);
+		if (!fragmentCompileResult.isReady()) {
+			DirectExpMod.LOGGER.error(
+				"HLSL compilation failed for fragment shader ({}) in pipeline {}: {}",
+				spirvModules.fragment().id(), spirvModules.pipelineDebugLabel(), fragmentCompileResult.detail()
+			);
+			DxHlslCompilationStageStatus status = fragmentCompileResult.isCompileError()
+				? DxHlslCompilationStageStatus.FRAGMENT_COMPILE_FAILED
+				: DxHlslCompilationStageStatus.BRIDGE_UNAVAILABLE;
+			return DxHlslCompilationStageResult.failed(status, spirvModules.pipelineDebugLabel(), fragmentCompileResult.detail());
+		}
+		DxHlslModule compiledFragment = new DxHlslModule(
+			spirvModules.fragment().id(),
+			spirvModules.fragment().type(),
+			fragmentCompileResult.bytecode(),
+			fragmentHlsl
+		);
+
 		DxHlslPipelineModules modules = new DxHlslPipelineModules(
-			spirvModules.pipelineDebugLabel(), vertexOutcome.module(), fragmentOutcome.module()
+			spirvModules.pipelineDebugLabel(), vertexOutcome.module(), compiledFragment
 		);
 		return DxHlslCompilationStageResult.ready(spirvModules.pipelineDebugLabel(), modules);
 	}

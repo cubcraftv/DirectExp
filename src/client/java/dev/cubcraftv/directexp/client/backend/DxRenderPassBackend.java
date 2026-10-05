@@ -142,7 +142,7 @@ final class DxRenderPassBackend implements RenderPassBackend {
 		this.targetHeight = colorTextureView.getHeight(0);
 		this.fullRenderArea = renderArea.x() == 0 && renderArea.y() == 0
 			&& renderArea.width() == this.targetWidth && renderArea.height() == this.targetHeight;
-		this.nativeTargetsBound = beginNativePass(clearColor, clearDepth);
+		this.nativeTargetsBound = beginNativePass(clearColor, clearDepth, renderArea);
 		if (!this.fullRenderArea) {
 			this.scissorEnabled = true;
 			this.scissorX = renderArea.x();
@@ -157,7 +157,7 @@ final class DxRenderPassBackend implements RenderPassBackend {
 	 *
 	 * @return false when the pass has no native targets (CPU-only texture, no bridge, or a native failure); its draws are then skipped
 	 */
-	private boolean beginNativePass(Optional<Vector4fc> clearColor, OptionalDouble clearDepth) {
+	private boolean beginNativePass(Optional<Vector4fc> clearColor, OptionalDouble clearDepth, RenderPass.RenderArea renderArea) {
 		if (this.dxBridge == null) {
 			return false;
 		}
@@ -173,6 +173,12 @@ final class DxRenderPassBackend implements RenderPassBackend {
 		}
 
 		try {
+			// A rectangle depth clear draws through the output merger, so it has to run
+			// before this pass binds its own targets.
+			if (hasDepthTarget && clearDepth.isPresent() && !this.fullRenderArea && this.depthView.nativeViewHandle() != 0L
+				&& this.depthView.texture() instanceof DxTexture depthTexture) {
+				this.dxBridge.clearDepthRegion(depthTexture.nativeTextureHandle(), renderArea.x(), renderArea.y(), renderArea.width(), renderArea.height(), (float) clearDepth.getAsDouble());
+			}
 			this.dxBridge.setRenderTargets(this.colorView.nativeViewHandle(), hasDepthTarget ? this.depthView.nativeViewHandle() : 0L, this.targetWidth, this.targetHeight);
 			if (clearColor.isPresent() && this.fullRenderArea) {
 				Vector4fc rgba = clearColor.get();
@@ -182,8 +188,6 @@ final class DxRenderPassBackend implements RenderPassBackend {
 			}
 			if (hasDepthTarget && clearDepth.isPresent() && this.fullRenderArea) {
 				this.dxBridge.clearDepthStencil(this.depthView.nativeViewHandle(), (float) clearDepth.getAsDouble());
-			} else if (hasDepthTarget && clearDepth.isPresent()) {
-				report("partial-depth-clear", "a partial-rectangle depth clear was requested; it is skipped (no D3D11.0 equivalent)");
 			}
 			return true;
 		} catch (UnsupportedOperationException | IllegalStateException error) {
@@ -370,8 +374,9 @@ final class DxRenderPassBackend implements RenderPassBackend {
 				issueExpandedFan(1, 0);
 				return;
 			}
+			int[] atlasBefore = captureAtlasTexelsBeforeDraw();
 			this.dxBridge.draw(vertexCount, firstVertex);
-			logGuiAtlasCompositionDraw(vertexCount, firstVertex);
+			logGuiAtlasCompositionDraw(vertexCount, firstVertex, atlasBefore);
 		} catch (UnsupportedOperationException | IllegalStateException error) {
 			report("draw", "Draw failed: " + error.getMessage());
 		}
@@ -401,7 +406,47 @@ final class DxRenderPassBackend implements RenderPassBackend {
 		throw new UnsupportedOperationException("indirect draws are not supported by the DirectX backend");
 	}
 
-	private void logGuiAtlasCompositionDraw(int vertexCount, int firstVertex) {
+	/** Probe helper: atlas texels (3 inside the blit rectangle, 1 control outside it) read before the draw runs. */
+	private int[] captureAtlasTexelsBeforeDraw() {
+		try {
+			if (!this.colorTarget.debugLabel().equals(Sheets.GUI_SHEET.toString())
+				|| this.pipeline == null
+				|| !this.pipeline.getLocation().toString().contains("animate_sprite_blit")
+				|| LOGGED_GUI_ATLAS_COMPOSITION_DRAW.get()
+				|| !this.colorTarget.hasNativeTextureHandle()) {
+				return null;
+			}
+			BoundTexture sprite = this.boundTextures.get("Sprite");
+			if (sprite == null || !(sprite.textureView() instanceof DxTextureView view) || !(view.texture() instanceof DxTexture texture)
+				|| !texture.debugLabel().equals(DEBUG_BUTTON_SPRITE.toString())) {
+				return null;
+			}
+			ByteBuffer info = this.bindingSource.uniformBytes("SpriteAnimationInfo");
+			if (info == null || info.remaining() < 128) {
+				return null;
+			}
+			return readAtlasProbeTexels(info);
+		} catch (RuntimeException error) {
+			return null;
+		}
+	}
+
+	/** The four probe texels: three inside the rectangle and one control texel outside it. */
+	private int[] readAtlasProbeTexels(ByteBuffer spriteInfo) {
+		ByteBuffer v = spriteInfo.duplicate().order(ByteOrder.nativeOrder());
+		int base = v.position();
+		float scaleX = v.getFloat(base + 64), scaleY = v.getFloat(base + 64 + 20);
+		float posX = v.getFloat(base + 64 + 48), posY = v.getFloat(base + 64 + 52);
+		int[] xs = { Math.round(posX + 1.0F), Math.round(posX + 1.0F + 0.5F * (scaleX - 3.0F)), Math.round(posX + 1.0F + (scaleX - 3.0F)), Math.round(posX) - 4 };
+		int[] ys = { Math.round(posY + 1.0F), Math.round(posY + 1.0F + 0.5F * (scaleY - 3.0F)), Math.round(posY + 1.0F + (scaleY - 3.0F)), Math.round(posY) - 4 };
+		int[] result = new int[4];
+		for (int i = 0; i < 4; i++) {
+			result[i] = Integer.reverseBytes(this.dxBridge.readTexturePixelRgba8(this.colorTarget.nativeTextureHandle(), this.colorTargetMipLevel, xs[i], ys[i]));
+		}
+		return result;
+	}
+
+	private void logGuiAtlasCompositionDraw(int vertexCount, int firstVertex, int[] atlasBefore) {
 		if (!this.colorTarget.debugLabel().equals(Sheets.GUI_SHEET.toString())
 			|| this.pipeline == null
 			|| !this.pipeline.getLocation().toString().contains("animate_sprite_blit")) {
@@ -453,6 +498,69 @@ final class DxRenderPassBackend implements RenderPassBackend {
 			samplerBinding, this.bindingSource.samplerHandle("Sprite"),
 			firstVertex, vertexCount, spriteInfoValues, spriteInfoBytes
 		);
+		logAtlasPixelProbe(texture, spriteInfo, atlasBefore, vertexCount, firstVertex);
+	}
+
+	/**
+	 * One-shot diagnostic for the first GUI-atlas blit. Samples the atlas at three points across the rectangle
+	 * the blit just drew and compares each with the corresponding texel of the source sprite, and decodes the
+	 * padding / mip level the shader received.
+	 * <ul>
+	 *   <li>all three atlas texels equal the sprite's (0,0) texel: texture coordinates collapsed;</li>
+	 *   <li>atlas texels black while the sprite texels are not: the blit wrote nothing / wrong data;</li>
+	 *   <li>atlas texels match: the blit is fine and the problem is in how the atlas is sampled later.</li>
+	 * </ul>
+	 */
+	private void logAtlasPixelProbe(DxTexture sprite, ByteBuffer spriteInfo, int[] atlasBefore, int vertexCount, int firstVertex) {
+		try {
+			if (spriteInfo == null || spriteInfo.remaining() < 140 || !this.colorTarget.hasNativeTextureHandle()) {
+				return;
+			}
+			ByteBuffer v = spriteInfo.duplicate().order(ByteOrder.nativeOrder());
+			int base = v.position();
+			float scaleX = v.getFloat(base + 64), scaleY = v.getFloat(base + 64 + 20);
+			float posX = v.getFloat(base + 64 + 48), posY = v.getFloat(base + 64 + 52);
+			float uPadding = v.getFloat(base + 128), vPadding = v.getFloat(base + 132);
+			int mipLevel = v.getInt(base + 136);
+			StringBuilder points = new StringBuilder();
+			float[][] samples = { { 0.0F, 0.0F }, { 0.5F, 0.5F }, { 1.0F, 1.0F } };
+			int spriteWidth = sprite.getWidth(0), spriteHeight = sprite.getHeight(0);
+			for (float[] uv : samples) {
+				// The quad covers the sprite plus one padding texel on every side.
+				int ax = Math.round(posX + 1.0F + uv[0] * (scaleX - 3.0F));
+				int ay = Math.round(posY + 1.0F + uv[1] * (scaleY - 3.0F));
+				int sx = Math.min(spriteWidth - 1, Math.round(uv[0] * (spriteWidth - 1)));
+				int sy = Math.min(spriteHeight - 1, Math.round(uv[1] * (spriteHeight - 1)));
+				int atlas = Integer.reverseBytes(this.dxBridge.readTexturePixelRgba8(this.colorTarget.nativeTextureHandle(), this.colorTargetMipLevel, ax, ay));
+				ByteBuffer expected = sprite.readRegion(0, sx, sy, 1, 1);
+				int gpuSprite = Integer.reverseBytes(this.dxBridge.readTexturePixelRgba8(sprite.nativeTextureHandle(), 0, sx, sy));
+				points.append(String.format(" [uv=%.1f,%.1f atlas(%d,%d)=%08x spriteMirror(%d,%d)=%02x%02x%02x%02x spriteGPU(%d,%d)=%08x]", uv[0], uv[1], ax, ay, atlas, sx, sy,
+					expected.get(0) & 0xff, expected.get(1) & 0xff, expected.get(2) & 0xff, expected.get(3) & 0xff, sx, sy, gpuSprite));
+			}
+			int[] atlasAfter = readAtlasProbeTexels(spriteInfo);
+			StringBuilder beforeAfter = new StringBuilder();
+			String[] names = { "corner", "centre", "farCorner", "controlOutside" };
+			for (int i = 0; i < 4; i++) {
+				beforeAfter.append(String.format(" %s: before=%s after=%08x;", names[i], atlasBefore == null ? "n/a" : String.format("%08x", atlasBefore[i]), atlasAfter[i]));
+			}
+			DirectExpMod.LOGGER.info("DirectExp PROBE draw effect (atlas texels before vs after the button blit):{}", beforeAfter);
+			int untouched = Integer.reverseBytes(this.dxBridge.readTexturePixelRgba8(this.colorTarget.nativeTextureHandle(), this.colorTargetMipLevel, 1, 1));
+			DirectExpMod.LOGGER.info("DirectExp PROBE atlas clear color: texel (1,1) outside every sprite = {} (RGBA)", String.format("%08x", untouched));
+			DirectExpMod.LOGGER.info("DirectExp PROBE draw state: {}", this.dxBridge.describeDrawState(0, sprite.nativeTextureHandle()));
+			// Replay the real draw into a scratch target, changing only the pixel shader.
+			int centreX = Math.round(posX + 1.0F + 0.5F * (scaleX - 3.0F));
+			int centreY = Math.round(posY + 1.0F + 0.5F * (scaleY - 3.0F));
+			DirectExpMod.LOGGER.info("DirectExp PROBE pixel substitution at atlas({},{}) (expected 707070ff where a sample happens): {}",
+				centreX, centreY, this.dxBridge.runPixelSubstitutionProbe(centreX, centreY, vertexCount, firstVertex));
+			DirectExpMod.LOGGER.info("DirectExp PROBE sampling experiment (sprite centre texel, expected 707070ff): {}",
+				this.dxBridge.runSamplingExperiment(this.bindingSource.textureViewHandle("Sprite")));
+			DirectExpMod.LOGGER.info(
+				"DirectExp PROBE button blit: UPadding={} VPadding={} MipMapLevel={} dest=({},{}) {}x{} atlasMip={} samples:{}",
+				uPadding, vPadding, mipLevel, posX, posY, scaleX, scaleY, this.colorTargetMipLevel, points
+			);
+		} catch (RuntimeException error) {
+			DirectExpMod.LOGGER.info("DirectExp PROBE button blit: readback failed: {}", error.toString());
+		}
 	}
 
 	@Override

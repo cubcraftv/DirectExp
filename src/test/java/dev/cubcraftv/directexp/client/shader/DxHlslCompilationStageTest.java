@@ -33,25 +33,59 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class DxHlslCompilationStageTest {
 
 	private static final Identifier SHADER_ID = Identifier.fromNamespaceAndPath("directexp", "test/position");
+	private static final String VERTEX_HLSL = """
+		struct SPIRV_Cross_Output
+		{
+		    float a : TEXCOORD0;
+		    float2 uv : TEXCOORD1;
+		    float4 gl_Position : SV_Position;
+		};
+		""";
+	private static final String FRAGMENT_HLSL = """
+		struct SPIRV_Cross_Input
+		{
+		    float2 uv : TEXCOORD1;
+		};
+		""";
 
 	@Test
 	void readyWhenBothStagesCompile() {
 		DxSpirvPipelineModules spirvModules = modules("vertex-spirv", "fragment-spirv");
 		DxResourceLayout layout = emptyLayout();
 		FakeDxBridge bridge = new FakeDxBridge()
-			.withResult("vertex-spirv", DxHlslCompilationResult.ready(new byte[]{1, 2, 3}, "vs hlsl"))
-			.withResult("fragment-spirv", DxHlslCompilationResult.ready(new byte[]{4, 5}, "ps hlsl"));
+			.withResult("vertex-spirv", DxHlslCompilationResult.ready(new byte[]{1, 2, 3}, VERTEX_HLSL))
+			.withResult("fragment-spirv", DxHlslCompilationResult.ready(new byte[]{4, 5}, FRAGMENT_HLSL));
 
 		DxHlslCompilationStageResult result = DxHlslCompilationStage.compile(spirvModules, layout, bridge);
 
 		assertTrue(result.isReady());
 		assertEquals(DxHlslCompilationStageStatus.READY, result.status());
 		assertArrayEquals(new byte[]{1, 2, 3}, result.modules().vertex().bytecode());
-		assertEquals("vs hlsl", result.modules().vertex().hlsl());
-		assertArrayEquals(new byte[]{4, 5}, result.modules().fragment().bytecode());
+		assertEquals(VERTEX_HLSL, result.modules().vertex().hlsl());
+		assertArrayEquals(new byte[]{7}, result.modules().fragment().bytecode());
+		assertTrue(result.modules().fragment().hlsl().indexOf("float a : TEXCOORD0;")
+			< result.modules().fragment().hlsl().indexOf("float2 uv : TEXCOORD1;"));
+		assertTrue(result.modules().fragment().hlsl().contains("float4 gl_Position : SV_Position;"));
 		assertEquals(ShaderType.VERTEX, result.modules().vertex().type());
 		assertEquals(ShaderType.FRAGMENT, result.modules().fragment().type());
 		assertEquals(2, bridge.callCount());
+		assertEquals(1, bridge.compileCallCount());
+	}
+
+	@Test
+	void fragmentWithoutInputsKeepsOriginalBytecodeAndSkipsRewriteCompilation() {
+		String fragmentHlsl = "float4 main() : SV_Target0 { return 1.0f.xxxx; }";
+		DxSpirvPipelineModules spirvModules = modules("vertex-spirv", "fragment-spirv");
+		FakeDxBridge bridge = new FakeDxBridge()
+			.withResult("vertex-spirv", DxHlslCompilationResult.ready(new byte[]{1}, VERTEX_HLSL))
+			.withResult("fragment-spirv", DxHlslCompilationResult.ready(new byte[]{2}, fragmentHlsl));
+
+		DxHlslCompilationStageResult result = DxHlslCompilationStage.compile(spirvModules, emptyLayout(), bridge);
+
+		assertTrue(result.isReady());
+		assertArrayEquals(new byte[]{2}, result.modules().fragment().bytecode());
+		assertEquals(fragmentHlsl, result.modules().fragment().hlsl());
+		assertEquals(0, bridge.compileCallCount());
 	}
 
 	@Test
@@ -75,8 +109,9 @@ class DxHlslCompilationStageTest {
 		DxSpirvPipelineModules spirvModules = modules("vertex-spirv", "bad-fragment-spirv");
 		DxResourceLayout layout = emptyLayout();
 		FakeDxBridge bridge = new FakeDxBridge()
-			.withResult("vertex-spirv", DxHlslCompilationResult.ready(new byte[]{1}, "vs hlsl"))
-			.withResult("bad-fragment-spirv", DxHlslCompilationResult.compileError("ps hlsl text", "D3DCompile failed"));
+			.withResult("vertex-spirv", DxHlslCompilationResult.ready(new byte[]{1}, VERTEX_HLSL))
+			.withResult("bad-fragment-spirv", DxHlslCompilationResult.ready(new byte[]{2}, FRAGMENT_HLSL))
+			.withCompileResult(DxHlslCompilationResult.compileError("rewritten fragment HLSL", "D3DCompile failed"));
 
 		DxHlslCompilationStageResult result = DxHlslCompilationStage.compile(spirvModules, layout, bridge);
 
@@ -85,6 +120,7 @@ class DxHlslCompilationStageTest {
 		assertNull(result.modules());
 		assertEquals("D3DCompile failed", result.detail());
 		assertEquals(2, bridge.callCount());
+		assertEquals(1, bridge.compileCallCount());
 	}
 
 	@Test
@@ -109,8 +145,8 @@ class DxHlslCompilationStageTest {
 			new DxResourceLayoutEntry("Sampler0", DxResourceKind.SAMPLED_TEXTURE, 0, 0, false, true)
 		));
 		FakeDxBridge bridge = new FakeDxBridge()
-			.withResult("vertex-spirv", DxHlslCompilationResult.ready(new byte[]{1}, "vs"))
-			.withResult("fragment-spirv", DxHlslCompilationResult.ready(new byte[]{2}, "ps"));
+			.withResult("vertex-spirv", DxHlslCompilationResult.ready(new byte[]{1}, VERTEX_HLSL))
+			.withResult("fragment-spirv", DxHlslCompilationResult.ready(new byte[]{2}, FRAGMENT_HLSL));
 
 		DxHlslCompilationStage.compile(spirvModules, layout, bridge);
 
@@ -149,6 +185,8 @@ class DxHlslCompilationStageTest {
 		private final Map<String, DxHlslCompilationResult> resultsBySource = new HashMap<>();
 		private final Map<String, List<DxResourceSlotAssignment>> assignmentsBySource = new HashMap<>();
 		private final List<String> calls = new ArrayList<>();
+		private DxHlslCompilationResult compileResult = DxHlslCompilationResult.ready(new byte[]{7}, "compiled hlsl");
+		private final List<String> compiledSources = new ArrayList<>();
 
 		@Override
 		public DxBridgeProbe probe() {
@@ -168,8 +206,19 @@ class DxHlslCompilationStageTest {
 			return DxHlslCompilationResult.ready(new byte[]{0}, "default hlsl");
 		}
 
+		@Override
+		public DxHlslCompilationResult compileHlsl(String shaderName, String hlsl, DxShaderStageKind stageKind) {
+			this.compiledSources.add(hlsl);
+			return this.compileResult;
+		}
+
 		FakeDxBridge withResult(String spirvSource, DxHlslCompilationResult result) {
 			this.resultsBySource.put(spirvSource, result);
+			return this;
+		}
+
+		FakeDxBridge withCompileResult(DxHlslCompilationResult result) {
+			this.compileResult = result;
 			return this;
 		}
 
@@ -179,6 +228,10 @@ class DxHlslCompilationStageTest {
 
 		int callCount() {
 			return this.calls.size();
+		}
+
+		int compileCallCount() {
+			return this.compiledSources.size();
 		}
 	}
 }

@@ -107,6 +107,8 @@ final class DxPipelineCompiler {
 				return DxRenderPipeline.invalid(pipeline, "HLSL: " + hlsl.status() + " (" + hlsl.detail() + ")");
 			}
 
+			dumpHlslForDiagnostics(pipeline, hlsl);
+
 			byte[] geometryBytecode = null;
 			if (pointSize.usesPointSize() && pipeline.getPrimitiveTopology() == com.mojang.blaze3d.PrimitiveTopology.POINTS) {
 				String geometryHlsl;
@@ -131,6 +133,27 @@ final class DxPipelineCompiler {
 		} catch (RuntimeException | LinkageError error) {
 			// A stage misbehaving must not escape into Blaze3D's pipeline precompile.
 			return DxRenderPipeline.invalid(pipeline, "unexpected " + error.getClass().getSimpleName() + ": " + error.getMessage());
+		}
+	}
+
+	/** Diagnostics: writes the generated HLSL of the sprite-atlas blit and terrain pipelines to ./directexp-hlsl/. */
+	private static void dumpHlslForDiagnostics(RenderPipeline pipeline, DxHlslCompilationStageResult hlsl) {
+		String name = String.valueOf(pipeline.getLocation());
+		if (!(name.contains("animate_sprite") || name.contains("solid_terrain"))) {
+			return;
+		}
+		if (name.contains("animate_sprite_blit")) {
+			dev.cubcraftv.directexp.DirectExpMod.LOGGER.info("DirectExp HLSL DUMP {} VERTEX:\n{}", name, hlsl.modules().vertex().hlsl());
+			dev.cubcraftv.directexp.DirectExpMod.LOGGER.info("DirectExp HLSL DUMP {} FRAGMENT:\n{}", name, hlsl.modules().fragment().hlsl());
+		}
+		try {
+			java.nio.file.Path directory = java.nio.file.Path.of("directexp-hlsl");
+			java.nio.file.Files.createDirectories(directory);
+			String base = name.replaceAll("[^A-Za-z0-9_.-]", "_");
+			java.nio.file.Files.writeString(directory.resolve(base + ".vs.hlsl"), hlsl.modules().vertex().hlsl());
+			java.nio.file.Files.writeString(directory.resolve(base + ".ps.hlsl"), hlsl.modules().fragment().hlsl());
+		} catch (java.io.IOException | RuntimeException error) {
+			dev.cubcraftv.directexp.DirectExpMod.LOGGER.warn("DirectExp: could not dump diagnostic HLSL for pipeline {}.", name, error);
 		}
 	}
 }

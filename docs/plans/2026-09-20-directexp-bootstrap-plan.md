@@ -725,3 +725,24 @@ not a bug in what's implemented so far).
   menu buttons with their expected texture missing. These are visual symptoms,
   not diagnosed causes; a matching screenshot and runtime log are still needed.
   See [the Milestone 4.7 visual plan](./2026-10-02-directexp-milestone4.7-main-menu-visuals.md).
+
+- **2026-10-04 -- Confirmed and fixed vertex/pixel signature mismatch.** The
+  fresh pixel-substitution probe reports `sampleExactVertexSignatureStruct`
+  sampling the expected `707070ff`, while the standalone `TEXCOORD1` input and
+  the captured original pixel HLSL both return `000000ff`. The HLSL compilation
+  stage now orders fragment inputs to match the vertex output declarations,
+  retains fragment member names, preserves fragment-only system-value inputs,
+  and recompiles the rewritten fragment shader.
+
+- **2026-10-04 -- Fixed no-varying fragment pipeline regression.** The next
+  client log showed `stars` and `water_mask` becoming invalid because their
+  pixel HLSL has no `SPIRV_Cross_Input` struct. Signature rewriting now leaves
+  those fragments and their original compiled bytecode untouched, while still
+  rewriting/recompiling fragment stages that have inputs. Added targeted
+  coverage.
+
+- **2026-10-04 -- Runtime-confirmed signature fix.** The user reports normal
+  rendering now works after the signature-alignment change. Item rendering is
+  initially visible but stops working after a while; duration and a matching
+  log/capture are not yet recorded, so treat that as a separate open symptom.
+  `.\gradlew.bat build` and the full test suite pass.

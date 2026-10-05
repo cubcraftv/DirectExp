@@ -220,6 +220,31 @@ public final class NativeDxBridge implements DxBridge {
 	}
 
 	@Override
+	public void clearDepthRegion(long nativeTextureHandle, int x, int y, int width, int height, float depth) {
+		clearDepthRegion0(nativeTextureHandle, x, y, width, height, depth);
+	}
+
+	@Override
+	public int readTexturePixelRgba8(long nativeTextureHandle, int mipLevel, int x, int y) {
+		return readTexturePixelRgba8Native(nativeTextureHandle, mipLevel, x, y);
+	}
+
+	@Override
+	public String describeDrawState(int srvSlot, long expectedTextureHandle) {
+		return describeDrawState0(srvSlot, expectedTextureHandle);
+	}
+
+	@Override
+	public String runSamplingExperiment(long nativeTextureViewHandle) {
+		return runSamplingExperiment0(nativeTextureViewHandle);
+	}
+
+	@Override
+	public String runPixelSubstitutionProbe(int x, int y, int vertexCount, int firstVertex) {
+		return runPixelSubstitutionProbe0(x, y, vertexCount, firstVertex);
+	}
+
+	@Override
 	public void setScissor(int x, int y, int width, int height) {
 		setScissor0(x, y, width, height);
 	}
@@ -700,6 +725,16 @@ public final class NativeDxBridge implements DxBridge {
 	private static native void clearDepthStencil0(long depthViewHandle, float depth);
 
 	private static native void clearDepthTexture0(long nativeTextureHandle, float depth);
+
+	private static native void clearDepthRegion0(long nativeTextureHandle, int x, int y, int width, int height, float depth);
+
+	private static native int readTexturePixelRgba8Native(long nativeTextureHandle, int mipLevel, int x, int y);
+
+	private static native String describeDrawState0(int srvSlot, long expectedTextureHandle);
+
+	private static native String runSamplingExperiment0(long nativeTextureViewHandle);
+
+	private static native String runPixelSubstitutionProbe0(int x, int y, int vertexCount, int firstVertex);
 
 	private static native void setScissor0(int x, int y, int width, int height);
 

@@ -20,29 +20,40 @@ these three user-visible outcomes.
 **Implementation status (2026-10-03):** the clear, button-texture, and
 panorama code paths have implementation work in place, but visual acceptance
 is not complete. The focused texture tests, client compilation, and Windows
-native bridge build pass. The latest user-reported runtime result confirms
-mob textures look correct, while block textures are stretched (grass is an
-example), item textures are broken, and main-menu buttons appear filled black
-without their expected texture. These symptoms need diagnosis; they do not yet
-identify a shared root cause.
+native bridge build pass. The latest user-reported runtime result confirms mob
+textures look correct, while all block textures and item textures appear
+stretched/broken (grass is one block example), and main-menu buttons appear
+filled black without their expected texture. These symptoms need diagnosis;
+they do not yet identify a shared root cause.
+
+**Runtime update (2026-10-04):** after aligning the fragment input signature
+with vertex outputs, the user reports normal rendering works. Item rendering
+works initially but stops after a while; the duration and matching runtime
+evidence have not yet been recorded. Track this separately from the now-fixed
+signature mismatch and investigate item-rendering state/resource lifetime if
+it reproduces.
 
 ## Latest Runtime Observation (2026-10-03)
 
 Reported visual results:
 
 - **Mob textures:** appear correct.
-- **Block textures:** broken; grass is visibly stretched.
-- **Item textures:** broken.
+- **Block textures:** all appear stretched; grass_block is one example.
+- **Item textures:** also appear stretched/broken.
 - **Main-menu buttons:** expected texture is absent and the button fill appears
   black.
 
-This is symptom-level evidence only; no screenshot or matching runtime log was
-included with the report. Do not infer that all four outcomes share one cause.
-In particular, working mob textures show that some textured rendering works,
-but do not establish that block, item, or GUI texture coordinates, formats,
-views, and sampling state are correct. Capture a screenshot and `latest.log`
-from the same run before attributing the defects to UV generation, atlases,
-pipeline state, or resource binding.
+The user reports that RenderDoc's Texture Viewer shows the block/item atlas
+image itself stretched, not only the rendered block/item geometry. This moves
+the investigation upstream of per-draw UVs: verify the atlas resource's actual
+dimensions and stored pixels, then trace atlas creation, CPU-side assembly,
+and uploads. It still does not prove that the reported 512x256 resource is
+incorrect; compare it with the final stitched atlas dimensions, not an
+individual source image. Working mob textures show that some textured
+rendering works, but do not establish that block, item, or GUI texture
+coordinates, formats, views, and sampling state are correct. Preserve the
+RenderDoc capture and matching `latest.log` from the same run when checking
+resource identity and upload diagnostics.
 
 ## Outcome And Order
 
@@ -131,16 +142,42 @@ missing-view, or skipped-draw warnings for those backplates.
 
 ## Additional Reported Texture Symptoms
 
-The same runtime report says mob textures look correct, block textures are
-stretched (including grass), and item textures are broken. Keep these as
-separate observations while investigating; do not assume the main-menu button,
-block, and item symptoms share a defect just because each involves textures.
-After capturing a matching screenshot and log, trace a representative block
-and item draw independently through vertex UVs, texture/view selection,
-resource binding, and sampling. Preserve the working mob-texture path as a
-comparison point. Record whether each result is fixed or remains open in the
-progress ledger; do not mark general texture correctness complete based only
-on mob rendering.
+The user reports that RenderDoc's Texture Viewer shows the block/item atlas
+itself stretched, while mob textures look correct. This makes atlas pixel
+assembly/upload the primary lead; per-draw UVs cannot explain an atlas image
+that is already distorted in the Texture Viewer. Verify the resource ID and
+descriptor for the atlas bound by one block draw and one item draw, and
+compare its stored pixels with the expected final stitched atlas. If those
+draws bind different resources, inspect both. Then trace the atlas write/copy
+events through source row length, row pitch, destination dimensions, and
+region bounds. Keep the GUI button symptom separate until evidence connects
+it to the same resource or draw path, and preserve the working mob-texture
+path as a control.
+
+**RenderDoc lead (2026-10-03):** the user reports that the atlas image itself
+looks stretched in RenderDoc's Texture Viewer. The initial concern that an
+atlas was `512x256` instead of `256x256` was mistaken; do not treat that
+dimension comparison as evidence of a size bug. A more specific visual clue
+is that the same pixel appears to be reused for following pixels, perhaps
+across a whole row. This points toward a possible source row-stride/pitch or
+pixel-layout mismatch, but remains unverified.
+
+For the next capture, inspect one atlas upload and compare the source buffer's
+actual layout with the upload parameters and destination:
+
+- Full-mip `UpdateSubresource`: supplied width/height and `SysMemPitch`
+  (currently computed as `width * 4` for RGBA8).
+- Region `UpdateSubresource`: mip dimensions, box bounds, pointer offset to
+  `(x,y)`, and `SysMemPitch` (currently computed as `mipWidth * 4`).
+- Java mirror before native upload: whether each row already contains the
+  repeated pixels, or whether repetition first appears in the GPU resource.
+
+If repeats are already in the source/mirror, trace the Java write/copy
+source-row-length and bytes-per-pixel assumptions. If the source is correct
+but the GPU texture is not, compare the native upload pitch, format, and
+region bounds against that source layout. Atlas creation dimensions continue
+to be passed directly from Java to `CreateTexture2D`, but there is no current
+evidence that the resource dimensions themselves are wrong.
 
 ## Priority 3: Cubemap Panorama
 
