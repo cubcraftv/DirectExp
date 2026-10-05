@@ -92,8 +92,9 @@ final class DxTexture extends GpuTexture {
 			}
 		}
 
+		traceCpuAccess("writeRegion(CPU upload)", mipLevel, dstX, dstY, width, height);
 		logButtonSpriteUpload(sourceCopy, sourceBytesPerPixel, sourceStride, mipLevel, dstX, dstY, width, height, srcX, srcY);
-		syncMipToNative(mipLevel, layer);
+		syncRegionToNative(mipLevel, layer, dstX, dstY, width, height);
 	}
 
 	private void logButtonSpriteUpload(
@@ -160,6 +161,7 @@ final class DxTexture extends GpuTexture {
 	}
 
 	ByteBuffer readRegion(int mipLevel, int layer, int srcX, int srcY, int width, int height) {
+		traceCpuAccess("readRegion(CPU mirror read, GPU draws are NOT visible)", mipLevel, srcX, srcY, width, height);
 		if (layer < 0 || layer >= this.layerCount) {
 			throw new IllegalArgumentException("Texture layer is outside the allocated layer range.");
 		}
@@ -188,6 +190,7 @@ final class DxTexture extends GpuTexture {
 	}
 
 	void fillRegion(int mipLevel, int dstX, int dstY, int width, int height, int packedValue) {
+		traceCpuAccess("fillRegion(CPU clear)", mipLevel, dstX, dstY, width, height);
 		ByteBuffer destination = this.mipStorage[mipLevel].duplicate().order(ByteOrder.nativeOrder());
 		int bytesPerPixel = getFormat().blockSize();
 		int mipWidth = getWidth(mipLevel);
@@ -205,7 +208,7 @@ final class DxTexture extends GpuTexture {
 			}
 		}
 
-		syncMipToNative(mipLevel, 0);
+		syncRegionToNative(mipLevel, 0, dstX, dstY, width, height);
 	}
 
 	long nativeTextureHandle() {
@@ -249,6 +252,7 @@ final class DxTexture extends GpuTexture {
 	// actually gets used; this only reports whether the *handle* exists.
 	private static final AtomicBoolean LOGGED_NATIVE_TEXTURE_SUCCESS = new AtomicBoolean(false);
 	private static final AtomicBoolean LOGGED_NATIVE_TEXTURE_FALLBACK = new AtomicBoolean(false);
+	private static final java.util.concurrent.atomic.AtomicInteger CPU_ACCESS_TRACE_BUDGET = new java.util.concurrent.atomic.AtomicInteger(80);
 	private static final AtomicBoolean LOGGED_BUTTON_SPRITE_UPLOAD = new AtomicBoolean(false);
 
 	/** DxBridge.TEXTURE_FORMAT_* for a format the native path supports, else 0 (CPU-only). */
@@ -296,12 +300,62 @@ final class DxTexture extends GpuTexture {
 		}
 	}
 
+	/**
+	 * Diagnostic: CPU-side access to a texture that the GPU also renders into. The CPU mirror never sees GPU draws,
+	 * so each of these is a place where GPU-rendered content (for example GUI item icons) can be lost or read stale.
+	 * Logged for the first {@code CPU_ACCESS_TRACE_BUDGET} occurrences only.
+	 */
+	private void traceCpuAccess(String operation, int mipLevel, int x, int y, int width, int height) {
+		if (!hasNativeRenderTarget() || CPU_ACCESS_TRACE_BUDGET.get() <= 0 || CPU_ACCESS_TRACE_BUDGET.getAndDecrement() <= 0) {
+			return;
+		}
+		DirectExpMod.LOGGER.info("DirectExp TRACE CPU access to render-target texture: {} on {} {}x{} mip={} rect=({},{}) {}x{}",
+			operation, this.debugLabel, getWidth(0), getHeight(0), mipLevel, x, y, width, height);
+	}
+
 	boolean hasNativeRenderTarget() {
 		return this.nativeTextureHandle != 0L && (this.nativeBindMask & DxBridge.TEXTURE_BIND_RENDER_TARGET) != 0;
 	}
 
 	boolean hasNativeDepthTarget() {
 		return this.nativeTextureHandle != 0L && (this.nativeBindMask & DxBridge.TEXTURE_BIND_DEPTH_STENCIL) != 0;
+	}
+
+	/**
+	 * Uploads just the rectangle that was written on the CPU. The CPU mirror is NOT updated by GPU draws, so for a
+	 * texture that is also a render target (the GUI item atlas, for instance) uploading the whole mip would overwrite
+	 * everything the GPU had rendered into it with stale mirror contents.
+	 */
+	private void syncRegionToNative(int mipLevel, int layer, int x, int y, int width, int height) {
+		if (this.nativeTextureHandle == 0L || this.dxBridge == null || getFormat() != GpuFormat.RGBA8_UNORM || width <= 0 || height <= 0) {
+			syncMipToNative(mipLevel, layer);
+			return;
+		}
+		if (!hasNativeRenderTarget()) {
+			syncMipToNative(mipLevel, layer);
+			return;
+		}
+
+		try {
+			this.dxBridge.uploadTextureRegionRgba8(
+				this.nativeTextureHandle,
+				mipLevel,
+				layer,
+				this.mipStorage[mipLevel].duplicate().order(ByteOrder.nativeOrder()),
+				getWidth(mipLevel),
+				getHeight(mipLevel),
+				x, y, width, height
+			);
+			this.lastNativeUpload = "UpdateSubresource(box " + x + "," + y + " " + width + "x" + height + ") for mip " + mipLevel + ", layer " + layer;
+		} catch (UnsupportedOperationException error) {
+			// Bridge without region support: fall back to the whole-mip upload.
+			syncMipToNative(mipLevel, layer);
+		} catch (IllegalStateException error) {
+			this.lastNativeUpload = "failed for region on mip " + mipLevel + ", layer " + layer + ": " + error.getMessage();
+			if (this.loggedNativeTextureUploadFailure.compareAndSet(false, true)) {
+				DirectExpMod.LOGGER.warn("DirectExp: native texture region upload failed (texture {}, mip {}, layer {}): {}", this.nativeTextureHandle, mipLevel, layer, error.getMessage());
+			}
+		}
 	}
 
 	private void syncMipToNative(int mipLevel, int layer) {

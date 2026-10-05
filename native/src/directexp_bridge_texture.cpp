@@ -147,6 +147,69 @@ Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_uploadTextureRgba8Native(
 	g_activeContext->UpdateSubresource(wrapper->texture, subresource, nullptr, layerData, static_cast<UINT>(sourceRowPitch), 0);
 }
 
+extern "C" JNIEXPORT void JNICALL
+Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_uploadTextureRegionRgba8Native(
+	JNIEnv* env, jclass, jlong nativeTextureHandle, jint mipLevel, jint layer, jobject rgbaPixels,
+	jint mipWidth, jint mipHeight, jint x, jint y, jint width, jint height
+) {
+	Texture* wrapper = HandleToPointer<Texture>(nativeTextureHandle);
+	if (wrapper == nullptr || wrapper->texture == nullptr) {
+		ThrowIllegalState(env, "uploadTextureRegionRgba8Native called with an invalid or already-released texture handle.");
+		return;
+	}
+	if (g_activeContext == nullptr) {
+		ThrowIllegalState(env, "uploadTextureRegionRgba8Native called with no active DirectX context.");
+		return;
+	}
+	if (mipLevel < 0 || static_cast<UINT>(mipLevel) >= wrapper->mipLevels || layer < 0 || static_cast<UINT>(layer) >= wrapper->arrayLayers) {
+		ThrowIllegalState(env, "uploadTextureRegionRgba8Native mip level or layer is out of range.");
+		return;
+	}
+	UINT expectedWidth = wrapper->width;
+	UINT expectedHeight = wrapper->height;
+	for (jint level = 0; level < mipLevel; ++level) {
+		expectedWidth = expectedWidth > 1 ? expectedWidth / 2 : 1;
+		expectedHeight = expectedHeight > 1 ? expectedHeight / 2 : 1;
+	}
+	if (mipWidth <= 0 || mipHeight <= 0 || static_cast<UINT>(mipWidth) != expectedWidth || static_cast<UINT>(mipHeight) != expectedHeight) {
+		ThrowIllegalState(env, "uploadTextureRegionRgba8Native mip dimensions do not match the selected mip level.");
+		return;
+	}
+	if (x < 0 || y < 0 || width <= 0 || height <= 0 || x + width > mipWidth || y + height > mipHeight) {
+		ThrowIllegalState(env, "uploadTextureRegionRgba8Native rectangle is outside the mip level.");
+		return;
+	}
+
+	void* sourcePointer = env->GetDirectBufferAddress(rgbaPixels);
+	const jlong capacity = env->GetDirectBufferCapacity(rgbaPixels);
+	if (sourcePointer == nullptr || capacity < 0) {
+		ThrowIllegalState(env, "uploadTextureRegionRgba8Native requires a direct ByteBuffer.");
+		return;
+	}
+
+	const jlong rowPitch = static_cast<jlong>(mipWidth) * 4;
+	const jlong layerBytes = rowPitch * static_cast<jlong>(mipHeight);
+	const jlong requiredBytes = layerBytes * static_cast<jlong>(wrapper->arrayLayers);
+	if (capacity < requiredBytes) {
+		ThrowIllegalState(env, "uploadTextureRegionRgba8Native buffer is smaller than the texture's layered mip data.");
+		return;
+	}
+
+	const auto* rectData = static_cast<const unsigned char*>(sourcePointer)
+		+ layerBytes * static_cast<jlong>(layer)
+		+ rowPitch * static_cast<jlong>(y)
+		+ static_cast<jlong>(x) * 4;
+	D3D11_BOX box = {};
+	box.left = static_cast<UINT>(x);
+	box.top = static_cast<UINT>(y);
+	box.front = 0;
+	box.right = static_cast<UINT>(x + width);
+	box.bottom = static_cast<UINT>(y + height);
+	box.back = 1;
+	UINT subresource = D3D11CalcSubresource(static_cast<UINT>(mipLevel), static_cast<UINT>(layer), wrapper->mipLevels);
+	g_activeContext->UpdateSubresource(wrapper->texture, subresource, &box, rectData, static_cast<UINT>(rowPitch), 0);
+}
+
 extern "C" JNIEXPORT jint JNICALL
 Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_readTexturePixelRgba8Native(JNIEnv* env, jclass, jlong nativeTextureHandle, jint mipLevel, jint x, jint y) {
 	Texture* wrapper = HandleToPointer<Texture>(nativeTextureHandle);
@@ -268,6 +331,10 @@ Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_createTexture2DNative(JNIEnv*
 
 extern "C" JNIEXPORT void JNICALL
 Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_uploadTextureRgba8Native(JNIEnv*, jclass, jlong, jint, jint, jobject, jint, jint) {
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_uploadTextureRegionRgba8Native(JNIEnv*, jclass, jlong, jint, jint, jobject, jint, jint, jint, jint, jint, jint) {
 }
 
 extern "C" JNIEXPORT void JNICALL

@@ -74,6 +74,11 @@ final class RecordingDxBridge implements DxBridge {
 	}
 
 	@Override
+	public void uploadTextureRegionRgba8(long handle, int mipLevel, int layer, ByteBuffer pixels, int mipWidth, int mipHeight, int x, int y, int width, int height) {
+		this.calls.add("uploadTextureRegion(" + handle + ",mip=" + mipLevel + ",layer=" + layer + ",rect=" + x + "," + y + " " + width + "x" + height + ")");
+	}
+
+	@Override
 	public long createPipeline(byte[] vertexBytecode, byte[] pixelBytecode, DxPipelineStateDescriptor state) {
 		failIfConfigured();
 		this.calls.add("createPipeline(vs=" + vertexBytecode.length + ",ps=" + pixelBytecode.length + ")");

@@ -56,6 +56,16 @@ public interface DxBridge {
 		throw new UnsupportedOperationException("DirectX texture upload is not implemented by this bridge yet.");
 	}
 
+	/**
+	 * Uploads only the {@code (x, y, width, height)} rectangle of one mip level/layer.
+	 * {@code rgbaPixels} is the whole CPU mirror of that mip level (row pitch {@code mipWidth * 4}).
+	 * Unlike {@link #uploadTextureRgba8} this leaves every texel outside the rectangle untouched on the GPU,
+	 * which matters for textures that are also render targets (their CPU mirror is stale).
+	 */
+	default void uploadTextureRegionRgba8(long nativeTextureHandle, int mipLevel, int layer, ByteBuffer rgbaPixels, int mipWidth, int mipHeight, int x, int y, int width, int height) {
+		throw new UnsupportedOperationException("DirectX texture region upload is not implemented by this bridge yet.");
+	}
+
 	default void releaseTexture(long nativeTextureHandle) {
 	}
 

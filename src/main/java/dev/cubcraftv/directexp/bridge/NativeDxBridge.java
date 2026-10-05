@@ -106,6 +106,11 @@ public final class NativeDxBridge implements DxBridge {
 	}
 
 	@Override
+	public void uploadTextureRegionRgba8(long nativeTextureHandle, int mipLevel, int layer, ByteBuffer rgbaPixels, int mipWidth, int mipHeight, int x, int y, int width, int height) {
+		uploadTextureRegionRgba8Native(nativeTextureHandle, mipLevel, layer, rgbaPixels, mipWidth, mipHeight, x, y, width, height);
+	}
+
+	@Override
 	public void releaseTexture(long nativeTextureHandle) {
 		if (nativeTextureHandle == 0L) {
 			return;
@@ -678,6 +683,7 @@ public final class NativeDxBridge implements DxBridge {
 	private static native long createTexture2DNative(int width, int height, int mipLevels);
 
 	private static native void uploadTextureRgba8Native(long nativeTextureHandle, int mipLevel, int layer, ByteBuffer rgbaPixels, int width, int height);
+	private static native void uploadTextureRegionRgba8Native(long nativeTextureHandle, int mipLevel, int layer, ByteBuffer rgbaPixels, int mipWidth, int mipHeight, int x, int y, int width, int height);
 
 	private static native void releaseTexture0(long nativeTextureHandle);
 
