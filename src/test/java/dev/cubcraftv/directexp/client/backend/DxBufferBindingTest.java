@@ -13,14 +13,15 @@ class DxBufferBindingTest {
 		assertEquals(DxBridge.BUFFER_BIND_VERTEX, DxBufferBinding.bindMask(32));
 		assertEquals(DxBridge.BUFFER_BIND_INDEX, DxBufferBinding.bindMask(64));
 		assertEquals(DxBridge.BUFFER_BIND_CONSTANT, DxBufferBinding.bindMask(128));
+		assertEquals(DxBridge.BUFFER_BIND_SHADER_RESOURCE, DxBufferBinding.bindMask(256));
 		assertEquals(DxBridge.BUFFER_BIND_VERTEX | DxBridge.BUFFER_BIND_CONSTANT, DxBufferBinding.bindMask(32 | 128 | 8));
+		assertEquals(DxBridge.BUFFER_BIND_SHADER_RESOURCE | DxBridge.BUFFER_BIND_VERTEX, DxBufferBinding.bindMask(32 | 256));
 	}
 
 	@Test
-	void copyOnlyAndTexelBuffersHaveNoBindPurpose() {
+	void copyOnlyBuffersHaveNoBindPurpose() {
 		assertEquals(0, DxBufferBinding.bindMask(8));
 		assertEquals(0, DxBufferBinding.bindMask(16));
-		assertEquals(0, DxBufferBinding.bindMask(256));
 	}
 
 	@Test

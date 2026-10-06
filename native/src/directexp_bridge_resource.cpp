@@ -67,7 +67,7 @@ Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_createBufferNative(
 		return 0;
 	}
 
-	const jint knownMask = BUFFER_BIND_VERTEX | BUFFER_BIND_INDEX | BUFFER_BIND_CONSTANT;
+	const jint knownMask = BUFFER_BIND_VERTEX | BUFFER_BIND_INDEX | BUFFER_BIND_CONSTANT | BUFFER_BIND_SHADER_RESOURCE;
 	if (bindMask <= 0 || (bindMask & ~knownMask) != 0) {
 		ThrowIllegalState(env, "createBufferNative requires a non-empty bind mask made only of BUFFER_BIND_* bits.");
 		return 0;
@@ -87,6 +87,9 @@ Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_createBufferNative(
 	}
 	if ((bindMask & BUFFER_BIND_CONSTANT) != 0) {
 		bindFlags |= D3D11_BIND_CONSTANT_BUFFER;
+	}
+	if ((bindMask & BUFFER_BIND_SHADER_RESOURCE) != 0) {
+		bindFlags |= D3D11_BIND_SHADER_RESOURCE;
 	}
 
 	UINT width = static_cast<UINT>(byteWidth);

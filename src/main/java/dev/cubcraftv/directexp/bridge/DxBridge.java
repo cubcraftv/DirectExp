@@ -72,9 +72,14 @@ public interface DxBridge {
 	// Blaze3D-agnostic: the client side (DxBufferBinding) translates
 	// GpuBuffer.Usage into this mask, and the native side translates this
 	// mask into D3D11_BIND_* -- neither side needs the other's constants.
+	// BUFFER_BIND_SHADER_RESOURCE covers texel-buffer SRVs and other
+	// buffer-backed shader resources; they are a real D3D11 bind purpose even
+	// though the Java-side layout model has not yet introduced a dedicated
+	// buffer-view wrapper.
 	int BUFFER_BIND_VERTEX = 1;
 	int BUFFER_BIND_INDEX = 2;
 	int BUFFER_BIND_CONSTANT = 4;
+	int BUFFER_BIND_SHADER_RESOURCE = 8;
 
 	// Address-mode codes for createSampler (Blaze3D's AddressMode has exactly
 	// REPEAT and CLAMP_TO_EDGE).

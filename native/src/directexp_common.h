@@ -119,6 +119,7 @@ struct Texture {
 constexpr jint BUFFER_BIND_VERTEX = 1;
 constexpr jint BUFFER_BIND_INDEX = 2;
 constexpr jint BUFFER_BIND_CONSTANT = 4;
+constexpr jint BUFFER_BIND_SHADER_RESOURCE = 8;
 
 // Keep in sync with DxBridge.SAMPLER_ADDRESS_*.
 constexpr jint SAMPLER_ADDRESS_WRAP = 0;

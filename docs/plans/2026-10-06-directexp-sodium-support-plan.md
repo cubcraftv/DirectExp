@@ -1,0 +1,208 @@
+# DirectExp + Sodium: Support Plan and Fork Plan
+
+**Created:** 2026-10-06. **Status:** proposal, not started. **Basis:** static reading of
+`DirectExp.zip` (re-verified against source, not docs; `patch9.patch` is already applied in this snapshot) and `sodium-26.2-stable.zip`. Nothing here was
+compiled or run; every "Sodium does X" / "DirectExp lacks Y" claim is from source, with file
+names so it can be re-checked.
+
+---
+
+## 1. Verdict
+
+Sodium 26.2 is a much easier target than older Sodium. It no longer talks to raw OpenGL for
+terrain. It renders through Blaze3D's `RenderPass`, and it already has a backend seam
+(`DrawBackend` -> `DrawContext` / `MultiDrawBatch`) that it uses to support Vulkan. A DirectX
+path is "a third Vulkan-shaped branch", not a rewrite.
+
+The hard part is **not Sodium**. It is that DirectExp's resource and shader layers are not yet
+capable enough for Sodium's workload (see section 4). Realistic order: finish DirectExp 4.7,
+close the capability gaps in DirectExp, then add a small Sodium patch.
+
+## 2. Decisions needed before any work
+
+1. **Sodium's license is PolyForm Shield 1.0.0** (`LICENSE.md`), not LGPL. Its Noncompete
+   clause bars "providing any product that competes with the software". It does not forbid
+   modifying Sodium. A public *fork* redistributes Sodium itself with a feature added, which is the
+   riskiest shape. A separate **add-on mod** that ships none of Sodium's code, requires the user to
+   install real Sodium, and patches it at run time with Mixin is a much weaker "competes" case,
+   because it extends Sodium instead of substituting for it. That is still not a guarantee: the
+   license says plugins can compete with libraries, and "practical substitute" marketing makes it
+   competing.
+   **Chosen direction: add-on, not fork (see section 5b).**
+2. **`AGENTS.md` lists "broad renderer-mod compatibility as an early priority" as a non-goal.**
+   Sodium support is exactly that. Milestone 4.7 is visually accepted.
+3. **Add-on, not fork.** Keep the Sodium-facing surface small and backend-neutral so it could
+   also be offered upstream later. Never copy Sodium source or resources into the add-on.
+
+## 3. What the code shows
+
+**Sodium (26.2-stable)**
+- `gpu/device/backend/DrawBackend.java`: picks `VK_MULTIDRAW`, `VK_INDIRECT`, or falls through
+  to `OPENGL`. A DirectX device would wrongly land on `OPENGL`.
+- `DrawContext.create()` and `MultiDrawBatch.newBatch()` switch on that enum.
+- Terrain draw (`DefaultChunkRenderer`): per region it calls `drawContext.updateData(...)`
+  (region offset, time, region id) then `batch.draw(...)`. Uniforms/textures bound once:
+  `u_Globals` (UBO), `u_SectionTimeInfo` (**texel buffer**, `R32_SINT`), `u_LightTex`, `u_BlockTex`.
+- Vertex format `CompactChunkVertex`: `RG32_UINT`, `RGBA8_UNORM`, `RG16_UINT`, `RGBA8_UINT`
+  (integer attributes), 20-byte stride, topology `QUADS` with a shared 32-bit index buffer.
+- Shader `block_layer_opaque.vsh`: per-region values are `layout(push_constant)` under
+  `#ifdef VULKAN`, otherwise loose `uniform`s (GL). Neither works as-is for D3D11.
+- GL-only code is already guarded by `backendName().contains("OpenGL")`
+  (`GlSurfaceMixin`, `SodiumConfigBuilder`). DirectExp's backend name is
+  `"Direct3D 11 (feature level 10.1 floor)"`, so those checks are safely skipped.
+- `MappedStagingBuffer.flush()` and `MojangStagingBuffer`/`UniformBufferManager` branch on
+  `DrawBackend` and `features().persistentMapping()`.
+- Mixins on `GlDevice` / `GlSurface` / `GlStateManager` / `VulkanRenderPipeline` target classes
+  that still exist on a DirectX run, so they load but their code paths never execute.
+
+**DirectExp (current dev)**
+- `DxRenderPassBackend.multiDrawIndexed(IntBuffer, ...)` is implemented as a loop of
+  `drawIndexed`, and it reads `(firstIndex, indexCount, baseVertex)` per draw, which is the same
+  layout as Vulkan's `VkMultiDrawIndexedInfoEXT`. The 4-argument `PointerBuffer` variant and
+  `drawIndexedIndirect` throw `UnsupportedOperationException`.
+- `DeviceFeatures` is all `false` (`DxDeviceBackend`), so Sodium would use `MojangStagingBuffer`
+  (safe default) and no multidraw flags.
+- `DxBuffer` keeps a **CPU mirror of every buffer** plus an eagerly synced native copy;
+  `copyToBuffer` is implemented as CPU memcpy + re-upload.
+- Texel buffers: bind mask is 0 (`DxBufferBinding`); the 4.6 source-of-truth doc lists them as
+  still open.
+- No push-constant or loose-uniform handling, and no `VULKAN` define in the shader stage
+  (`DxShaderInterfaceLayout` only injects the `gl_VertexID`/`gl_InstanceID` defines). Re-checked:
+  zero hits for push constants / root constants in `src` and `native/src`.
+- Re-verified in code, not docs: texel buffers have no native path (no buffer SRV anywhere);
+  native buffer-to-buffer copy does not exist (`CopySubresourceRegion` is only used for texture
+  and readback staging); `DxBuffer` still CPU-mirrors everything.
+- `firstInstance != 0` and instanced non-indexed draws are rejected (Sodium does not need them).
+
+## 4. Capability gaps in DirectExp (must close first)
+
+| # | Gap | Why Sodium needs it | Fix |
+|---|-----|---------------------|-----|
+| G1 | CPU-mirrored, eagerly-synced buffers | Sodium arenas are very large vertex/index buffers updated by GPU-side copies. Mirroring doubles RAM and makes every upload a second copy. | Add a **GPU-only buffer mode** (no CPU mirror) for `USAGE_VERTEX`/`USAGE_INDEX` buffers above a size threshold; writes go straight to `UpdateSubresource`/staging. |
+| G2 | `copyToBuffer` via CPU | Arena defragmentation and staging uploads are GPU->GPU copies. | Native `CopySubresourceRegion` (buffer to buffer, with `D3D11_BOX`). |
+| G3 | Texel buffers | `u_SectionTimeInfo` (only used when fog/fade is enabled, but the binding is declared always). | Bind mask `SRV`; create `Buffer<int>` SRV (`DXGI_FORMAT_R32_SINT`); reflect `isamplerBuffer` -> `Buffer<int>` in the SPIR-V->HLSL step. Works at feature level 10.1. |
+| G4 | Per-region values (push constants) | `u_RegionOffset`, `u_CurrentTime`, `u_RegionID` change per region. | See section 5, decision A vs B. |
+| G5 | Integer vertex attributes | `RG32_UINT`, `RG16_UINT`, `RGBA8_UINT` inputs. | **Resolved in code:** `DxPipelineStateMapping` maps them to DXGI 17, 36, 30 (R32G32/R16G16/R8G8B8A8_UINT). Just add a Sodium-format test. |
+| G6 | `QUADS` + 32-bit shared index buffer | Sodium supplies its own index buffer; `DxPipelineStateMapping` already treats `QUADS` as pre-expanded triangle list. | Verify with a real Sodium draw; no new code expected. |
+| G7 | Throughput of the multi-draw loop | Hundreds of draws per region, thousands per frame, each crossing JNI. | Add a native `multiDrawIndexed(int[]/ByteBuffer, count)` call so one JNI crossing issues the whole batch. Do after correctness. |
+| G8 | Timestamp/fence stubs | Sodium's staging path uses fences. | `DxFence` currently stubbed; fine for the Mojang staging path, revisit if we later enable the mapped staging path. |
+
+## 5. Design decisions
+
+### A vs B for per-region values (G4)
+
+- **Option A: change Sodium's shader and bind a small UBO.** Add a third branch to
+  `block_layer_opaque.vsh` (e.g. `#elif defined(DIRECTX)` with `layout(std140) uniform u_RegionData {...}`),
+  declare it in `ShaderChunkRenderer.BIND_GROUP`, and have `DXDrawContext.updateData` write 32
+  bytes and `pass.setUniform("u_RegionData", slice)`. No changes to DirectExp's shader stage.
+  Larger Sodium diff, but all of it is explicit Java/GLSL.
+- **Option B: make DirectExp understand push constants.** The SPIR-V from the existing
+  `#ifdef VULKAN` path contains a push-constant block. SPIRV-Cross can emit that as a constant
+  buffer on HLSL; DirectExp would reserve a binding for it and expose it to the draw context.
+  DirectExp then defines `VULKAN` for Sodium's shaders (consistent with its current policy of
+  mirroring Vulkan's GLSL handling). Smallest Sodium diff (shader unchanged), more DirectExp work,
+  and a global `VULKAN` define must be checked against vanilla shaders for side effects.
+
+**Decision selected: Option B.** DirectExp owns the push-constant path and exposes it to Sodium's
+existing Vulkan-style GLSL, while the Sodium add-on remains a small compatibility shim instead of a
+shader override or fork. This keeps the Sodium patch surface minimal and matches the `VULKAN`
+fast-path already used elsewhere in DirectExp.
+
+**Recommendation: Option B, now firm for the add-on route.** Option A requires overriding Sodium's
+shader file and `BIND_GROUP`, which means copying Sodium's shader text into the add-on and
+mixing into a static field. Option B touches neither.
+
+### Detecting DirectExp from Sodium
+
+Sodium compiles only against Minecraft, so it cannot reference `DxDeviceBackend`. Detect by
+`GpuDeviceAccessor.sodium$getBackend().getClass().getName()` or by `backendName()` starting with
+`"Direct3D 11"`, and add `DrawBackend.D3D11`. Do not add a compile-time dependency on DirectExp.
+
+## 6. Phases
+
+### Phase 0: Gate (no code)
+- Resolve decisions 2.1 to 2.3.
+- Finish Milestone 4.7 (clear color, button backgrounds, panorama) and the open
+  "items stop rendering after a while" report. Sodium issues far more draws and buffer traffic than
+  vanilla UI, so any latent lifetime bug will surface harder.
+- **Exit:** vanilla world entry on DirectX is stable for a sustained session.
+
+### Phase 1: DirectExp resource core (G1, G2, G3, G5)
+- GPU-only buffers, native buffer copy, texel-buffer SRVs, integer input layout tests.
+- This phase is now selected under Option B, with the DirectExp resource layer carrying the
+  buffer/SRV pieces that Sodium's per-region draw path requires before the add-on itself lands.
+- Unit tests alongside the existing `DxBuffer*Test` / `DxPipelineStateMappingTest` style.
+- **Exit:** a synthetic test pipeline that reads a texel buffer and draws from a GPU-only vertex
+  buffer renders correctly under RenderDoc.
+
+### Phase 2: Per-region values (G4) and Sodium shader compile
+- Implement the chosen option from section 5.
+- **Exit:** Sodium's `block_layer_opaque` vertex/fragment shaders compile through GLSL -> SPIR-V ->
+  HLSL -> D3D, with `ALPHA_CUTOUT`, `USE_FOG`, and `USE_VERTEX_COMPRESSION` define variants.
+  Watch for: `textureGrad`, `dFdx/dFdy`, `textureLod`, `bool` inside a std140 block, array
+  constants (`vec2[]`) in the fragment shader.
+
+## 5b. Add-on architecture (replaces the fork)
+
+New Fabric mod (suggested id `directexp-sodium`), depends on `sodium` and `directexp`,
+compiles against Sodium as `compileOnly`, ships no Sodium code. Mixin targets:
+
+- `DrawContext.create()`: `@Inject(HEAD, cancellable)`; if the device is DirectExp, return `new DxSodiumDrawContext()`.
+- `MultiDrawBatch.newBatch(int)`: same pattern, return `new DxSodiumMultiDrawBatch(capacity)`.
+- `DrawBackend` is an enum and cannot gain a constant via Mixin. It will resolve to `OPENGL` on
+  DirectX (harmless as a stand-in), so any other `BACKEND == OPENGL` branch must be audited.
+  Today only `MappedStagingBuffer.flush()` has one, and it is reached only when
+  `features().persistentMapping()` is true. DirectExp reports false, so keep it false (or mixin that
+  method before ever enabling it).
+- Write `DxSodiumMultiDrawBatch` and `DxSodiumDrawContext` from scratch. The 12-byte
+  `firstIndex, indexCount, baseVertex` entry is trivial; do not copy `VKMultiDrawBatch`.
+- Per-region values: nothing in the add-on if Option B lands in DirectExp; the context only
+  forwards `region offset / time / id` to DirectExp's push-constant hook.
+- Pin the add-on to a Sodium version range. Mixin `require`d injections fail loudly on
+  mismatches, which is the right behavior.
+
+### Phase 3: Sodium add-on (replaces "the fork")
+Scope: the two factory mixins and two new classes from section 5b. Nothing else. Leave all
+`Gl*`/`Vulkan*` Sodium mixins untouched.
+
+- **Exit:** Sodium + DirectExp reach the main menu, enter a world, terrain draws opaque, cutout,
+  and translucent passes with correct textures; no GL calls on the DirectX path (verify via log).
+
+### Phase 4: Correctness and stability
+- Resize, fullscreen toggle, resource reload, dimension change, 30+ minute session, shutdown.
+- Fog/fade path (the only user of the texel buffer), RGSS on/off, all translucency sorting modes.
+- Compare against vanilla DirectX render and against Sodium-on-Vulkan on the same world.
+
+### Phase 5: Performance
+- Native batched multi-draw (G7).
+- Optionally enable `persistentMapping` plus Sodium's `MappedStagingBuffer` only if D3D11 can back
+  it honestly (D3D11 `MAP_WRITE_NO_OVERWRITE` on a staging buffer is the closest analogue). Do not
+  claim support the device cannot provide; the feature flag changes Sodium's code path.
+- Profile draw-call JNI overhead, constant buffer updates, and arena copy costs.
+
+## 7. Risks
+
+| Risk | Impact | Mitigation |
+|------|--------|------------|
+| PolyForm Shield noncompete | Add-on is lower risk than a fork but not proven safe | Ask CaffeineMC; never bundle Sodium code or resources; do not market it as a Sodium replacement |
+| DirectExp still has open visual bugs | Hard to tell Sodium bugs from backend bugs | Phase 0 gate |
+| Feature level 10.1 floor | No compute, limited UAV; `Buffer<int>` SRV is fine, but anything Sodium adds later that needs compute/SSBO won't | Keep patch to draw-path only |
+| 64 KiB constant-buffer limit on the D3D11.0 runtime (`MAX_CONSTANT_BUFFER_BYTES`) | `u_Globals` is small; fine. Large UBOs elsewhere stay CPU-only | None needed for Sodium |
+| JNI cost of per-draw calls | Frame-time loss versus Sodium-on-GL/VK | G7 |
+| Sodium updates break the Mixin targets | Maintenance burden | Only two injection points; pin version range |
+| Other mods that hook GL directly | Out of scope | Document as unsupported |
+
+## 8. Suggested first concrete steps
+
+1. Decide 2.1 and 2.2 (needs you).
+2. Add this file to `docs/plans/` and link it from `2026-10-03-directexp-plan-progress.md` as a
+   *planned, unstarted* item (the progress ledger should only carry evidence-backed status).
+3. Start Phase 1 with G2 (native buffer copy) and G3 (texel buffer), since both are independently
+   testable and also useful for vanilla.
+
+## 9. Unknowns I could not resolve from source
+
+- Whether defining `VULKAN` globally in DirectExp's shader stage changes any vanilla shader
+  (needs a grep of Mojang's shader tree for `#ifdef VULKAN`; `reference/shaders` did not show any
+  hits in my search of this snapshot, but that is not proof).
+- Real draw-call counts per frame on a typical render distance, which decides how urgent G7 is.

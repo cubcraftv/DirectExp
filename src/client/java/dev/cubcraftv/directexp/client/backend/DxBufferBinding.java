@@ -20,6 +20,7 @@ final class DxBufferBinding {
 	static final int USAGE_VERTEX = 32;
 	static final int USAGE_INDEX = 64;
 	static final int USAGE_UNIFORM = 128;
+	static final int USAGE_UNIFORM_TEXEL_BUFFER = 256;
 
 	/** D3D11_REQ_CONSTANT_BUFFER_ELEMENT_COUNT (4096) * 16 bytes; see the native side. */
 	static final long MAX_CONSTANT_BUFFER_BYTES = 4096L * 16L;
@@ -27,7 +28,7 @@ final class DxBufferBinding {
 	private DxBufferBinding() {
 	}
 
-	/** Bind purposes for {@code usage}; 0 means "nothing the GPU binds" (copy-only, texel buffers). */
+	/** Bind purposes for {@code usage}; texel buffers are shader-resource-backed buffers, not copy-only data. */
 	static int bindMask(int usage) {
 		int mask = 0;
 		if ((usage & USAGE_VERTEX) != 0) {
@@ -38,6 +39,9 @@ final class DxBufferBinding {
 		}
 		if ((usage & USAGE_UNIFORM) != 0) {
 			mask |= DxBridge.BUFFER_BIND_CONSTANT;
+		}
+		if ((usage & USAGE_UNIFORM_TEXEL_BUFFER) != 0) {
+			mask |= DxBridge.BUFFER_BIND_SHADER_RESOURCE;
 		}
 		return mask;
 	}
