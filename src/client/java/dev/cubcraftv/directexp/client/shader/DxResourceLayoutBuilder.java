@@ -177,7 +177,8 @@ public final class DxResourceLayoutBuilder {
 			}
 		}
 		for (String reflectedUniformBlock : reflectedUniformBlockNames) {
-			if (!declarations.uniformBlocks().contains(reflectedUniformBlock)) {
+			// The push-constant block is synthesised by DxShaderInterfaceLayout, so no pipeline declares it.
+			if (!declarations.uniformBlocks().contains(reflectedUniformBlock) && !reflectedUniformBlock.equals(DxShaderInterfaceLayout.PUSH_CONSTANT_BLOCK_NAME)) {
 				DirectExpMod.LOGGER.debug(
 					"Pipeline {} did not declare uniform block '{}' but SPIR-V reflection found it.",
 					pipelineDebugLabel, reflectedUniformBlock

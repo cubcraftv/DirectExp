@@ -764,3 +764,40 @@ not a bug in what's implemented so far).
   free of probe-only methods. Added default-off/opt-in tests and documented
   the launch property. `.\gradlew.bat test` passes; hypotheses A/B remain
   unsettled, so the native and Java probe implementations are retained.
+
+- **2026-10-06 -- Sodium plan Phase 1 implementation session (partial).**
+  Added the shader-resource bind-purpose bit across the Java/native bridge and
+  mapped `USAGE_UNIFORM_TEXEL_BUFFER` to it, allowing native buffers to request
+  `D3D11_BIND_SHADER_RESOURCE`. Added focused bind-mask tests; the targeted
+  Java tests passed, and a Windows `.\gradlew build` succeeded after adding
+  the matching native constant to `directexp_common.h`. This is only the
+  buffer bind-flag foundation for G3: typed buffer-SRV creation/binding is
+  still absent. GPU-only buffers (G1), native buffer-to-buffer copies (G2),
+  and Sodium-format mapping tests (G5) were not implemented in this session,
+  so Phase 1 remains in progress.
+
+- **2026-10-07 -- Sodium plan Phase 2: push constants and Sodium shader chain.**
+  `DxShaderInterfaceLayout` now rewrites `layout(push_constant)` blocks into a
+  numbered `std140` uniform block named `DxPushConstants` (previously the block
+  was numbered like a uniform and glslang rejected it with "'binding' : cannot
+  be used with push_constant"); members that could lay out differently under
+  std430 and std140 are refused. New public `client.api.DxPushConstants`
+  (implemented by `DxRenderPassBackend` through a unit-testable
+  `DxPushConstantStore`, 128-byte limit) supplies the bytes, which the binder
+  already re-stages per draw. Native reflection no longer reports a Sampler
+  entry for texel buffers (`Dim == Buffer`). `shaderc` already defines `VULKAN`
+  for Vulkan semantics, so no define was added. Verified in a Linux sandbox
+  only: 23 layout tests and 7 store tests pass (JUnit, Minecraft-free classes
+  compiled against stubs); Sodium 26.2's `block_layer_opaque` vertex and
+  fragment shaders, with `USE_VERTEX_COMPRESSION`/`USE_FOG` and
+  `ALPHA_CUTOUT` 0.5/0.01 variants, compile through the layout stage, glslc
+  (glslang 15.1.0, vulkan1.0), `spirv-val`, SPIRV-Cross 2021 CLI (HLSL SM 4.1)
+  and DXC 1.9.2609 `vs_6_0`/`ps_6_0` front end. Windows build and in-game run
+  were subsequently completed (user-reported). The earlier Linux-only
+  verification did not compile the Java changes to `DxRenderPassBackend`,
+  `DxResourceBinder`, `DxResourceLayoutBuilder`, or the native reflection edit;
+  the Windows build/run supersedes that verification gap at the overall
+  build/runtime level, but does not document a per-variant D3DCompile matrix
+  or specific Sodium scene coverage. Phase 1 audit: the native buffer SRV
+  creation/binding path, native buffer-to-buffer copy, and GPU-only buffers
+  are still not implemented, so `u_SectionTimeInfo` remains unsupported.

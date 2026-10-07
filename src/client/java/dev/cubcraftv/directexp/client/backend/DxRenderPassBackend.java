@@ -12,6 +12,8 @@ import com.mojang.blaze3d.systems.RenderPassDescriptor;
 import com.mojang.blaze3d.textures.GpuSampler;
 import com.mojang.blaze3d.textures.GpuTextureView;
 import dev.cubcraftv.directexp.bridge.DxBridge;
+import dev.cubcraftv.directexp.client.api.DxPushConstants;
+import dev.cubcraftv.directexp.client.shader.DxShaderInterfaceLayout;
 
 import java.nio.ByteBuffer;
 import java.nio.IntBuffer;
@@ -57,7 +59,7 @@ import org.lwjgl.PointerBuffer;
  * <p>{@link #drawMultipleIndexed} follows the decompiled
  * {@code VulkanRenderPass} line for line (see the method comment).
  */
-final class DxRenderPassBackend implements RenderPassBackend {
+final class DxRenderPassBackend implements RenderPassBackend, DxPushConstants {
 	private final DxTextureView colorView;
 	private final DxTextureView depthView;
 	private final DxTexture colorTarget;
@@ -73,6 +75,7 @@ final class DxRenderPassBackend implements RenderPassBackend {
 	private final Map<String, GpuBuffer> uniformBuffers = new HashMap<>();
 	private final Map<String, GpuBufferSlice> uniformSlices = new HashMap<>();
 	private final Map<Integer, GpuBufferSlice> vertexBuffers = new HashMap<>();
+	private final DxPushConstantStore pushConstants = new DxPushConstantStore();
 	private final DxTriangleFanExpander fanExpander = new DxTriangleFanExpander();
 	private final boolean nativeTargetsBound;
 
@@ -213,6 +216,17 @@ final class DxRenderPassBackend implements RenderPassBackend {
 			throw new IllegalArgumentException("DirectX render pass texture binding needs both a texture view and a sampler, or neither.");
 		}
 		this.texturesDirty = true;
+	}
+
+	/**
+	 * Supplies the bytes for a shader's {@code layout(push_constant)} block,
+	 * which {@code DxShaderInterfaceLayout} turned into the constant buffer
+	 * named {@link DxShaderInterfaceLayout#PUSH_CONSTANT_BLOCK_NAME}; it is
+	 * re-staged with every draw like any other constant buffer.
+	 */
+	@Override
+	public void setPushConstants(ByteBuffer data) {
+		this.pushConstants.set(data);
 	}
 
 	@Override
@@ -552,6 +566,10 @@ final class DxRenderPassBackend implements RenderPassBackend {
 	private final class PassBindingSource implements DxResourceBinder.Source {
 		@Override
 		public ByteBuffer uniformBytes(String name) {
+			if (name.equals(DxShaderInterfaceLayout.PUSH_CONSTANT_BLOCK_NAME)) {
+				return DxRenderPassBackend.this.pushConstants.bytes();
+			}
+
 			GpuBufferSlice slice = DxRenderPassBackend.this.uniformSlices.get(name);
 			if (slice != null) {
 				return ((DxBuffer) slice.buffer()).sliceStorage(slice.offset(), slice.length());

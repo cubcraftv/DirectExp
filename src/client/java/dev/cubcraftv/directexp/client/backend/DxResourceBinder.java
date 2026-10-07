@@ -4,6 +4,7 @@ import dev.cubcraftv.directexp.bridge.DxBridge;
 import dev.cubcraftv.directexp.bridge.DxResourceKind;
 import dev.cubcraftv.directexp.client.shader.DxResourceLayout;
 import dev.cubcraftv.directexp.client.shader.DxResourceLayoutEntry;
+import dev.cubcraftv.directexp.client.shader.DxShaderInterfaceLayout;
 
 import java.nio.ByteBuffer;
 import java.util.Objects;
@@ -73,7 +74,8 @@ final class DxResourceBinder {
 
 			ByteBuffer bytes = source.uniformBytes(entry.name());
 			if (bytes == null) {
-				this.diagnostics.reportOnce("uniform-unset:" + entry.name(), "pipeline " + layout.pipelineDebugLabel() + " uses uniform '" + entry.name() + "' but the render pass never set it");
+				String hint = entry.name().equals(DxShaderInterfaceLayout.PUSH_CONSTANT_BLOCK_NAME) ? " (its push constants; see DxPushConstants.setPushConstants)" : "";
+				this.diagnostics.reportOnce("uniform-unset:" + entry.name(), "pipeline " + layout.pipelineDebugLabel() + " uses uniform '" + entry.name() + "'" + hint + " but the render pass never set it");
 				complete = false;
 				continue;
 			}

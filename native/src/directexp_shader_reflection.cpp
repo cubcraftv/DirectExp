@@ -81,7 +81,14 @@ SpirvReflectionResult ReflectSpirv(const std::vector<uint32_t>& spirv) {
 		for (const spirv_cross::Resource& image : resources.sampled_images) {
 			std::string name = SpirvResourceName(image);
 			result.resources.push_back(SpirvResource{name, SpirvResourceKind::SampledTexture, 0});
-			result.resources.push_back(SpirvResource{name, SpirvResourceKind::Sampler, 0});
+			// A texel buffer (`samplerBuffer` / `isamplerBuffer`, e.g.
+			// Sodium's per-section time info) is a `Buffer<T>` SRV in HLSL
+			// and SPIRV-Cross emits no sampler state for it, so it only has
+			// the SRV half; a Sampler entry would reserve an `s#` slot and
+			// bind a null sampler for nothing on every draw.
+			if (compiler.get_type(image.type_id).image.dim != spv::DimBuffer) {
+				result.resources.push_back(SpirvResource{name, SpirvResourceKind::Sampler, 0});
+			}
 		}
 
 		// Real separate texture/sampler pairs. Not expected in any of

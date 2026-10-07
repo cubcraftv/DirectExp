@@ -326,6 +326,114 @@ class DxShaderInterfaceLayoutTest {
 		assertTrue(result.notes().isEmpty(), result.notes().toString());
 	}
 
+	/** The shape Sodium's terrain vertex shader uses: push constants under {@code #ifdef VULKAN}, loose uniforms otherwise. */
+	private static final String SODIUM_STYLE_VERTEX = """
+		#version 330 core
+		layout(std140) uniform u_Globals { mat4 u_ProjectionMatrix; };
+		uniform isamplerBuffer u_SectionTimeInfo;
+		#ifdef VULKAN
+		layout(push_constant) uniform PC {
+		    vec3 u_RegionOffset;
+		    int u_CurrentTime;
+		    uint u_RegionID;
+		};
+		#else
+		uniform vec3 u_RegionOffset;
+		uniform int u_CurrentTime;
+		uniform uint u_RegionID;
+		#endif
+		uniform sampler2D u_LightTex;
+		in uvec2 a_Position;
+		out vec4 v_Color;
+		void main() { gl_Position = u_ProjectionMatrix * vec4(u_RegionOffset, 1.0); }
+		""";
+
+	@Test
+	void pushConstantBlockBecomesANumberedStd140BlockUnderTheCanonicalName() throws Exception {
+		DxShaderInterfaceLayout.Result result = DxShaderInterfaceLayout.assign(
+			SODIUM_STYLE_VERTEX, "#version 330 core\nout vec4 fragColor;\nvoid main() {}\n", List.of("a_Position"));
+		String vertex = result.vertexSource();
+
+		// Numbered in the shared space in declaration order: block 0, texel buffer 1, push block 2, sampler 3.
+		assertTrue(vertex.contains("layout(binding = 0, std140) uniform u_Globals {"), vertex);
+		assertTrue(vertex.contains("layout(binding = 1) uniform isamplerBuffer u_SectionTimeInfo;"), vertex);
+		assertTrue(vertex.contains("layout(binding = 2, std140) uniform " + DxShaderInterfaceLayout.PUSH_CONSTANT_BLOCK_NAME + " {"), vertex);
+		assertTrue(vertex.contains("layout(binding = 3) uniform sampler2D u_LightTex;"), vertex);
+
+		// The qualifier and the old block name are gone; members and the rest of the body are untouched.
+		assertFalse(vertex.contains("push_constant"), vertex);
+		assertFalse(vertex.contains("uniform PC"), vertex);
+		assertTrue(vertex.contains("    vec3 u_RegionOffset;\n    int u_CurrentTime;\n    uint u_RegionID;\n};"), vertex);
+		assertTrue(vertex.contains("gl_Position = u_ProjectionMatrix * vec4(u_RegionOffset, 1.0);"), vertex);
+
+		// The non-Vulkan branch keeps its loose uniforms: glslang drops that branch, and plain uniforms are never numbered.
+		assertTrue(vertex.contains("\nuniform vec3 u_RegionOffset;\nuniform int u_CurrentTime;\nuniform uint u_RegionID;\n"), vertex);
+		assertEquals(1, count(vertex, "DxPushConstants"));
+	}
+
+	@Test
+	void pushConstantInstanceNameAndOtherLayoutQualifiersSurvive() throws Exception {
+		String vertex = """
+			#version 330
+			layout(row_major, push_constant) uniform PC { mat4 m; vec2 v; } pc;
+			void main() { gl_Position = pc.m * vec4(pc.v, 0.0, 1.0); }
+			""";
+		String rewritten = DxShaderInterfaceLayout.assign(vertex, "#version 330\nvoid main() {}\n", List.of()).vertexSource();
+
+		assertTrue(rewritten.contains("layout(binding = 0, row_major, std140) uniform DxPushConstants { mat4 m; vec2 v; } pc;"), rewritten);
+		assertTrue(rewritten.contains("pc.m * vec4(pc.v, 0.0, 1.0)"), rewritten);
+	}
+
+	@Test
+	void pushConstantBlocksInBothStagesShareOneBindingEvenWithDifferentTypeNames() throws Exception {
+		String vertex = "#version 330\nlayout(std140) uniform A { float a; };\nlayout(push_constant) uniform VertexPC { vec4 tint; };\nvoid main() {}\n";
+		String fragment = "#version 330\nlayout(push_constant) uniform FragmentPC { vec4 tint; };\nlayout(std140) uniform B { float b; };\nout vec4 fragColor;\nvoid main() {}\n";
+		DxShaderInterfaceLayout.Result result = DxShaderInterfaceLayout.assign(vertex, fragment, List.of());
+
+		// A=0, push=1 (first seen in the vertex stage), B=2.
+		assertTrue(result.vertexSource().contains("layout(binding = 1, std140) uniform DxPushConstants {"), result.vertexSource());
+		assertTrue(result.fragmentSource().contains("layout(binding = 1, std140) uniform DxPushConstants {"), result.fragmentSource());
+		assertTrue(result.fragmentSource().contains("layout(binding = 2, std140) uniform B {"), result.fragmentSource());
+	}
+
+	@Test
+	void refusesPushConstantBlocksWhoseLayoutWouldChangeBetweenStd430AndStd140() {
+		String fragment = "#version 330\nvoid main() {}\n";
+		// Arrays have a 4-byte stride in std430 but 16 in std140.
+		assertThrows(DxShaderInterfaceException.class, () -> DxShaderInterfaceLayout.assign(
+			"#version 330\nlayout(push_constant) uniform PC { float weights[4]; };\nvoid main() {}\n", fragment, List.of()));
+		// mat2 columns are 8 bytes apart in std430 but 16 in std140.
+		assertThrows(DxShaderInterfaceException.class, () -> DxShaderInterfaceLayout.assign(
+			"#version 330\nlayout(push_constant) uniform PC { mat2 rot; };\nvoid main() {}\n", fragment, List.of()));
+		assertThrows(DxShaderInterfaceException.class, () -> DxShaderInterfaceLayout.assign(
+			"#version 330\nlayout(push_constant) uniform PC { mat3x2 skew; };\nvoid main() {}\n", fragment, List.of()));
+		// A user-defined struct member cannot be proven layout-compatible by this tokenizer.
+		assertThrows(DxShaderInterfaceException.class, () -> DxShaderInterfaceLayout.assign(
+			"#version 330\nstruct Inner { vec2 a; };\nlayout(push_constant) uniform PC { Inner inner; };\nvoid main() {}\n", fragment, List.of()));
+		// An explicit std430/scalar request would be silently changed by the rewrite.
+		assertThrows(DxShaderInterfaceException.class, () -> DxShaderInterfaceLayout.assign(
+			"#version 330\nlayout(push_constant, std430) uniform PC { vec4 a; };\nvoid main() {}\n", fragment, List.of()));
+	}
+
+	@Test
+	void refusesPushConstantBlockWithExplicitBinding() {
+		assertThrows(DxShaderInterfaceException.class, () -> DxShaderInterfaceLayout.assign(
+			"#version 330\nlayout(push_constant, binding = 1) uniform PC { vec4 a; };\nvoid main() {}\n", "#version 330\nvoid main() {}\n", List.of()));
+	}
+
+	@Test
+	void acceptsEveryBuiltInMemberTypeThatLaysOutTheSameInStd430AndStd140() throws Exception {
+		String vertex = """
+			#version 330
+			layout(push_constant) uniform PC {
+			    vec3 a; int b; uint c; ivec2 d; uvec4 e; bool f; float g; mat4 h; mat3 i; mat4x3 j; mat2x3 k;
+			};
+			void main() {}
+			""";
+		assertTrue(DxShaderInterfaceLayout.assign(vertex, "#version 330\nvoid main() {}\n", List.of())
+			.vertexSource().contains("uniform DxPushConstants {"));
+	}
+
 	private static int count(String haystack, String needle) {
 		int count = 0;
 		for (int index = haystack.indexOf(needle); index >= 0; index = haystack.indexOf(needle, index + needle.length())) {

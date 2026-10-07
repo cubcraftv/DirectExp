@@ -68,6 +68,27 @@ import java.util.regex.Pattern;
  * declared under Vulkan semantics, so the same two defines Vulkan's
  * {@code GlslCompiler} injects are injected here too.
  *
+ * <h2>Push constants</h2>
+ * Some shaders (Sodium's terrain shader, under {@code #ifdef VULKAN}, which
+ * {@code shaderc} defines itself for Vulkan semantics) declare a
+ * {@code layout(push_constant) uniform Name { ... };} block for values that
+ * change per draw. D3D11 has no push constants, and numbering such a block like
+ * an ordinary uniform block makes glslang fail ("'binding' : cannot be used
+ * with push_constant"). This stage therefore rewrites it to an ordinary
+ * {@code layout(binding = N, std140) uniform DxPushConstants { ... }} block:
+ * the {@code push_constant} qualifier is dropped, a binding is assigned in the
+ * shared binding space, and the block <em>type</em> name is replaced by
+ * {@link #PUSH_CONSTANT_BLOCK_NAME} (members stay addressable by their own
+ * names, so the shader body is untouched). Downstream it is just a constant
+ * buffer under that fixed name, which the draw path fills from the bytes the
+ * caller handed to {@code DxPushConstants.setPushConstants}.
+ * <p>
+ * Push-constant blocks default to {@code std430} while the rewritten block is
+ * {@code std140}; the two agree for scalars, vectors, {@code mat3}/{@code mat4}
+ * and the like, and disagree for arrays and {@code matCx2}. Rather than risk
+ * silently shifted data, any block member that is not a plain scalar, vector or
+ * non-2-row matrix is refused with a {@link DxShaderInterfaceException}.
+ *
  * <h2>Scope and limits</h2>
  * A small tokenizer, not a GLSL parser: it skips comments and
  * preprocessor lines and looks at declaration statements at brace depth
@@ -91,6 +112,14 @@ public final class DxShaderInterfaceLayout {
 			+ "#extension GL_ARB_separate_shader_objects : require\n";
 
 	/** The same two defines Vulkan's {@code GlslCompiler} injects globally. */
+	/**
+	 * The fixed block name every {@code push_constant} block is renamed to, and
+	 * therefore the name its constant buffer has in the reflected resource
+	 * layout. Vulkan allows one push-constant block per pipeline, so one name
+	 * is enough; both stages declaring it merge into one entry.
+	 */
+	public static final String PUSH_CONSTANT_BLOCK_NAME = "DxPushConstants";
+
 	static final String VULKAN_BUILTIN_DEFINES =
 		"#define gl_VertexID gl_VertexIndex\n"
 			+ "#define gl_InstanceID gl_InstanceIndex\n";
@@ -172,7 +201,7 @@ public final class DxShaderInterfaceLayout {
 		Map<String, Integer> bindings = new LinkedHashMap<>();
 		for (List<Decl> decls : List.of(vertexDecls, fragmentDecls)) {
 			for (Decl decl : decls) {
-				if (decl.kind == Kind.UNIFORM_BLOCK || decl.kind == Kind.SAMPLER) {
+				if (decl.kind == Kind.UNIFORM_BLOCK || decl.kind == Kind.SAMPLER || decl.kind == Kind.PUSH_CONSTANT_BLOCK) {
 					bindings.computeIfAbsent(decl.name, name -> bindings.size());
 				}
 			}
@@ -192,6 +221,7 @@ public final class DxShaderInterfaceLayout {
 				}
 				case OUT -> vertexEdits.add(decl.edit("location", varyingLocations.get(decl.name)));
 				case UNIFORM_BLOCK, SAMPLER -> vertexEdits.add(decl.edit("binding", bindings.get(decl.name)));
+				case PUSH_CONSTANT_BLOCK -> vertexEdits.addAll(decl.pushConstantEdits(bindings.get(decl.name)));
 			}
 		}
 
@@ -211,6 +241,7 @@ public final class DxShaderInterfaceLayout {
 				}
 				case OUT -> fragmentEdits.add(decl.edit("location", fragmentOutputs.computeIfAbsent(decl.name, name -> fragmentOutputs.size())));
 				case UNIFORM_BLOCK, SAMPLER -> fragmentEdits.add(decl.edit("binding", bindings.get(decl.name)));
+				case PUSH_CONSTANT_BLOCK -> fragmentEdits.addAll(decl.pushConstantEdits(bindings.get(decl.name)));
 			}
 		}
 
@@ -226,11 +257,23 @@ public final class DxShaderInterfaceLayout {
 	// ---------------------------------------------------------------------
 
 	private enum Kind {
-		IN, OUT, UNIFORM_BLOCK, SAMPLER
+		IN, OUT, UNIFORM_BLOCK, SAMPLER, PUSH_CONSTANT_BLOCK
 	}
 
-	/** One text insertion at a character offset of the original source. */
-	private record Edit(int position, String text) {
+	/**
+	 * One text edit at a character offset of the original source: the
+	 * {@code deleteLength} characters at {@code position} (usually 0, a pure
+	 * insertion) are replaced by {@code text}.
+	 */
+	private record Edit(int position, int deleteLength, String text) {
+	}
+
+	/**
+	 * What a {@code layout(push_constant)} block rewrite needs: the character
+	 * range of the first {@code layout(...)} body, the qualifiers that survive
+	 * the rewrite, and the range of the block's type name.
+	 */
+	private record PushBlock(int layoutBodyStart, int layoutBodyEnd, List<String> keptQualifiers, int nameStart, int nameEnd) {
 	}
 
 	/**
@@ -239,13 +282,36 @@ public final class DxShaderInterfaceLayout {
 	 * qualifier (so {@code std140} can be merged into
 	 * {@code layout(binding = 0, std140)}), or -1 if there is none.
 	 */
-	private record Decl(Kind kind, String name, int statementStart, int layoutBodyStart) {
+	private record Decl(Kind kind, String name, int statementStart, int layoutBodyStart, PushBlock push) {
+		Decl(Kind kind, String name, int statementStart, int layoutBodyStart) {
+			this(kind, name, statementStart, layoutBodyStart, null);
+		}
+
 		Edit edit(String qualifier, int value) {
 			if (this.layoutBodyStart >= 0) {
-				return new Edit(this.layoutBodyStart, qualifier + " = " + value + ", ");
+				return new Edit(this.layoutBodyStart, 0, qualifier + " = " + value + ", ");
 			}
-			return new Edit(this.statementStart, "layout(" + qualifier + " = " + value + ") ");
+			return new Edit(this.statementStart, 0, "layout(" + qualifier + " = " + value + ") ");
 		}
+
+		/** The two edits (layout qualifiers, block name) that turn a push-constant block into a numbered std140 uniform block. */
+		List<Edit> pushConstantEdits(int binding) {
+			StringBuilder body = new StringBuilder("binding = ").append(binding);
+			for (String qualifier : this.push.keptQualifiers) {
+				body.append(", ").append(qualifier);
+			}
+			if (this.push.keptQualifiers.stream().noneMatch(DxShaderInterfaceLayout::isBlockLayoutQualifier)) {
+				body.append(", std140");
+			}
+			return List.of(
+				new Edit(this.push.layoutBodyStart, this.push.layoutBodyEnd - this.push.layoutBodyStart, body.toString()),
+				new Edit(this.push.nameStart, this.push.nameEnd - this.push.nameStart, PUSH_CONSTANT_BLOCK_NAME)
+			);
+		}
+	}
+
+	private static boolean isBlockLayoutQualifier(String qualifier) {
+		return qualifier.equals("std140") || qualifier.equals("std430") || qualifier.equals("shared") || qualifier.equals("packed") || qualifier.equals("scalar");
 	}
 
 	private static String rewrite(String source, List<Edit> edits, String stageName) throws DxShaderInterfaceException {
@@ -268,14 +334,15 @@ public final class DxShaderInterfaceLayout {
 		String header = (versionEndsWithNewline ? "" : "\n") + EXTENSIONS + VULKAN_BUILTIN_DEFINES + "#line " + nextLine + "\n";
 
 		List<Edit> all = new ArrayList<>(edits);
-		all.add(new Edit(afterVersion, header));
+		all.add(new Edit(afterVersion, 0, header));
 		// Apply back to front so earlier offsets stay valid; stable for equal
-		// positions is not needed (no two edits share an offset).
+		// positions is not needed (no two edits share an offset, and a
+		// replacement never overlaps another edit's range).
 		all.sort((a, b) -> Integer.compare(b.position, a.position));
 
 		StringBuilder builder = new StringBuilder(source);
 		for (Edit edit : all) {
-			builder.insert(edit.position, edit.text);
+			builder.replace(edit.position, edit.position + edit.deleteLength, edit.text);
 		}
 		return builder.toString();
 	}
@@ -299,13 +366,14 @@ public final class DxShaderInterfaceLayout {
 		DECLARATION, BLOCK_HEADER
 	}
 
-	private record Statement(StatementKind kind, List<Token> tokens) {
+	/** {@code body} holds the tokens between a block's braces (empty for plain declarations). */
+	private record Statement(StatementKind kind, List<Token> tokens, List<Token> body) {
 	}
 
 	private static List<Decl> parse(String source, String stageName) throws DxShaderInterfaceException {
 		List<Decl> decls = new ArrayList<>();
 		for (Statement statement : splitTopLevelStatements(tokenize(source))) {
-			Decl decl = analyze(statement, stageName);
+			Decl decl = analyze(statement, stageName, source);
 			if (decl != null) {
 				decls.add(decl);
 			}
@@ -386,19 +454,27 @@ public final class DxShaderInterfaceLayout {
 		int parenDepth = 0;
 		boolean skipTrailerUntilSemicolon = false;
 		boolean lastBodyWasFunction = false;
+		// Filled while a non-function body is scanned; it belongs to the
+		// BLOCK_HEADER statement added when the body's '{' was seen.
+		List<Token> currentBody = null;
 
 		for (Token token : tokens) {
 			if (braceDepth > 0) {
+				boolean closesBody = false;
 				if (token.is("{")) {
 					braceDepth++;
 				} else if (token.is("}")) {
 					braceDepth--;
+					closesBody = braceDepth == 0;
 					if (braceDepth == 0) {
 						// A function body ends the statement; a block or
 						// struct body is followed by an optional instance
 						// name and a semicolon that must be swallowed.
 						skipTrailerUntilSemicolon = !lastBodyWasFunction;
 					}
+				}
+				if (currentBody != null && !closesBody) {
+					currentBody.add(token);
 				}
 				continue;
 			}
@@ -418,8 +494,10 @@ public final class DxShaderInterfaceLayout {
 
 			if (token.is("{") && parenDepth == 0) {
 				boolean isFunction = current.stream().anyMatch(t -> t.is("(")) && !startsWithLayoutOnlyParens(current);
+				currentBody = null;
 				if (!isFunction) {
-					statements.add(new Statement(StatementKind.BLOCK_HEADER, List.copyOf(current)));
+					currentBody = new ArrayList<>();
+					statements.add(new Statement(StatementKind.BLOCK_HEADER, List.copyOf(current), currentBody));
 				}
 				lastBodyWasFunction = isFunction;
 				current = new ArrayList<>();
@@ -429,7 +507,7 @@ public final class DxShaderInterfaceLayout {
 
 			if (token.is(";") && parenDepth == 0) {
 				if (!current.isEmpty()) {
-					statements.add(new Statement(StatementKind.DECLARATION, List.copyOf(current)));
+					statements.add(new Statement(StatementKind.DECLARATION, List.copyOf(current), List.of()));
 				}
 				current = new ArrayList<>();
 				continue;
@@ -481,7 +559,7 @@ public final class DxShaderInterfaceLayout {
 	}
 
 	/** Returns the declaration to number, or null if this statement is not one. */
-	private static Decl analyze(Statement statement, String stageName) throws DxShaderInterfaceException {
+	private static Decl analyze(Statement statement, String stageName, String source) throws DxShaderInterfaceException {
 		List<Token> tokens = statement.tokens();
 		if (tokens.isEmpty()) {
 			return null;
@@ -492,19 +570,31 @@ public final class DxShaderInterfaceLayout {
 		boolean uniform = false;
 		boolean hasLocation = false;
 		boolean hasBinding = false;
+		boolean pushConstant = false;
 		int layoutBodyStart = -1;
+		int layoutBodyEnd = -1;
+		List<String> firstLayoutQualifiers = List.of();
 
 		int i = 0;
 		while (i < tokens.size()) {
 			Token token = tokens.get(i);
 			if (token.is("layout") && i + 1 < tokens.size() && tokens.get(i + 1).is("(")) {
 				int close = matchingParen(tokens, i + 1);
-				if (layoutBodyStart < 0) {
+				boolean firstGroup = layoutBodyStart < 0;
+				if (firstGroup) {
 					layoutBodyStart = tokens.get(i + 1).end();
+					layoutBodyEnd = tokens.get(close).start();
+					firstLayoutQualifiers = splitLayoutQualifiers(tokens, i + 2, close, source);
 				}
 				for (int k = i + 2; k < close; k++) {
 					hasLocation |= tokens.get(k).is("location");
 					hasBinding |= tokens.get(k).is("binding");
+					if (tokens.get(k).is("push_constant")) {
+						pushConstant = true;
+						if (!firstGroup) {
+							throw unsupported(stageName, "push_constant", "push_constant in a second layout(...) group");
+						}
+					}
 				}
 				i = close + 1;
 			} else if (QUALIFIERS.contains(token.text)) {
@@ -531,6 +621,9 @@ public final class DxShaderInterfaceLayout {
 			}
 			if (hasBinding) {
 				throw explicit(stageName, first.text, "binding");
+			}
+			if (pushConstant) {
+				return pushConstantDecl(stageName, first, statement.body(), layoutBodyStart, layoutBodyEnd, firstLayoutQualifiers, statementStart);
 			}
 			return new Decl(Kind.UNIFORM_BLOCK, first.text, statementStart, layoutBodyStart);
 		}
@@ -567,6 +660,99 @@ public final class DxShaderInterfaceLayout {
 			throw explicit(stageName, name.text, "location");
 		}
 		return new Decl(in ? Kind.IN : Kind.OUT, name.text, statementStart, layoutBodyStart);
+	}
+
+	/** The comma-separated entries of one {@code layout(...)} body, as source text (tokens {@code [from, to)}). */
+	private static List<String> splitLayoutQualifiers(List<Token> tokens, int from, int to, String source) {
+		List<String> parts = new ArrayList<>();
+		int partStart = from;
+		int depth = 0;
+		for (int k = from; k <= to; k++) {
+			boolean end = k == to;
+			if (!end) {
+				if (tokens.get(k).is("(")) {
+					depth++;
+				} else if (tokens.get(k).is(")")) {
+					depth--;
+				}
+			}
+			if (end || (depth == 0 && tokens.get(k).is(","))) {
+				if (k > partStart) {
+					parts.add(source.substring(tokens.get(partStart).start(), tokens.get(k - 1).end()));
+				}
+				partStart = k + 1;
+			}
+		}
+		return parts;
+	}
+
+	/**
+	 * Built-in member types whose std430 (push constant) and std140 (rewritten
+	 * uniform block) layouts agree. A {@code matCxR} has C column vectors of R
+	 * components: R = 2 (so {@code mat2}, {@code mat3x2}, {@code mat4x2}) is
+	 * strided by 8 bytes under std430 but 16 under std140, hence left out.
+	 */
+	private static final Pattern PUSH_MEMBER_TYPE = Pattern.compile("(?:[iub]?vec[234]|float|int|uint|bool|mat[34]|mat[34]x[34]|mat2x[34])");
+
+	private static Decl pushConstantDecl(
+		String stageName, Token nameToken, List<Token> body, int layoutBodyStart, int layoutBodyEnd, List<String> layoutQualifiers, int statementStart
+	) throws DxShaderInterfaceException {
+		List<String> kept = new ArrayList<>();
+		for (String qualifier : layoutQualifiers) {
+			if (qualifier.equals("push_constant")) {
+				continue;
+			}
+			if (qualifier.equals("std430") || qualifier.equals("scalar")) {
+				throw unsupported(stageName, nameToken.text, "push_constant block with layout '" + qualifier + "'; it is rewritten to std140");
+			}
+			kept.add(qualifier);
+		}
+
+		// Every member must lay out identically under std430 and std140.
+		List<Token> member = new ArrayList<>();
+		for (Token token : body) {
+			if (token.is(";")) {
+				checkPushConstantMember(stageName, nameToken.text, member);
+				member = new ArrayList<>();
+			} else {
+				member.add(token);
+			}
+		}
+		checkPushConstantMember(stageName, nameToken.text, member);
+
+		return new Decl(
+			Kind.PUSH_CONSTANT_BLOCK, PUSH_CONSTANT_BLOCK_NAME, statementStart, layoutBodyStart,
+			new PushBlock(layoutBodyStart, layoutBodyEnd, List.copyOf(kept), nameToken.start(), nameToken.end())
+		);
+	}
+
+	private static void checkPushConstantMember(String stageName, String blockName, List<Token> member) throws DxShaderInterfaceException {
+		if (member.isEmpty()) {
+			return;
+		}
+		int i = 0;
+		while (i < member.size()) {
+			Token token = member.get(i);
+			if (token.is("layout") && i + 1 < member.size() && member.get(i + 1).is("(")) {
+				i = matchingParen(member, i + 1) + 1;
+			} else if (QUALIFIERS.contains(token.text)) {
+				i++;
+			} else {
+				break;
+			}
+		}
+		if (i >= member.size()) {
+			return;
+		}
+		String type = member.get(i).text;
+		if (!PUSH_MEMBER_TYPE.matcher(type).matches()) {
+			throw unsupported(stageName, blockName, "push_constant member of type '" + type + "' (std430 and std140 layouts can differ for it)");
+		}
+		for (Token token : member) {
+			if (token.is("[")) {
+				throw unsupported(stageName, blockName, "push_constant member arrays (std430 and std140 strides differ)");
+			}
+		}
 	}
 
 	private static DxShaderInterfaceException explicit(String stage, String name, String qualifier) {
