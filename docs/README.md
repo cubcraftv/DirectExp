@@ -101,10 +101,11 @@ choice doesn't depend on CMake's ambiguous Windows default -- it works the
 same whether the discovered compiler is `cl.exe` or `gcc`/`g++`, as long as
 `ninja` is on `PATH` in that shell.
 
-On Windows, `./gradlew.bat build` emits `build/native/directexp_native.dll`.
-Point the Java bridge loader at it during iteration with the
-`directexp.nativeLibraryPath` system property (this is wired up
-automatically for `runClient`).
+On Windows, `./gradlew.bat build` emits
+`build/native/directexp_native.dll` and bundles it in the mod JAR at
+`META-INF/native/windows-x86_64/directexp_native.dll`. Packaged runs extract
+the bundled DLL before loading it; `runClient` uses the freshly built file
+directly through the `directexp.nativeLibraryPath` system property.
 
 ## Why CMake instead of a raw compiler invocation
 

@@ -1,10 +1,16 @@
 package dev.cubcraftv.directexp.bridge;
 
 import java.io.File;
+import java.io.IOException;
+import java.io.InputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 
 final class NativeDxBridgeLoader {
 	static final String LIBRARY_NAME = "directexp_native";
 	private static final String LIBRARY_PATH_PROPERTY = "directexp.nativeLibraryPath";
+	private static final String BUNDLED_LIBRARY_RESOURCE = "/META-INF/native/windows-x86_64/directexp_native.dll";
 
 	// Milestone 4.1 links d3dcompiler into directexp_native.dll (see
 	// native/CMakeLists.txt). d3dcompiler_47.dll only ships as an OS
@@ -58,12 +64,59 @@ final class NativeDxBridgeLoader {
 			}
 		}
 
+		InputStream bundledLibrary = NativeDxBridgeLoader.class.getResourceAsStream(BUNDLED_LIBRARY_RESOURCE);
+		if (bundledLibrary != null) {
+			Path extractedLibrary;
+			try {
+				extractedLibrary = extractBundledLibrary(bundledLibrary);
+			} catch (IOException error) {
+				return new DxBridgeLoadResult(
+					DxBridgeLoadStatus.LOAD_FAILED,
+					"Failed to extract bundled DirectX bridge: " + error.getMessage(),
+					BUNDLED_LIBRARY_RESOURCE
+				);
+			}
+
+			try {
+				System.load(extractedLibrary.toAbsolutePath().toString());
+				return new DxBridgeLoadResult(
+					DxBridgeLoadStatus.LOADED,
+					"Loaded bundled DirectX bridge.",
+					extractedLibrary.toAbsolutePath().toString()
+				);
+			} catch (UnsatisfiedLinkError error) {
+				return new DxBridgeLoadResult(
+					DxBridgeLoadStatus.LOAD_FAILED,
+					error.getMessage(),
+					extractedLibrary.toAbsolutePath().toString()
+				);
+			}
+		}
+
 		try {
 			System.loadLibrary(LIBRARY_NAME);
 			return new DxBridgeLoadResult(DxBridgeLoadStatus.LOADED, "Loaded DirectX bridge from java.library.path.", LIBRARY_NAME);
 		} catch (UnsatisfiedLinkError error) {
 			String message = error.getMessage() == null ? "DirectX bridge native library was not found." : error.getMessage();
 			return new DxBridgeLoadResult(DxBridgeLoadStatus.NOT_FOUND, message, LIBRARY_NAME);
+		}
+	}
+
+	static Path extractBundledLibrary(InputStream libraryStream) throws IOException {
+		try (libraryStream) {
+			Path extractedLibrary = Files.createTempFile("directexp_native-", ".dll");
+			try {
+				Files.copy(libraryStream, extractedLibrary, StandardCopyOption.REPLACE_EXISTING);
+				extractedLibrary.toFile().deleteOnExit();
+				return extractedLibrary;
+			} catch (IOException error) {
+				try {
+					Files.deleteIfExists(extractedLibrary);
+				} catch (IOException cleanupError) {
+					error.addSuppressed(cleanupError);
+				}
+				throw error;
+			}
 		}
 	}
 

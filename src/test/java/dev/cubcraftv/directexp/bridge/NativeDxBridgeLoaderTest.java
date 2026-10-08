@@ -3,8 +3,10 @@ package dev.cubcraftv.directexp.bridge;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
@@ -62,5 +64,17 @@ class NativeDxBridgeLoaderTest {
 		String expectedPath = new File(tempSystemRoot.toFile(), "System32" + File.separator + "d3dcompiler_47.dll")
 			.getAbsolutePath();
 		assertTrue(result.detail().contains(expectedPath));
+	}
+
+	@Test
+	void extractsBundledLibraryToTemporaryDll() throws IOException {
+		byte[] libraryContents = "native-library-test".getBytes(StandardCharsets.UTF_8);
+		Path extractedLibrary = NativeDxBridgeLoader.extractBundledLibrary(new ByteArrayInputStream(libraryContents));
+		try {
+			assertTrue(extractedLibrary.getFileName().toString().endsWith(".dll"));
+			assertEquals("native-library-test", Files.readString(extractedLibrary));
+		} finally {
+			Files.deleteIfExists(extractedLibrary);
+		}
 	}
 }

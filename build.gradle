@@ -184,6 +184,13 @@ java {
 jar {
 	inputs.property "projectName", project.name
 
+	if (isWindows) {
+		dependsOn(tasks.named("buildNativeWindowsBridge"))
+		from(nativeBridgeOutput) {
+			into("META-INF/native/windows-x86_64")
+		}
+	}
+
 	from("LICENSE") {
 		rename { "${it}_${project.name}" }
 	}

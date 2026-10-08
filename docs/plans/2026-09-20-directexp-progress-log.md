@@ -801,3 +801,16 @@ not a bug in what's implemented so far).
   or specific Sodium scene coverage. Phase 1 audit: the native buffer SRV
   creation/binding path, native buffer-to-buffer copy, and GPU-only buffers
   are still not implemented, so `u_SectionTimeInfo` remains unsupported.
+
+- **2026-10-07 -- Bundling the Windows native bridge.** The Windows `jar`
+  task now includes `directexp_native.dll` at
+  `META-INF/native/windows-x86_64/directexp_native.dll`; packaged runtime
+  loading extracts that classpath resource to a temporary DLL and loads it.
+  The explicit `directexp.nativeLibraryPath` override remains in front for
+  `runClient` development. Added an extraction unit test and updated the
+  native/build docs. `.\gradlew.bat test` passes, and `.\gradlew.bat jar
+  -x buildNativeWindowsBridge` verified the entry (14,085,485 bytes) in the
+  JAR using the already-built DLL. A normal `.\gradlew.bat jar` attempt
+  failed during native recompilation because this shell's CMake/JNI setup
+  could not locate `jni.h`; bundling itself passed when the native task was
+  skipped.
