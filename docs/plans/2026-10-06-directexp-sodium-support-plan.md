@@ -1,9 +1,9 @@
 # DirectExp + Sodium: Support Plan and Fork Plan
 
-**Created:** 2026-10-06. **Status:** in progress. **Basis:** initial assessment from static
-reading of `DirectExp.zip` (re-verified against source, not docs; `patch9.patch` was already
-applied in that snapshot) and `sodium-26.2-stable.zip`. Implementation and verification evidence
-added since that assessment is recorded below and in the progress log.
+**Created:** 2026-10-06. **Status:** proposal, not started. **Basis:** static reading of
+`DirectExp.zip` (re-verified against source, not docs; `patch9.patch` is already applied in this snapshot) and `sodium-26.2-stable.zip`. Nothing here was
+compiled or run; every "Sodium does X" / "DirectExp lacks Y" claim is from source, with file
+names so it can be re-checked.
 
 ---
 
@@ -64,9 +64,8 @@ close the capability gaps in DirectExp, then add a small Sodium patch.
   (safe default) and no multidraw flags.
 - `DxBuffer` keeps a **CPU mirror of every buffer** plus an eagerly synced native copy;
   `copyToBuffer` is implemented as CPU memcpy + re-upload.
-- Texel buffers: `USAGE_UNIFORM_TEXEL_BUFFER` now maps to a native
-  `D3D11_BIND_SHADER_RESOURCE` buffer bind flag; typed buffer-SRV creation and binding are still
-  open.
+- Texel buffers: bind mask is 0 (`DxBufferBinding`); the 4.6 source-of-truth doc lists them as
+  still open.
 - (Pre-Phase-2 state; the missing `VULKAN` define was never needed, see Option B) No push-constant or loose-uniform handling, and no `VULKAN` define in the shader stage
   (`DxShaderInterfaceLayout` only injects the `gl_VertexID`/`gl_InstanceID` defines). Re-checked:
   zero hits for push constants / root constants in `src` and `native/src`.
@@ -134,21 +133,15 @@ Sodium compiles only against Minecraft, so it cannot reference `DxDeviceBackend`
 - GPU-only buffers, native buffer copy, texel-buffer SRVs, integer input layout tests.
 - This phase is now selected under Option B, with the DirectExp resource layer carrying the
   buffer/SRV pieces that Sodium's per-region draw path requires before the add-on itself lands.
-- The first implementation session added the native shader-resource bind flag and maps texel-buffer
-  usage to it. GPU-only buffers, native buffer copies, typed buffer-SRV creation/binding, and the
-  Sodium-format tests remain outstanding; Phase 1 is in progress, not complete. See the
-  [progress log](./2026-09-20-directexp-progress-log.md) for the session record.
 - Unit tests alongside the existing `DxBuffer*Test` / `DxPipelineStateMappingTest` style.
 - **Exit:** a synthetic test pipeline that reads a texel buffer and draws from a GPU-only vertex
   buffer renders correctly under RenderDoc.
 
 ### Phase 2: Per-region values (G4) and Sodium shader compile
 
-**Status (2026-10-07): implemented, built, and run on Windows (user-reported).** The Linux-side
-shader-chain checks and Java unit tests are recorded in the
-[progress log](./2026-09-20-directexp-progress-log.md). The reported Windows build/run confirms
-end-to-end execution, but its specific Sodium scene and per-variant D3DCompile coverage were not
-provided; see the progress log for those evidence limits.
+**Status (2026-10-07): implemented; Java layer unit-tested, shader chain checked offline,
+Windows build and in-game run pending.** See the progress log entry of the same date for evidence
+and for what is explicitly *not* verified.
 
 - Implemented under Option B: `push_constant` blocks are rewritten to a numbered `std140` block
   named `DxPushConstants` (`DxShaderInterfaceLayout.PUSH_CONSTANT_BLOCK_NAME`); members whose

@@ -1,0 +1,1002 @@
+diff -ruN -x '*.class' orig/docs/plans/2026-09-20-directexp-progress-log.md /home/claude/w2/docs/plans/2026-09-20-directexp-progress-log.md
+--- orig/docs/plans/2026-09-20-directexp-progress-log.md	2026-10-05 16:03:38.000000000 +0000
++++ /home/claude/w2/docs/plans/2026-09-20-directexp-progress-log.md	2026-10-07 01:34:49.034566565 +0000
+@@ -764,3 +764,28 @@
+   free of probe-only methods. Added default-off/opt-in tests and documented
+   the launch property. `.\gradlew.bat test` passes; hypotheses A/B remain
+   unsettled, so the native and Java probe implementations are retained.
++
++- **2026-10-07 -- Sodium plan Phase 2: push constants and Sodium shader chain.**
++  `DxShaderInterfaceLayout` now rewrites `layout(push_constant)` blocks into a
++  numbered `std140` uniform block named `DxPushConstants` (previously the block
++  was numbered like a uniform and glslang rejected it with "'binding' : cannot
++  be used with push_constant"); members that could lay out differently under
++  std430 and std140 are refused. New public `client.api.DxPushConstants`
++  (implemented by `DxRenderPassBackend` through a unit-testable
++  `DxPushConstantStore`, 128-byte limit) supplies the bytes, which the binder
++  already re-stages per draw. Native reflection no longer reports a Sampler
++  entry for texel buffers (`Dim == Buffer`). `shaderc` already defines `VULKAN`
++  for Vulkan semantics, so no define was added. Verified in a Linux sandbox
++  only: 23 layout tests and 7 store tests pass (JUnit, Minecraft-free classes
++  compiled against stubs); Sodium 26.2's `block_layer_opaque` vertex and
++  fragment shaders, with `USE_VERTEX_COMPRESSION`/`USE_FOG` and
++  `ALPHA_CUTOUT` 0.5/0.01 variants, compile through the layout stage, glslc
++  (glslang 15.1.0, vulkan1.0), `spirv-val`, SPIRV-Cross 2021 CLI (HLSL SM 4.1)
++  and DXC 1.9.2609 `vs_6_0`/`ps_6_0` front end. **Not verified:** the Java
++  changes to `DxRenderPassBackend`/`DxResourceBinder`/`DxResourceLayoutBuilder`
++  and the native reflection edit were not compiled here; real `D3DCompile`
++  `vs_4_1`/`ps_4_1` on the emitted HLSL, the SPIRV-Cross version DirectExp
++  links, and any in-game run are all still to do via `.\gradlew.bat build`.
++  Phase 1 audit: buffer SRV creation/binding for texel buffers, native
++  buffer-to-buffer copy and GPU-only buffers are not in this tree, so
++  `u_SectionTimeInfo` stays unbound for now.
+diff -ruN -x '*.class' orig/docs/plans/2026-10-06-directexp-sodium-support-plan.md /home/claude/w2/docs/plans/2026-10-06-directexp-sodium-support-plan.md
+--- orig/docs/plans/2026-10-06-directexp-sodium-support-plan.md	2026-10-06 14:56:14.000000000 +0000
++++ /home/claude/w2/docs/plans/2026-10-06-directexp-sodium-support-plan.md	2026-10-07 01:34:49.033608274 +0000
+@@ -66,7 +66,7 @@
+   `copyToBuffer` is implemented as CPU memcpy + re-upload.
+ - Texel buffers: bind mask is 0 (`DxBufferBinding`); the 4.6 source-of-truth doc lists them as
+   still open.
+-- No push-constant or loose-uniform handling, and no `VULKAN` define in the shader stage
++- (Pre-Phase-2 state; the missing `VULKAN` define was never needed, see Option B) No push-constant or loose-uniform handling, and no `VULKAN` define in the shader stage
+   (`DxShaderInterfaceLayout` only injects the `gl_VertexID`/`gl_InstanceID` defines). Re-checked:
+   zero hits for push constants / root constants in `src` and `native/src`.
+ - Re-verified in code, not docs: texel buffers have no native path (no buffer SRV anywhere);
+@@ -96,12 +96,14 @@
+   declare it in `ShaderChunkRenderer.BIND_GROUP`, and have `DXDrawContext.updateData` write 32
+   bytes and `pass.setUniform("u_RegionData", slice)`. No changes to DirectExp's shader stage.
+   Larger Sodium diff, but all of it is explicit Java/GLSL.
+-- **Option B: make DirectExp understand push constants.** The SPIR-V from the existing
+-  `#ifdef VULKAN` path contains a push-constant block. SPIRV-Cross can emit that as a constant
+-  buffer on HLSL; DirectExp would reserve a binding for it and expose it to the draw context.
+-  DirectExp then defines `VULKAN` for Sodium's shaders (consistent with its current policy of
+-  mirroring Vulkan's GLSL handling). Smallest Sodium diff (shader unchanged), more DirectExp work,
+-  and a global `VULKAN` define must be checked against vanilla shaders for side effects.
++- **Option B: make DirectExp understand push constants.** Sodium's shader already has the
++  `#ifdef VULKAN` push-constant block, and **`VULKAN` needs no DirectExp define: shaderc/glslang
++  predefines it for Vulkan semantics** (verified in Phase 2 with glslang 15.1.0; an earlier
++  revision of this plan wrongly said DirectExp would have to define it). As implemented in Phase 2,
++  DirectExp rewrites the block at the GLSL level into a numbered `std140` uniform block named
++  `DxPushConstants` (`DxShaderInterfaceLayout`), so it reflects and binds as an ordinary constant
++  buffer with no native root-constant code, and fills it per draw from bytes supplied through the
++  public `DxPushConstants` interface. Smallest Sodium diff (shader unchanged).
+ 
+ **Decision selected: Option B.** DirectExp owns the push-constant path and exposes it to Sodium's
+ existing Vulkan-style GLSL, while the Sodium add-on remains a small compatibility shim instead of a
+@@ -136,7 +138,25 @@
+   buffer renders correctly under RenderDoc.
+ 
+ ### Phase 2: Per-region values (G4) and Sodium shader compile
+-- Implement the chosen option from section 5.
++
++**Status (2026-10-07): implemented; Java layer unit-tested, shader chain checked offline,
++Windows build and in-game run pending.** See the progress log entry of the same date for evidence
++and for what is explicitly *not* verified.
++
++- Implemented under Option B: `push_constant` blocks are rewritten to a numbered `std140` block
++  named `DxPushConstants` (`DxShaderInterfaceLayout.PUSH_CONSTANT_BLOCK_NAME`); members whose
++  std430/std140 layouts could differ (arrays, `matCx2`, user structs) are refused.
++  `DxPushConstants.setPushConstants(ByteBuffer)` (client API, max 128 bytes) is implemented by
++  `DxRenderPassBackend` and re-staged with every draw by the existing binder. Texel buffers no
++  longer reflect a bogus `Sampler` entry.
++- **Phase 1 audit that this relies on:** the texel-buffer bind flag exists, but buffer SRV
++  creation/binding (G3 runtime), native buffer-to-buffer copy (G2) and GPU-only buffers (G1) were
++  not present in the tree this phase was built on. Until G3 runtime lands,
++  `u_SectionTimeInfo` is unbound (reported once as a missing texture), which reads as zero:
++  terrain draws but without the fade-in animation.
++- The add-on's per-region `updateData` should build the 20-byte block (`float x, y, z` at 0/4/8,
++  `int time` at 12, `uint regionId` at 16, native byte order) and call `setPushConstants` once per
++  region before that region's multi-draw.
+ - **Exit:** Sodium's `block_layer_opaque` vertex/fragment shaders compile through GLSL -> SPIR-V ->
+   HLSL -> D3D, with `ALPHA_CUTOUT`, `USE_FOG`, and `USE_VERTEX_COMPRESSION` define variants.
+   Watch for: `textureGrad`, `dFdx/dFdy`, `textureLod`, `bool` inside a std140 block, array
+@@ -202,7 +222,6 @@
+ 
+ ## 9. Unknowns I could not resolve from source
+ 
+-- Whether defining `VULKAN` globally in DirectExp's shader stage changes any vanilla shader
+-  (needs a grep of Mojang's shader tree for `#ifdef VULKAN`; `reference/shaders` did not show any
+-  hits in my search of this snapshot, but that is not proof).
++- ~~Whether defining `VULKAN` globally changes vanilla shaders~~ moot: shaderc already defines it
++  for every Vulkan-semantics compile, so nothing changes.
+ - Real draw-call counts per frame on a typical render distance, which decides how urgent G7 is.
+diff -ruN -x '*.class' orig/native/src/directexp_shader_reflection.cpp /home/claude/w2/native/src/directexp_shader_reflection.cpp
+--- orig/native/src/directexp_shader_reflection.cpp	2026-09-28 12:15:04.000000000 +0000
++++ /home/claude/w2/native/src/directexp_shader_reflection.cpp	2026-10-07 01:34:18.258674151 +0000
+@@ -81,7 +81,14 @@
+ 		for (const spirv_cross::Resource& image : resources.sampled_images) {
+ 			std::string name = SpirvResourceName(image);
+ 			result.resources.push_back(SpirvResource{name, SpirvResourceKind::SampledTexture, 0});
+-			result.resources.push_back(SpirvResource{name, SpirvResourceKind::Sampler, 0});
++			// A texel buffer (`samplerBuffer` / `isamplerBuffer`, e.g.
++			// Sodium's per-section time info) is a `Buffer<T>` SRV in HLSL
++			// and SPIRV-Cross emits no sampler state for it, so it only has
++			// the SRV half; a Sampler entry would reserve an `s#` slot and
++			// bind a null sampler for nothing on every draw.
++			if (compiler.get_type(image.type_id).image.dim != spv::DimBuffer) {
++				result.resources.push_back(SpirvResource{name, SpirvResourceKind::Sampler, 0});
++			}
+ 		}
+ 
+ 		// Real separate texture/sampler pairs. Not expected in any of
+diff -ruN -x '*.class' orig/src/client/java/dev/cubcraftv/directexp/client/api/DxPushConstants.java /home/claude/w2/src/client/java/dev/cubcraftv/directexp/client/api/DxPushConstants.java
+--- orig/src/client/java/dev/cubcraftv/directexp/client/api/DxPushConstants.java	1970-01-01 00:00:00.000000000 +0000
++++ /home/claude/w2/src/client/java/dev/cubcraftv/directexp/client/api/DxPushConstants.java	2026-10-06 09:04:00.792597676 +0000
+@@ -0,0 +1,46 @@
++package dev.cubcraftv.directexp.client.api;
++
++import java.nio.ByteBuffer;
++
++/**
++ * Per-draw constants for shaders that declare a Vulkan-style
++ * {@code layout(push_constant)} block, implemented by DirectExp's render pass
++ * backend (obtain it with {@code instanceof} on the {@code RenderPassBackend}
++ * behind a {@code RenderPass}; any other backend simply does not implement
++ * it).
++ *
++ * <p>D3D11 has no push constants. DirectExp rewrites such a block into an
++ * ordinary {@code std140} constant buffer under the fixed name
++ * {@code DxPushConstants} (see {@code DxShaderInterfaceLayout}) and, on every
++ * draw, fills it from the bytes given here, exactly like the contents a
++ * Vulkan caller would pass to {@code vkCmdPushConstants} at offset 0. The
++ * values stay in effect for every later draw of the same render pass until
++ * replaced, so a caller that changes them per group of draws (Sodium: once
++ * per region, before that region's multi-draw) calls this once per group.
++ *
++ * <h2>Data layout</h2>
++ * Members are packed with std140 rules. For scalars, vectors, {@code mat3} and
++ * {@code mat4}, and {@code matCx3}/{@code matCx4} this is identical to the
++ * std430 layout a push-constant block normally has (DirectExp refuses shaders
++ * whose push-constant block uses anything that would differ). For example
++ * Sodium's block {@code { vec3 u_RegionOffset; int u_CurrentTime; uint
++ * u_RegionID; }} is 20 bytes: {@code float x, y, z} at offsets 0, 4, 8, the
++ * time at 12 and the region id at 16.
++ */
++public interface DxPushConstants {
++	/**
++	 * Largest accepted payload. Matches the 128 bytes Vulkan guarantees for
++	 * {@code maxPushConstantsSize}, so anything that fits there fits here.
++	 */
++	int MAX_BYTES = 128;
++
++	/**
++	 * Copies {@code [data.position(), data.limit())} (the buffer itself is
++	 * neither modified nor retained, so the caller may reuse it immediately)
++	 * as the push constants for the following draws of this render pass. An
++	 * empty buffer clears them again.
++	 *
++	 * @throws IllegalArgumentException if {@code data} is null or longer than {@link #MAX_BYTES}
++	 */
++	void setPushConstants(ByteBuffer data);
++}
+diff -ruN -x '*.class' orig/src/client/java/dev/cubcraftv/directexp/client/backend/DxDeviceBackend.java /home/claude/w2/src/client/java/dev/cubcraftv/directexp/client/backend/DxDeviceBackend.java
+--- orig/src/client/java/dev/cubcraftv/directexp/client/backend/DxDeviceBackend.java	2026-10-03 16:31:32.000000000 +0000
++++ /home/claude/w2/src/client/java/dev/cubcraftv/directexp/client/backend/DxDeviceBackend.java	2026-10-07 23:50:52.579562929 +0000
+@@ -42,7 +42,29 @@
+  * (see docs/plans's Milestone 3 scope).
+  */
+ final class DxDeviceBackend implements GpuDeviceBackend {
+-	private static final DeviceLimits DEFAULT_LIMITS = new DeviceLimits(16, 256, 16384, Long.MAX_VALUE, 0, 1);
++	/**
++	 * Blaze3D's {@code RenderPass.multiDrawIndexed(IntBuffer, ...)} rejects a
++	 * {@code drawCount} above this. Sodium's per-region batch holds at most
++	 * {@code ModelQuadFacing.COUNT (7) * RenderRegion.REGION_SIZE (256) + 1 = 1793}
++	 * draws; the loop in {@link DxRenderPassBackend} has no limit of its own, so
++	 * this is a generous ceiling rather than a hardware figure.
++	 */
++	static final int MAX_MULTI_DRAW_DIRECT_INTERLEAVED_DRAW_COUNT = 65536;
++
++	static final DeviceLimits DEFAULT_LIMITS = new DeviceLimits(16, 256, 16384, Long.MAX_VALUE, MAX_MULTI_DRAW_DIRECT_INTERLEAVED_DRAW_COUNT, 1);
++
++	/**
++	 * Only {@code multiDrawDirectInterleaved} is on: {@link DxRenderPassBackend}
++	 * implements {@code multiDrawIndexed(IntBuffer, ...)} (as a loop of indexed
++	 * draws), and only Blaze3D's {@code RenderPass} validation and Sodium read the
++	 * flag. Everything else stays off on purpose: there is no
++	 * {@code gl_DrawID}/base-instance support ({@code shaderDrawParameters},
++	 * {@code nonZeroFirstInstance}), no multi-draw variants beyond the interleaved
++	 * one, no indirect draws, and {@code persistentMapping} must stay false so
++	 * Sodium keeps its {@code writeToBuffer} staging path instead of one that
++	 * casts to OpenGL classes.
++	 */
++	static final DeviceFeatures FEATURES = new DeviceFeatures(false, true, false, false, false, false, false);
+ 
+ 	private final DxSurfaceLease surfaceLease;
+ 	private final DeviceInfo deviceInfo;
+@@ -81,7 +103,7 @@
+ 			"Direct3D 11 (feature level 10.1 floor)",
+ 			1.0F,
+ 			DEFAULT_LIMITS,
+-			new DeviceFeatures(false, false, false, false, false, false, false),
++			FEATURES,
+ 			Set.of(),
+ 			new HintsAndWorkarounds(false, false),
+ 			DeviceType.OTHER
+diff -ruN -x '*.class' orig/src/client/java/dev/cubcraftv/directexp/client/backend/DxPushConstantStore.java /home/claude/w2/src/client/java/dev/cubcraftv/directexp/client/backend/DxPushConstantStore.java
+--- orig/src/client/java/dev/cubcraftv/directexp/client/backend/DxPushConstantStore.java	1970-01-01 00:00:00.000000000 +0000
++++ /home/claude/w2/src/client/java/dev/cubcraftv/directexp/client/backend/DxPushConstantStore.java	2026-10-07 01:33:57.080724379 +0000
+@@ -0,0 +1,47 @@
++package dev.cubcraftv.directexp.client.backend;
++
++import dev.cubcraftv.directexp.client.api.DxPushConstants;
++
++import java.nio.ByteBuffer;
++import java.nio.ByteOrder;
++import java.util.Objects;
++
++/**
++ * The bytes behind {@link DxPushConstants}: one small buffer per render pass,
++ * overwritten in place by every {@link #set} so the per-region call a terrain
++ * renderer makes does not allocate. Kept separate from
++ * {@link DxRenderPassBackend} (which needs Minecraft classes) so the copy,
++ * validation and "unset" semantics are unit-testable.
++ */
++final class DxPushConstantStore {
++	private ByteBuffer storage;
++	private int length;
++
++	/** Copies {@code [data.position(), data.limit())}; the source is neither changed nor kept. */
++	void set(ByteBuffer data) {
++		Objects.requireNonNull(data, "data");
++		int size = data.remaining();
++		if (size > DxPushConstants.MAX_BYTES) {
++			throw new IllegalArgumentException("Push constants are limited to " + DxPushConstants.MAX_BYTES + " bytes, got " + size + ".");
++		}
++
++		this.length = size;
++		if (size == 0) {
++			return;
++		}
++		if (this.storage == null) {
++			this.storage = ByteBuffer.allocate(DxPushConstants.MAX_BYTES).order(ByteOrder.nativeOrder());
++		}
++		this.storage.clear();
++		this.storage.put(data.duplicate());
++		this.storage.flip();
++	}
++
++	/** A read-only view of the current bytes (position 0, limit = length), or null when nothing is set. */
++	ByteBuffer bytes() {
++		if (this.length == 0) {
++			return null;
++		}
++		return this.storage.asReadOnlyBuffer().order(ByteOrder.nativeOrder());
++	}
++}
+diff -ruN -x '*.class' orig/src/client/java/dev/cubcraftv/directexp/client/backend/DxRenderPassBackend.java /home/claude/w2/src/client/java/dev/cubcraftv/directexp/client/backend/DxRenderPassBackend.java
+--- orig/src/client/java/dev/cubcraftv/directexp/client/backend/DxRenderPassBackend.java	2026-10-05 15:53:24.000000000 +0000
++++ /home/claude/w2/src/client/java/dev/cubcraftv/directexp/client/backend/DxRenderPassBackend.java	2026-10-07 01:33:41.956409358 +0000
+@@ -12,6 +12,8 @@
+ import com.mojang.blaze3d.textures.GpuSampler;
+ import com.mojang.blaze3d.textures.GpuTextureView;
+ import dev.cubcraftv.directexp.bridge.DxBridge;
++import dev.cubcraftv.directexp.client.api.DxPushConstants;
++import dev.cubcraftv.directexp.client.shader.DxShaderInterfaceLayout;
+ 
+ import java.nio.ByteBuffer;
+ import java.nio.IntBuffer;
+@@ -57,7 +59,7 @@
+  * <p>{@link #drawMultipleIndexed} follows the decompiled
+  * {@code VulkanRenderPass} line for line (see the method comment).
+  */
+-final class DxRenderPassBackend implements RenderPassBackend {
++final class DxRenderPassBackend implements RenderPassBackend, DxPushConstants {
+ 	private final DxTextureView colorView;
+ 	private final DxTextureView depthView;
+ 	private final DxTexture colorTarget;
+@@ -73,6 +75,7 @@
+ 	private final Map<String, GpuBuffer> uniformBuffers = new HashMap<>();
+ 	private final Map<String, GpuBufferSlice> uniformSlices = new HashMap<>();
+ 	private final Map<Integer, GpuBufferSlice> vertexBuffers = new HashMap<>();
++	private final DxPushConstantStore pushConstants = new DxPushConstantStore();
+ 	private final DxTriangleFanExpander fanExpander = new DxTriangleFanExpander();
+ 	private final boolean nativeTargetsBound;
+ 
+@@ -215,6 +218,17 @@
+ 		this.texturesDirty = true;
+ 	}
+ 
++	/**
++	 * Supplies the bytes for a shader's {@code layout(push_constant)} block,
++	 * which {@code DxShaderInterfaceLayout} turned into the constant buffer
++	 * named {@link DxShaderInterfaceLayout#PUSH_CONSTANT_BLOCK_NAME}; it is
++	 * re-staged with every draw like any other constant buffer.
++	 */
++	@Override
++	public void setPushConstants(ByteBuffer data) {
++		this.pushConstants.set(data);
++	}
++
+ 	@Override
+ 	public void setUniform(String name, GpuBuffer gpuBuffer) {
+ 		this.uniformBuffers.put(name, gpuBuffer);
+@@ -552,6 +566,10 @@
+ 	private final class PassBindingSource implements DxResourceBinder.Source {
+ 		@Override
+ 		public ByteBuffer uniformBytes(String name) {
++			if (name.equals(DxShaderInterfaceLayout.PUSH_CONSTANT_BLOCK_NAME)) {
++				return DxRenderPassBackend.this.pushConstants.bytes();
++			}
++
+ 			GpuBufferSlice slice = DxRenderPassBackend.this.uniformSlices.get(name);
+ 			if (slice != null) {
+ 				return ((DxBuffer) slice.buffer()).sliceStorage(slice.offset(), slice.length());
+diff -ruN -x '*.class' orig/src/client/java/dev/cubcraftv/directexp/client/backend/DxResourceBinder.java /home/claude/w2/src/client/java/dev/cubcraftv/directexp/client/backend/DxResourceBinder.java
+--- orig/src/client/java/dev/cubcraftv/directexp/client/backend/DxResourceBinder.java	2026-10-05 15:50:22.000000000 +0000
++++ /home/claude/w2/src/client/java/dev/cubcraftv/directexp/client/backend/DxResourceBinder.java	2026-10-07 01:33:57.080307768 +0000
+@@ -4,6 +4,7 @@
+ import dev.cubcraftv.directexp.bridge.DxResourceKind;
+ import dev.cubcraftv.directexp.client.shader.DxResourceLayout;
+ import dev.cubcraftv.directexp.client.shader.DxResourceLayoutEntry;
++import dev.cubcraftv.directexp.client.shader.DxShaderInterfaceLayout;
+ 
+ import java.nio.ByteBuffer;
+ import java.util.Objects;
+@@ -73,7 +74,8 @@
+ 
+ 			ByteBuffer bytes = source.uniformBytes(entry.name());
+ 			if (bytes == null) {
+-				this.diagnostics.reportOnce("uniform-unset:" + entry.name(), "pipeline " + layout.pipelineDebugLabel() + " uses uniform '" + entry.name() + "' but the render pass never set it");
++				String hint = entry.name().equals(DxShaderInterfaceLayout.PUSH_CONSTANT_BLOCK_NAME) ? " (its push constants; see DxPushConstants.setPushConstants)" : "";
++				this.diagnostics.reportOnce("uniform-unset:" + entry.name(), "pipeline " + layout.pipelineDebugLabel() + " uses uniform '" + entry.name() + "'" + hint + " but the render pass never set it");
+ 				complete = false;
+ 				continue;
+ 			}
+diff -ruN -x '*.class' orig/src/client/java/dev/cubcraftv/directexp/client/shader/DxResourceLayoutBuilder.java /home/claude/w2/src/client/java/dev/cubcraftv/directexp/client/shader/DxResourceLayoutBuilder.java
+--- orig/src/client/java/dev/cubcraftv/directexp/client/shader/DxResourceLayoutBuilder.java	2026-09-27 13:36:40.000000000 +0000
++++ /home/claude/w2/src/client/java/dev/cubcraftv/directexp/client/shader/DxResourceLayoutBuilder.java	2026-10-07 01:33:41.956839293 +0000
+@@ -177,7 +177,8 @@
+ 			}
+ 		}
+ 		for (String reflectedUniformBlock : reflectedUniformBlockNames) {
+-			if (!declarations.uniformBlocks().contains(reflectedUniformBlock)) {
++			// The push-constant block is synthesised by DxShaderInterfaceLayout, so no pipeline declares it.
++			if (!declarations.uniformBlocks().contains(reflectedUniformBlock) && !reflectedUniformBlock.equals(DxShaderInterfaceLayout.PUSH_CONSTANT_BLOCK_NAME)) {
+ 				DirectExpMod.LOGGER.debug(
+ 					"Pipeline {} did not declare uniform block '{}' but SPIR-V reflection found it.",
+ 					pipelineDebugLabel, reflectedUniformBlock
+diff -ruN -x '*.class' orig/src/client/java/dev/cubcraftv/directexp/client/shader/DxShaderInterfaceLayout.java /home/claude/w2/src/client/java/dev/cubcraftv/directexp/client/shader/DxShaderInterfaceLayout.java
+--- orig/src/client/java/dev/cubcraftv/directexp/client/shader/DxShaderInterfaceLayout.java	2026-10-03 16:33:58.000000000 +0000
++++ /home/claude/w2/src/client/java/dev/cubcraftv/directexp/client/shader/DxShaderInterfaceLayout.java	2026-10-06 09:03:19.537120035 +0000
+@@ -68,6 +68,27 @@
+  * declared under Vulkan semantics, so the same two defines Vulkan's
+  * {@code GlslCompiler} injects are injected here too.
+  *
++ * <h2>Push constants</h2>
++ * Some shaders (Sodium's terrain shader, under {@code #ifdef VULKAN}, which
++ * {@code shaderc} defines itself for Vulkan semantics) declare a
++ * {@code layout(push_constant) uniform Name { ... };} block for values that
++ * change per draw. D3D11 has no push constants, and numbering such a block like
++ * an ordinary uniform block makes glslang fail ("'binding' : cannot be used
++ * with push_constant"). This stage therefore rewrites it to an ordinary
++ * {@code layout(binding = N, std140) uniform DxPushConstants { ... }} block:
++ * the {@code push_constant} qualifier is dropped, a binding is assigned in the
++ * shared binding space, and the block <em>type</em> name is replaced by
++ * {@link #PUSH_CONSTANT_BLOCK_NAME} (members stay addressable by their own
++ * names, so the shader body is untouched). Downstream it is just a constant
++ * buffer under that fixed name, which the draw path fills from the bytes the
++ * caller handed to {@code DxPushConstants.setPushConstants}.
++ * <p>
++ * Push-constant blocks default to {@code std430} while the rewritten block is
++ * {@code std140}; the two agree for scalars, vectors, {@code mat3}/{@code mat4}
++ * and the like, and disagree for arrays and {@code matCx2}. Rather than risk
++ * silently shifted data, any block member that is not a plain scalar, vector or
++ * non-2-row matrix is refused with a {@link DxShaderInterfaceException}.
++ *
+  * <h2>Scope and limits</h2>
+  * A small tokenizer, not a GLSL parser: it skips comments and
+  * preprocessor lines and looks at declaration statements at brace depth
+@@ -91,6 +112,14 @@
+ 			+ "#extension GL_ARB_separate_shader_objects : require\n";
+ 
+ 	/** The same two defines Vulkan's {@code GlslCompiler} injects globally. */
++	/**
++	 * The fixed block name every {@code push_constant} block is renamed to, and
++	 * therefore the name its constant buffer has in the reflected resource
++	 * layout. Vulkan allows one push-constant block per pipeline, so one name
++	 * is enough; both stages declaring it merge into one entry.
++	 */
++	public static final String PUSH_CONSTANT_BLOCK_NAME = "DxPushConstants";
++
+ 	static final String VULKAN_BUILTIN_DEFINES =
+ 		"#define gl_VertexID gl_VertexIndex\n"
+ 			+ "#define gl_InstanceID gl_InstanceIndex\n";
+@@ -172,7 +201,7 @@
+ 		Map<String, Integer> bindings = new LinkedHashMap<>();
+ 		for (List<Decl> decls : List.of(vertexDecls, fragmentDecls)) {
+ 			for (Decl decl : decls) {
+-				if (decl.kind == Kind.UNIFORM_BLOCK || decl.kind == Kind.SAMPLER) {
++				if (decl.kind == Kind.UNIFORM_BLOCK || decl.kind == Kind.SAMPLER || decl.kind == Kind.PUSH_CONSTANT_BLOCK) {
+ 					bindings.computeIfAbsent(decl.name, name -> bindings.size());
+ 				}
+ 			}
+@@ -192,6 +221,7 @@
+ 				}
+ 				case OUT -> vertexEdits.add(decl.edit("location", varyingLocations.get(decl.name)));
+ 				case UNIFORM_BLOCK, SAMPLER -> vertexEdits.add(decl.edit("binding", bindings.get(decl.name)));
++				case PUSH_CONSTANT_BLOCK -> vertexEdits.addAll(decl.pushConstantEdits(bindings.get(decl.name)));
+ 			}
+ 		}
+ 
+@@ -211,6 +241,7 @@
+ 				}
+ 				case OUT -> fragmentEdits.add(decl.edit("location", fragmentOutputs.computeIfAbsent(decl.name, name -> fragmentOutputs.size())));
+ 				case UNIFORM_BLOCK, SAMPLER -> fragmentEdits.add(decl.edit("binding", bindings.get(decl.name)));
++				case PUSH_CONSTANT_BLOCK -> fragmentEdits.addAll(decl.pushConstantEdits(bindings.get(decl.name)));
+ 			}
+ 		}
+ 
+@@ -226,11 +257,23 @@
+ 	// ---------------------------------------------------------------------
+ 
+ 	private enum Kind {
+-		IN, OUT, UNIFORM_BLOCK, SAMPLER
++		IN, OUT, UNIFORM_BLOCK, SAMPLER, PUSH_CONSTANT_BLOCK
+ 	}
+ 
+-	/** One text insertion at a character offset of the original source. */
+-	private record Edit(int position, String text) {
++	/**
++	 * One text edit at a character offset of the original source: the
++	 * {@code deleteLength} characters at {@code position} (usually 0, a pure
++	 * insertion) are replaced by {@code text}.
++	 */
++	private record Edit(int position, int deleteLength, String text) {
++	}
++
++	/**
++	 * What a {@code layout(push_constant)} block rewrite needs: the character
++	 * range of the first {@code layout(...)} body, the qualifiers that survive
++	 * the rewrite, and the range of the block's type name.
++	 */
++	private record PushBlock(int layoutBodyStart, int layoutBodyEnd, List<String> keptQualifiers, int nameStart, int nameEnd) {
+ 	}
+ 
+ 	/**
+@@ -239,13 +282,36 @@
+ 	 * qualifier (so {@code std140} can be merged into
+ 	 * {@code layout(binding = 0, std140)}), or -1 if there is none.
+ 	 */
+-	private record Decl(Kind kind, String name, int statementStart, int layoutBodyStart) {
++	private record Decl(Kind kind, String name, int statementStart, int layoutBodyStart, PushBlock push) {
++		Decl(Kind kind, String name, int statementStart, int layoutBodyStart) {
++			this(kind, name, statementStart, layoutBodyStart, null);
++		}
++
+ 		Edit edit(String qualifier, int value) {
+ 			if (this.layoutBodyStart >= 0) {
+-				return new Edit(this.layoutBodyStart, qualifier + " = " + value + ", ");
++				return new Edit(this.layoutBodyStart, 0, qualifier + " = " + value + ", ");
+ 			}
+-			return new Edit(this.statementStart, "layout(" + qualifier + " = " + value + ") ");
++			return new Edit(this.statementStart, 0, "layout(" + qualifier + " = " + value + ") ");
+ 		}
++
++		/** The two edits (layout qualifiers, block name) that turn a push-constant block into a numbered std140 uniform block. */
++		List<Edit> pushConstantEdits(int binding) {
++			StringBuilder body = new StringBuilder("binding = ").append(binding);
++			for (String qualifier : this.push.keptQualifiers) {
++				body.append(", ").append(qualifier);
++			}
++			if (this.push.keptQualifiers.stream().noneMatch(DxShaderInterfaceLayout::isBlockLayoutQualifier)) {
++				body.append(", std140");
++			}
++			return List.of(
++				new Edit(this.push.layoutBodyStart, this.push.layoutBodyEnd - this.push.layoutBodyStart, body.toString()),
++				new Edit(this.push.nameStart, this.push.nameEnd - this.push.nameStart, PUSH_CONSTANT_BLOCK_NAME)
++			);
++		}
++	}
++
++	private static boolean isBlockLayoutQualifier(String qualifier) {
++		return qualifier.equals("std140") || qualifier.equals("std430") || qualifier.equals("shared") || qualifier.equals("packed") || qualifier.equals("scalar");
+ 	}
+ 
+ 	private static String rewrite(String source, List<Edit> edits, String stageName) throws DxShaderInterfaceException {
+@@ -268,14 +334,15 @@
+ 		String header = (versionEndsWithNewline ? "" : "\n") + EXTENSIONS + VULKAN_BUILTIN_DEFINES + "#line " + nextLine + "\n";
+ 
+ 		List<Edit> all = new ArrayList<>(edits);
+-		all.add(new Edit(afterVersion, header));
++		all.add(new Edit(afterVersion, 0, header));
+ 		// Apply back to front so earlier offsets stay valid; stable for equal
+-		// positions is not needed (no two edits share an offset).
++		// positions is not needed (no two edits share an offset, and a
++		// replacement never overlaps another edit's range).
+ 		all.sort((a, b) -> Integer.compare(b.position, a.position));
+ 
+ 		StringBuilder builder = new StringBuilder(source);
+ 		for (Edit edit : all) {
+-			builder.insert(edit.position, edit.text);
++			builder.replace(edit.position, edit.position + edit.deleteLength, edit.text);
+ 		}
+ 		return builder.toString();
+ 	}
+@@ -299,13 +366,14 @@
+ 		DECLARATION, BLOCK_HEADER
+ 	}
+ 
+-	private record Statement(StatementKind kind, List<Token> tokens) {
++	/** {@code body} holds the tokens between a block's braces (empty for plain declarations). */
++	private record Statement(StatementKind kind, List<Token> tokens, List<Token> body) {
+ 	}
+ 
+ 	private static List<Decl> parse(String source, String stageName) throws DxShaderInterfaceException {
+ 		List<Decl> decls = new ArrayList<>();
+ 		for (Statement statement : splitTopLevelStatements(tokenize(source))) {
+-			Decl decl = analyze(statement, stageName);
++			Decl decl = analyze(statement, stageName, source);
+ 			if (decl != null) {
+ 				decls.add(decl);
+ 			}
+@@ -386,13 +454,18 @@
+ 		int parenDepth = 0;
+ 		boolean skipTrailerUntilSemicolon = false;
+ 		boolean lastBodyWasFunction = false;
++		// Filled while a non-function body is scanned; it belongs to the
++		// BLOCK_HEADER statement added when the body's '{' was seen.
++		List<Token> currentBody = null;
+ 
+ 		for (Token token : tokens) {
+ 			if (braceDepth > 0) {
++				boolean closesBody = false;
+ 				if (token.is("{")) {
+ 					braceDepth++;
+ 				} else if (token.is("}")) {
+ 					braceDepth--;
++					closesBody = braceDepth == 0;
+ 					if (braceDepth == 0) {
+ 						// A function body ends the statement; a block or
+ 						// struct body is followed by an optional instance
+@@ -400,6 +473,9 @@
+ 						skipTrailerUntilSemicolon = !lastBodyWasFunction;
+ 					}
+ 				}
++				if (currentBody != null && !closesBody) {
++					currentBody.add(token);
++				}
+ 				continue;
+ 			}
+ 
+@@ -418,8 +494,10 @@
+ 
+ 			if (token.is("{") && parenDepth == 0) {
+ 				boolean isFunction = current.stream().anyMatch(t -> t.is("(")) && !startsWithLayoutOnlyParens(current);
++				currentBody = null;
+ 				if (!isFunction) {
+-					statements.add(new Statement(StatementKind.BLOCK_HEADER, List.copyOf(current)));
++					currentBody = new ArrayList<>();
++					statements.add(new Statement(StatementKind.BLOCK_HEADER, List.copyOf(current), currentBody));
+ 				}
+ 				lastBodyWasFunction = isFunction;
+ 				current = new ArrayList<>();
+@@ -429,7 +507,7 @@
+ 
+ 			if (token.is(";") && parenDepth == 0) {
+ 				if (!current.isEmpty()) {
+-					statements.add(new Statement(StatementKind.DECLARATION, List.copyOf(current)));
++					statements.add(new Statement(StatementKind.DECLARATION, List.copyOf(current), List.of()));
+ 				}
+ 				current = new ArrayList<>();
+ 				continue;
+@@ -481,7 +559,7 @@
+ 	}
+ 
+ 	/** Returns the declaration to number, or null if this statement is not one. */
+-	private static Decl analyze(Statement statement, String stageName) throws DxShaderInterfaceException {
++	private static Decl analyze(Statement statement, String stageName, String source) throws DxShaderInterfaceException {
+ 		List<Token> tokens = statement.tokens();
+ 		if (tokens.isEmpty()) {
+ 			return null;
+@@ -492,19 +570,31 @@
+ 		boolean uniform = false;
+ 		boolean hasLocation = false;
+ 		boolean hasBinding = false;
++		boolean pushConstant = false;
+ 		int layoutBodyStart = -1;
++		int layoutBodyEnd = -1;
++		List<String> firstLayoutQualifiers = List.of();
+ 
+ 		int i = 0;
+ 		while (i < tokens.size()) {
+ 			Token token = tokens.get(i);
+ 			if (token.is("layout") && i + 1 < tokens.size() && tokens.get(i + 1).is("(")) {
+ 				int close = matchingParen(tokens, i + 1);
+-				if (layoutBodyStart < 0) {
++				boolean firstGroup = layoutBodyStart < 0;
++				if (firstGroup) {
+ 					layoutBodyStart = tokens.get(i + 1).end();
++					layoutBodyEnd = tokens.get(close).start();
++					firstLayoutQualifiers = splitLayoutQualifiers(tokens, i + 2, close, source);
+ 				}
+ 				for (int k = i + 2; k < close; k++) {
+ 					hasLocation |= tokens.get(k).is("location");
+ 					hasBinding |= tokens.get(k).is("binding");
++					if (tokens.get(k).is("push_constant")) {
++						pushConstant = true;
++						if (!firstGroup) {
++							throw unsupported(stageName, "push_constant", "push_constant in a second layout(...) group");
++						}
++					}
+ 				}
+ 				i = close + 1;
+ 			} else if (QUALIFIERS.contains(token.text)) {
+@@ -532,6 +622,9 @@
+ 			if (hasBinding) {
+ 				throw explicit(stageName, first.text, "binding");
+ 			}
++			if (pushConstant) {
++				return pushConstantDecl(stageName, first, statement.body(), layoutBodyStart, layoutBodyEnd, firstLayoutQualifiers, statementStart);
++			}
+ 			return new Decl(Kind.UNIFORM_BLOCK, first.text, statementStart, layoutBodyStart);
+ 		}
+ 
+@@ -569,6 +662,99 @@
+ 		return new Decl(in ? Kind.IN : Kind.OUT, name.text, statementStart, layoutBodyStart);
+ 	}
+ 
++	/** The comma-separated entries of one {@code layout(...)} body, as source text (tokens {@code [from, to)}). */
++	private static List<String> splitLayoutQualifiers(List<Token> tokens, int from, int to, String source) {
++		List<String> parts = new ArrayList<>();
++		int partStart = from;
++		int depth = 0;
++		for (int k = from; k <= to; k++) {
++			boolean end = k == to;
++			if (!end) {
++				if (tokens.get(k).is("(")) {
++					depth++;
++				} else if (tokens.get(k).is(")")) {
++					depth--;
++				}
++			}
++			if (end || (depth == 0 && tokens.get(k).is(","))) {
++				if (k > partStart) {
++					parts.add(source.substring(tokens.get(partStart).start(), tokens.get(k - 1).end()));
++				}
++				partStart = k + 1;
++			}
++		}
++		return parts;
++	}
++
++	/**
++	 * Built-in member types whose std430 (push constant) and std140 (rewritten
++	 * uniform block) layouts agree. A {@code matCxR} has C column vectors of R
++	 * components: R = 2 (so {@code mat2}, {@code mat3x2}, {@code mat4x2}) is
++	 * strided by 8 bytes under std430 but 16 under std140, hence left out.
++	 */
++	private static final Pattern PUSH_MEMBER_TYPE = Pattern.compile("(?:[iub]?vec[234]|float|int|uint|bool|mat[34]|mat[34]x[34]|mat2x[34])");
++
++	private static Decl pushConstantDecl(
++		String stageName, Token nameToken, List<Token> body, int layoutBodyStart, int layoutBodyEnd, List<String> layoutQualifiers, int statementStart
++	) throws DxShaderInterfaceException {
++		List<String> kept = new ArrayList<>();
++		for (String qualifier : layoutQualifiers) {
++			if (qualifier.equals("push_constant")) {
++				continue;
++			}
++			if (qualifier.equals("std430") || qualifier.equals("scalar")) {
++				throw unsupported(stageName, nameToken.text, "push_constant block with layout '" + qualifier + "'; it is rewritten to std140");
++			}
++			kept.add(qualifier);
++		}
++
++		// Every member must lay out identically under std430 and std140.
++		List<Token> member = new ArrayList<>();
++		for (Token token : body) {
++			if (token.is(";")) {
++				checkPushConstantMember(stageName, nameToken.text, member);
++				member = new ArrayList<>();
++			} else {
++				member.add(token);
++			}
++		}
++		checkPushConstantMember(stageName, nameToken.text, member);
++
++		return new Decl(
++			Kind.PUSH_CONSTANT_BLOCK, PUSH_CONSTANT_BLOCK_NAME, statementStart, layoutBodyStart,
++			new PushBlock(layoutBodyStart, layoutBodyEnd, List.copyOf(kept), nameToken.start(), nameToken.end())
++		);
++	}
++
++	private static void checkPushConstantMember(String stageName, String blockName, List<Token> member) throws DxShaderInterfaceException {
++		if (member.isEmpty()) {
++			return;
++		}
++		int i = 0;
++		while (i < member.size()) {
++			Token token = member.get(i);
++			if (token.is("layout") && i + 1 < member.size() && member.get(i + 1).is("(")) {
++				i = matchingParen(member, i + 1) + 1;
++			} else if (QUALIFIERS.contains(token.text)) {
++				i++;
++			} else {
++				break;
++			}
++		}
++		if (i >= member.size()) {
++			return;
++		}
++		String type = member.get(i).text;
++		if (!PUSH_MEMBER_TYPE.matcher(type).matches()) {
++			throw unsupported(stageName, blockName, "push_constant member of type '" + type + "' (std430 and std140 layouts can differ for it)");
++		}
++		for (Token token : member) {
++			if (token.is("[")) {
++				throw unsupported(stageName, blockName, "push_constant member arrays (std430 and std140 strides differ)");
++			}
++		}
++	}
++
+ 	private static DxShaderInterfaceException explicit(String stage, String name, String qualifier) {
+ 		return new DxShaderInterfaceException(
+ 			"The " + stage + " shader declares '" + name + "' with an explicit " + qualifier
+diff -ruN -x '*.class' orig/src/test/java/dev/cubcraftv/directexp/client/backend/DxDeviceBackendFeaturesTest.java /home/claude/w2/src/test/java/dev/cubcraftv/directexp/client/backend/DxDeviceBackendFeaturesTest.java
+--- orig/src/test/java/dev/cubcraftv/directexp/client/backend/DxDeviceBackendFeaturesTest.java	1970-01-01 00:00:00.000000000 +0000
++++ /home/claude/w2/src/test/java/dev/cubcraftv/directexp/client/backend/DxDeviceBackendFeaturesTest.java	2026-10-07 23:50:52.579839785 +0000
+@@ -0,0 +1,39 @@
++package dev.cubcraftv.directexp.client.backend;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertFalse;
++import static org.junit.jupiter.api.Assertions.assertTrue;
++
++import org.junit.jupiter.api.Test;
++
++/**
++ * Pins what the device tells Blaze3D (and Sodium) it supports. Sodium's multi-draw
++ * path fails at the first terrain draw if the interleaved flag or the limit regress,
++ * which is a confusing place to find out.
++ */
++final class DxDeviceBackendFeaturesTest {
++	/** ModelQuadFacing.COUNT (7) * RenderRegion.REGION_SIZE (8 * 4 * 8) + 1 in Sodium 26.2. */
++	private static final int SODIUM_MAX_BATCH_DRAWS = 7 * 256 + 1;
++
++	@Test
++	void reportsInterleavedMultiDrawBecauseTheRenderPassImplementsIt() {
++		assertTrue(DxDeviceBackend.FEATURES.multiDrawDirectInterleaved());
++	}
++
++	@Test
++	void drawCountLimitCoversSodiumsLargestRegionBatch() {
++		assertTrue(DxDeviceBackend.DEFAULT_LIMITS.maxMultiDrawDirectInterleavedDrawCount() >= SODIUM_MAX_BATCH_DRAWS);
++		assertEquals(65536, DxDeviceBackend.DEFAULT_LIMITS.maxMultiDrawDirectInterleavedDrawCount());
++	}
++
++	@Test
++	void everythingElseStaysOffOnPurpose() {
++		assertFalse(DxDeviceBackend.FEATURES.shaderDrawParameters());
++		assertFalse(DxDeviceBackend.FEATURES.multiDrawDirectSeparate());
++		assertFalse(DxDeviceBackend.FEATURES.multiDrawIndirect());
++		assertFalse(DxDeviceBackend.FEATURES.drawIndirect());
++		assertFalse(DxDeviceBackend.FEATURES.nonZeroFirstInstance());
++		// Must stay false: true would route Sodium to its OpenGL-only mapped staging buffer.
++		assertFalse(DxDeviceBackend.FEATURES.persistentMapping());
++	}
++}
+diff -ruN -x '*.class' orig/src/test/java/dev/cubcraftv/directexp/client/backend/DxPushConstantStoreTest.java /home/claude/w2/src/test/java/dev/cubcraftv/directexp/client/backend/DxPushConstantStoreTest.java
+--- orig/src/test/java/dev/cubcraftv/directexp/client/backend/DxPushConstantStoreTest.java	1970-01-01 00:00:00.000000000 +0000
++++ /home/claude/w2/src/test/java/dev/cubcraftv/directexp/client/backend/DxPushConstantStoreTest.java	2026-10-07 01:33:57.084623603 +0000
+@@ -0,0 +1,104 @@
++package dev.cubcraftv.directexp.client.backend;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertNotNull;
++import static org.junit.jupiter.api.Assertions.assertNull;
++import static org.junit.jupiter.api.Assertions.assertThrows;
++import static org.junit.jupiter.api.Assertions.assertTrue;
++
++import dev.cubcraftv.directexp.client.api.DxPushConstants;
++import org.junit.jupiter.api.Test;
++
++import java.nio.ByteBuffer;
++import java.nio.ByteOrder;
++
++final class DxPushConstantStoreTest {
++	/** Sodium's block: vec3 offset, int time, uint region id (20 bytes). */
++	private static ByteBuffer sodiumBlock(float x, float y, float z, int time, int region) {
++		ByteBuffer data = ByteBuffer.allocate(20).order(ByteOrder.nativeOrder());
++		data.putFloat(x).putFloat(y).putFloat(z).putInt(time).putInt(region).flip();
++		return data;
++	}
++
++	@Test
++	void unsetStoreHasNoBytes() {
++		assertNull(new DxPushConstantStore().bytes());
++	}
++
++	@Test
++	void copiesTheRemainingBytesAndDoesNotKeepTheCallersBuffer() {
++		DxPushConstantStore store = new DxPushConstantStore();
++		ByteBuffer source = sodiumBlock(1f, 2f, 3f, 40, 5);
++		store.set(source);
++
++		// The caller's buffer is untouched (position still 0) and can be reused straight away.
++		assertEquals(0, source.position());
++		source.putFloat(0, 99f);
++
++		ByteBuffer bytes = store.bytes();
++		assertNotNull(bytes);
++		assertEquals(20, bytes.remaining());
++		assertEquals(1f, bytes.getFloat(0));
++		assertEquals(2f, bytes.getFloat(4));
++		assertEquals(3f, bytes.getFloat(8));
++		assertEquals(40, bytes.getInt(12));
++		assertEquals(5, bytes.getInt(16));
++		assertTrue(bytes.isReadOnly());
++	}
++
++	@Test
++	void honoursPositionAndLimitOfTheSource() {
++		DxPushConstantStore store = new DxPushConstantStore();
++		ByteBuffer source = ByteBuffer.allocate(16).order(ByteOrder.nativeOrder());
++		source.putInt(0, 111).putInt(4, 222).putInt(8, 333).putInt(12, 444);
++		source.position(4).limit(12);
++		store.set(source);
++
++		ByteBuffer bytes = store.bytes();
++		assertEquals(8, bytes.remaining());
++		assertEquals(222, bytes.getInt(0));
++		assertEquals(333, bytes.getInt(4));
++	}
++
++	@Test
++	void laterSetReplacesEarlierAndAShorterOneShrinksTheView() {
++		DxPushConstantStore store = new DxPushConstantStore();
++		store.set(sodiumBlock(1f, 2f, 3f, 4, 5));
++		store.set(ByteBuffer.allocate(4).order(ByteOrder.nativeOrder()).putInt(0, 7));
++
++		ByteBuffer bytes = store.bytes();
++		assertEquals(4, bytes.remaining());
++		assertEquals(7, bytes.getInt(0));
++	}
++
++	@Test
++	void everyCallReturnsAnIndependentViewSoStagingCannotDisturbTheStore() {
++		DxPushConstantStore store = new DxPushConstantStore();
++		store.set(sodiumBlock(1f, 2f, 3f, 4, 5));
++		ByteBuffer first = store.bytes();
++		first.position(first.limit());
++
++		assertEquals(20, store.bytes().remaining());
++	}
++
++	@Test
++	void emptyBufferClearsThePushConstants() {
++		DxPushConstantStore store = new DxPushConstantStore();
++		store.set(sodiumBlock(1f, 2f, 3f, 4, 5));
++		store.set(ByteBuffer.allocate(0));
++
++		assertNull(store.bytes());
++	}
++
++	@Test
++	void acceptsExactlyTheMaximumAndRejectsMoreOrNull() {
++		DxPushConstantStore store = new DxPushConstantStore();
++		store.set(ByteBuffer.allocate(DxPushConstants.MAX_BYTES));
++		assertEquals(DxPushConstants.MAX_BYTES, store.bytes().remaining());
++
++		assertThrows(IllegalArgumentException.class, () -> store.set(ByteBuffer.allocate(DxPushConstants.MAX_BYTES + 1)));
++		assertThrows(NullPointerException.class, () -> store.set(null));
++		// A rejected call must not disturb what was set before.
++		assertEquals(DxPushConstants.MAX_BYTES, store.bytes().remaining());
++	}
++}
+diff -ruN -x '*.class' orig/src/test/java/dev/cubcraftv/directexp/client/shader/DxShaderInterfaceLayoutTest.java /home/claude/w2/src/test/java/dev/cubcraftv/directexp/client/shader/DxShaderInterfaceLayoutTest.java
+--- orig/src/test/java/dev/cubcraftv/directexp/client/shader/DxShaderInterfaceLayoutTest.java	2026-10-01 04:58:36.000000000 +0000
++++ /home/claude/w2/src/test/java/dev/cubcraftv/directexp/client/shader/DxShaderInterfaceLayoutTest.java	2026-10-06 09:03:19.537531170 +0000
+@@ -326,6 +326,114 @@
+ 		assertTrue(result.notes().isEmpty(), result.notes().toString());
+ 	}
+ 
++	/** The shape Sodium's terrain vertex shader uses: push constants under {@code #ifdef VULKAN}, loose uniforms otherwise. */
++	private static final String SODIUM_STYLE_VERTEX = """
++		#version 330 core
++		layout(std140) uniform u_Globals { mat4 u_ProjectionMatrix; };
++		uniform isamplerBuffer u_SectionTimeInfo;
++		#ifdef VULKAN
++		layout(push_constant) uniform PC {
++		    vec3 u_RegionOffset;
++		    int u_CurrentTime;
++		    uint u_RegionID;
++		};
++		#else
++		uniform vec3 u_RegionOffset;
++		uniform int u_CurrentTime;
++		uniform uint u_RegionID;
++		#endif
++		uniform sampler2D u_LightTex;
++		in uvec2 a_Position;
++		out vec4 v_Color;
++		void main() { gl_Position = u_ProjectionMatrix * vec4(u_RegionOffset, 1.0); }
++		""";
++
++	@Test
++	void pushConstantBlockBecomesANumberedStd140BlockUnderTheCanonicalName() throws Exception {
++		DxShaderInterfaceLayout.Result result = DxShaderInterfaceLayout.assign(
++			SODIUM_STYLE_VERTEX, "#version 330 core\nout vec4 fragColor;\nvoid main() {}\n", List.of("a_Position"));
++		String vertex = result.vertexSource();
++
++		// Numbered in the shared space in declaration order: block 0, texel buffer 1, push block 2, sampler 3.
++		assertTrue(vertex.contains("layout(binding = 0, std140) uniform u_Globals {"), vertex);
++		assertTrue(vertex.contains("layout(binding = 1) uniform isamplerBuffer u_SectionTimeInfo;"), vertex);
++		assertTrue(vertex.contains("layout(binding = 2, std140) uniform " + DxShaderInterfaceLayout.PUSH_CONSTANT_BLOCK_NAME + " {"), vertex);
++		assertTrue(vertex.contains("layout(binding = 3) uniform sampler2D u_LightTex;"), vertex);
++
++		// The qualifier and the old block name are gone; members and the rest of the body are untouched.
++		assertFalse(vertex.contains("push_constant"), vertex);
++		assertFalse(vertex.contains("uniform PC"), vertex);
++		assertTrue(vertex.contains("    vec3 u_RegionOffset;\n    int u_CurrentTime;\n    uint u_RegionID;\n};"), vertex);
++		assertTrue(vertex.contains("gl_Position = u_ProjectionMatrix * vec4(u_RegionOffset, 1.0);"), vertex);
++
++		// The non-Vulkan branch keeps its loose uniforms: glslang drops that branch, and plain uniforms are never numbered.
++		assertTrue(vertex.contains("\nuniform vec3 u_RegionOffset;\nuniform int u_CurrentTime;\nuniform uint u_RegionID;\n"), vertex);
++		assertEquals(1, count(vertex, "DxPushConstants"));
++	}
++
++	@Test
++	void pushConstantInstanceNameAndOtherLayoutQualifiersSurvive() throws Exception {
++		String vertex = """
++			#version 330
++			layout(row_major, push_constant) uniform PC { mat4 m; vec2 v; } pc;
++			void main() { gl_Position = pc.m * vec4(pc.v, 0.0, 1.0); }
++			""";
++		String rewritten = DxShaderInterfaceLayout.assign(vertex, "#version 330\nvoid main() {}\n", List.of()).vertexSource();
++
++		assertTrue(rewritten.contains("layout(binding = 0, row_major, std140) uniform DxPushConstants { mat4 m; vec2 v; } pc;"), rewritten);
++		assertTrue(rewritten.contains("pc.m * vec4(pc.v, 0.0, 1.0)"), rewritten);
++	}
++
++	@Test
++	void pushConstantBlocksInBothStagesShareOneBindingEvenWithDifferentTypeNames() throws Exception {
++		String vertex = "#version 330\nlayout(std140) uniform A { float a; };\nlayout(push_constant) uniform VertexPC { vec4 tint; };\nvoid main() {}\n";
++		String fragment = "#version 330\nlayout(push_constant) uniform FragmentPC { vec4 tint; };\nlayout(std140) uniform B { float b; };\nout vec4 fragColor;\nvoid main() {}\n";
++		DxShaderInterfaceLayout.Result result = DxShaderInterfaceLayout.assign(vertex, fragment, List.of());
++
++		// A=0, push=1 (first seen in the vertex stage), B=2.
++		assertTrue(result.vertexSource().contains("layout(binding = 1, std140) uniform DxPushConstants {"), result.vertexSource());
++		assertTrue(result.fragmentSource().contains("layout(binding = 1, std140) uniform DxPushConstants {"), result.fragmentSource());
++		assertTrue(result.fragmentSource().contains("layout(binding = 2, std140) uniform B {"), result.fragmentSource());
++	}
++
++	@Test
++	void refusesPushConstantBlocksWhoseLayoutWouldChangeBetweenStd430AndStd140() {
++		String fragment = "#version 330\nvoid main() {}\n";
++		// Arrays have a 4-byte stride in std430 but 16 in std140.
++		assertThrows(DxShaderInterfaceException.class, () -> DxShaderInterfaceLayout.assign(
++			"#version 330\nlayout(push_constant) uniform PC { float weights[4]; };\nvoid main() {}\n", fragment, List.of()));
++		// mat2 columns are 8 bytes apart in std430 but 16 in std140.
++		assertThrows(DxShaderInterfaceException.class, () -> DxShaderInterfaceLayout.assign(
++			"#version 330\nlayout(push_constant) uniform PC { mat2 rot; };\nvoid main() {}\n", fragment, List.of()));
++		assertThrows(DxShaderInterfaceException.class, () -> DxShaderInterfaceLayout.assign(
++			"#version 330\nlayout(push_constant) uniform PC { mat3x2 skew; };\nvoid main() {}\n", fragment, List.of()));
++		// A user-defined struct member cannot be proven layout-compatible by this tokenizer.
++		assertThrows(DxShaderInterfaceException.class, () -> DxShaderInterfaceLayout.assign(
++			"#version 330\nstruct Inner { vec2 a; };\nlayout(push_constant) uniform PC { Inner inner; };\nvoid main() {}\n", fragment, List.of()));
++		// An explicit std430/scalar request would be silently changed by the rewrite.
++		assertThrows(DxShaderInterfaceException.class, () -> DxShaderInterfaceLayout.assign(
++			"#version 330\nlayout(push_constant, std430) uniform PC { vec4 a; };\nvoid main() {}\n", fragment, List.of()));
++	}
++
++	@Test
++	void refusesPushConstantBlockWithExplicitBinding() {
++		assertThrows(DxShaderInterfaceException.class, () -> DxShaderInterfaceLayout.assign(
++			"#version 330\nlayout(push_constant, binding = 1) uniform PC { vec4 a; };\nvoid main() {}\n", "#version 330\nvoid main() {}\n", List.of()));
++	}
++
++	@Test
++	void acceptsEveryBuiltInMemberTypeThatLaysOutTheSameInStd430AndStd140() throws Exception {
++		String vertex = """
++			#version 330
++			layout(push_constant) uniform PC {
++			    vec3 a; int b; uint c; ivec2 d; uvec4 e; bool f; float g; mat4 h; mat3 i; mat4x3 j; mat2x3 k;
++			};
++			void main() {}
++			""";
++		assertTrue(DxShaderInterfaceLayout.assign(vertex, "#version 330\nvoid main() {}\n", List.of())
++			.vertexSource().contains("uniform DxPushConstants {"));
++	}
++
+ 	private static int count(String haystack, String needle) {
+ 		int count = 0;
+ 		for (int index = haystack.indexOf(needle); index >= 0; index = haystack.indexOf(needle, index + needle.length())) {

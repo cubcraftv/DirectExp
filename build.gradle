@@ -17,6 +17,12 @@ def nativeBridgeSources = fileTree("${project.projectDir}/native/src") {
 def nativeBridgeHeaders = fileTree("${project.projectDir}/native/src") {
 	include("*.h")
 }
+// CMake's FindJNI caches its include paths, so changing JAVA_HOME alone does
+// not replace JNI headers previously discovered from another JDK. Pass the
+// active Gradle JDK's include paths explicitly as well.
+def currentJavaHome = new File(System.getProperty("java.home")).canonicalPath.replace('\\', '/')
+def currentJavaInclude = "${currentJavaHome}/include"
+def currentJavaPlatformInclude = "${currentJavaInclude}/win32"
 
 base {
 	archivesName = project.mod_id
@@ -97,6 +103,7 @@ tasks.register("configureNativeWindowsBridge", Exec) {
 	inputs.files(nativeBridgeSources)
 	inputs.files(nativeBridgeHeaders)
 	inputs.file("${project.projectDir}/native/CMakeLists.txt")
+	inputs.property("javaHome", currentJavaHome)
 	outputs.dir(nativeBuildDir)
 	workingDir project.projectDir
 
@@ -109,6 +116,10 @@ tasks.register("configureNativeWindowsBridge", Exec) {
 		"-S", "native",
 		"-B", nativeBuildDir.asFile.absolutePath,
 		"-DCMAKE_BUILD_TYPE=Release",
+		"-DJAVA_HOME=${currentJavaHome}",
+		"-DJAVA_INCLUDE_PATH=${currentJavaInclude}",
+		"-DJAVA_INCLUDE_PATH2=${currentJavaPlatformInclude}",
+		"-DJAVA_AWT_INCLUDE_PATH=${currentJavaInclude}",
 		// Explicit generator instead of relying on CMake's Windows default
 		// (which falls back to "NMake Makefiles" and assumes an MSVC
 		// Developer Command Prompt environment). Ninja works identically
@@ -118,6 +129,8 @@ tasks.register("configureNativeWindowsBridge", Exec) {
 		// native/README.md for both setups.
 		"-G", "Ninja"
 	])
+	environment "JAVA_HOME", currentJavaHome
+	environment "JDK_HOME", currentJavaHome
 }
 
 tasks.register("buildNativeWindowsBridge", Exec) {
@@ -125,8 +138,11 @@ tasks.register("buildNativeWindowsBridge", Exec) {
 	dependsOn(tasks.named("configureNativeWindowsBridge"))
 	inputs.files(nativeBridgeSources)
 	inputs.files(nativeBridgeHeaders)
+	inputs.property("javaHome", currentJavaHome)
 	outputs.file(nativeBridgeOutput)
 	workingDir project.projectDir
+	environment "JAVA_HOME", currentJavaHome
+	environment "JDK_HOME", currentJavaHome
 
 	commandLine([
 		"cmake",

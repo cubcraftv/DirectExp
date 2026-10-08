@@ -19,12 +19,6 @@
 // (this file, directexp_common.cpp) and per-feature JNI entrypoint files
 // (directexp_bridge_probe.cpp, directexp_bridge_surface.cpp,
 // directexp_bridge_texture.cpp).
-//
-// NOTE: like the rest of this native bridge, this file has not been
-// compiled by the authoring agent (a Linux sandbox without an MSYS2/MSVC
-// Windows toolchain, shaderc, or SPIRV-Cross available). Check
-// docs/plans/2026-09-20-directexp-bootstrap-plan.md's Progress Log for
-// whether a later session has build/runtime-verified it since.
 
 #include "directexp_shader_toolchain.h"
 #include "directexp_common.h"

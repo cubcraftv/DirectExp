@@ -765,17 +765,6 @@ not a bug in what's implemented so far).
   the launch property. `.\gradlew.bat test` passes; hypotheses A/B remain
   unsettled, so the native and Java probe implementations are retained.
 
-- **2026-10-06 -- Sodium plan Phase 1 implementation session (partial).**
-  Added the shader-resource bind-purpose bit across the Java/native bridge and
-  mapped `USAGE_UNIFORM_TEXEL_BUFFER` to it, allowing native buffers to request
-  `D3D11_BIND_SHADER_RESOURCE`. Added focused bind-mask tests; the targeted
-  Java tests passed, and a Windows `.\gradlew build` succeeded after adding
-  the matching native constant to `directexp_common.h`. This is only the
-  buffer bind-flag foundation for G3: typed buffer-SRV creation/binding is
-  still absent. GPU-only buffers (G1), native buffer-to-buffer copies (G2),
-  and Sodium-format mapping tests (G5) were not implemented in this session,
-  so Phase 1 remains in progress.
-
 - **2026-10-07 -- Sodium plan Phase 2: push constants and Sodium shader chain.**
   `DxShaderInterfaceLayout` now rewrites `layout(push_constant)` blocks into a
   numbered `std140` uniform block named `DxPushConstants` (previously the block
@@ -792,25 +781,11 @@ not a bug in what's implemented so far).
   fragment shaders, with `USE_VERTEX_COMPRESSION`/`USE_FOG` and
   `ALPHA_CUTOUT` 0.5/0.01 variants, compile through the layout stage, glslc
   (glslang 15.1.0, vulkan1.0), `spirv-val`, SPIRV-Cross 2021 CLI (HLSL SM 4.1)
-  and DXC 1.9.2609 `vs_6_0`/`ps_6_0` front end. Windows build and in-game run
-  were subsequently completed (user-reported). The earlier Linux-only
-  verification did not compile the Java changes to `DxRenderPassBackend`,
-  `DxResourceBinder`, `DxResourceLayoutBuilder`, or the native reflection edit;
-  the Windows build/run supersedes that verification gap at the overall
-  build/runtime level, but does not document a per-variant D3DCompile matrix
-  or specific Sodium scene coverage. Phase 1 audit: the native buffer SRV
-  creation/binding path, native buffer-to-buffer copy, and GPU-only buffers
-  are still not implemented, so `u_SectionTimeInfo` remains unsupported.
-
-- **2026-10-07 -- Bundling the Windows native bridge.** The Windows `jar`
-  task now includes `directexp_native.dll` at
-  `META-INF/native/windows-x86_64/directexp_native.dll`; packaged runtime
-  loading extracts that classpath resource to a temporary DLL and loads it.
-  The explicit `directexp.nativeLibraryPath` override remains in front for
-  `runClient` development. Added an extraction unit test and updated the
-  native/build docs. `.\gradlew.bat test` passes, and `.\gradlew.bat jar
-  -x buildNativeWindowsBridge` verified the entry (14,085,485 bytes) in the
-  JAR using the already-built DLL. A normal `.\gradlew.bat jar` attempt
-  failed during native recompilation because this shell's CMake/JNI setup
-  could not locate `jni.h`; bundling itself passed when the native task was
-  skipped.
+  and DXC 1.9.2609 `vs_6_0`/`ps_6_0` front end. **Not verified:** the Java
+  changes to `DxRenderPassBackend`/`DxResourceBinder`/`DxResourceLayoutBuilder`
+  and the native reflection edit were not compiled here; real `D3DCompile`
+  `vs_4_1`/`ps_4_1` on the emitted HLSL, the SPIRV-Cross version DirectExp
+  links, and any in-game run are all still to do via `.\gradlew.bat build`.
+  Phase 1 audit: buffer SRV creation/binding for texel buffers, native
+  buffer-to-buffer copy and GPU-only buffers are not in this tree, so
+  `u_SectionTimeInfo` stays unbound for now.

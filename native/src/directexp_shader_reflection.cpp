@@ -1,10 +1,4 @@
 // See directexp_shader_reflection.h for scope.
-//
-// NOTE: like the rest of this native bridge, this file has not been
-// compiled by the authoring agent (a Linux sandbox without an MSYS2/MSVC
-// Windows toolchain or SPIRV-Cross available). Check
-// docs/plans/2026-09-20-directexp-bootstrap-plan.md's Progress Log for
-// whether a later session has build/runtime-verified it since.
 
 #include "directexp_shader_reflection.h"
 #include "directexp_shader_resource_naming.h"

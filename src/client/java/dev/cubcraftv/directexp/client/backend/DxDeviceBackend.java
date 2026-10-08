@@ -42,7 +42,29 @@ import java.util.function.Supplier;
  * (see docs/plans's Milestone 3 scope).
  */
 final class DxDeviceBackend implements GpuDeviceBackend {
-	private static final DeviceLimits DEFAULT_LIMITS = new DeviceLimits(16, 256, 16384, Long.MAX_VALUE, 0, 1);
+	/**
+	 * Blaze3D's {@code RenderPass.multiDrawIndexed(IntBuffer, ...)} rejects a
+	 * {@code drawCount} above this. Sodium's per-region batch holds at most
+	 * {@code ModelQuadFacing.COUNT (7) * RenderRegion.REGION_SIZE (256) + 1 = 1793}
+	 * draws; the loop in {@link DxRenderPassBackend} has no limit of its own, so
+	 * this is a generous ceiling rather than a hardware figure.
+	 */
+	static final int MAX_MULTI_DRAW_DIRECT_INTERLEAVED_DRAW_COUNT = 65536;
+
+	static final DeviceLimits DEFAULT_LIMITS = new DeviceLimits(16, 256, 16384, Long.MAX_VALUE, MAX_MULTI_DRAW_DIRECT_INTERLEAVED_DRAW_COUNT, 1);
+
+	/**
+	 * Only {@code multiDrawDirectInterleaved} is on: {@link DxRenderPassBackend}
+	 * implements {@code multiDrawIndexed(IntBuffer, ...)} (as a loop of indexed
+	 * draws), and only Blaze3D's {@code RenderPass} validation and Sodium read the
+	 * flag. Everything else stays off on purpose: there is no
+	 * {@code gl_DrawID}/base-instance support ({@code shaderDrawParameters},
+	 * {@code nonZeroFirstInstance}), no multi-draw variants beyond the interleaved
+	 * one, no indirect draws, and {@code persistentMapping} must stay false so
+	 * Sodium keeps its {@code writeToBuffer} staging path instead of one that
+	 * casts to OpenGL classes.
+	 */
+	static final DeviceFeatures FEATURES = new DeviceFeatures(false, true, false, false, false, false, false);
 
 	private final DxSurfaceLease surfaceLease;
 	private final DeviceInfo deviceInfo;
@@ -81,7 +103,7 @@ final class DxDeviceBackend implements GpuDeviceBackend {
 			"Direct3D 11 (feature level 10.1 floor)",
 			1.0F,
 			DEFAULT_LIMITS,
-			new DeviceFeatures(false, false, false, false, false, false, false),
+			FEATURES,
 			Set.of(),
 			new HintsAndWorkarounds(false, false),
 			DeviceType.OTHER
