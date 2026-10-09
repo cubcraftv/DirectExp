@@ -1165,6 +1165,47 @@ Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_drawIndexed0(JNIEnv* env, jcl
 	g_activeContext->DrawIndexedInstanced(static_cast<UINT>(indexCount), static_cast<UINT>(instanceCount), static_cast<UINT>(firstIndex), static_cast<INT>(baseVertex), 0);
 }
 
+extern "C" JNIEXPORT void JNICALL
+Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_multiDrawIndexed0(JNIEnv* env, jclass, jobject drawParameters, jint instanceCount, jint drawCount) {
+	if (!RequireContext(env, "multiDrawIndexed0") || !RequireBoundPipeline(env, "multiDrawIndexed0")) {
+		return;
+	}
+	if (instanceCount < 0 || drawCount < 0) {
+		ThrowIllegalState(env, "multiDrawIndexed0 requires non-negative instance and draw counts.");
+		return;
+	}
+	const jlong requiredElements = static_cast<jlong>(drawCount) * 3;
+	const jlong capacity = env->GetDirectBufferCapacity(drawParameters);
+	const jint* parameters = static_cast<const jint*>(env->GetDirectBufferAddress(drawParameters));
+	if (parameters == nullptr || capacity < requiredElements) {
+		ThrowIllegalState(env, "multiDrawIndexed0 requires a direct IntBuffer with three values per draw.");
+		return;
+	}
+
+	// Validate the entire batch before issuing any draws, so malformed input
+	// cannot leave a partially rendered region.
+	for (jint draw = 0; draw < drawCount; ++draw) {
+		const jint firstIndex = parameters[draw * 3];
+		const jint indexCount = parameters[draw * 3 + 1];
+		if (firstIndex < 0 || indexCount < 0) {
+			ThrowIllegalState(env, "multiDrawIndexed0 requires non-negative index offsets and counts.");
+			return;
+		}
+	}
+	for (jint draw = 0; draw < drawCount; ++draw) {
+		const jint firstIndex = parameters[draw * 3];
+		const jint indexCount = parameters[draw * 3 + 1];
+		const jint baseVertex = parameters[draw * 3 + 2];
+		g_activeContext->DrawIndexedInstanced(
+			static_cast<UINT>(indexCount),
+			static_cast<UINT>(instanceCount),
+			static_cast<UINT>(firstIndex),
+			static_cast<INT>(baseVertex),
+			0
+		);
+	}
+}
+
 #else // !_WIN32
 
 extern "C" JNIEXPORT void JNICALL
@@ -1236,6 +1277,10 @@ Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_draw0(JNIEnv*, jclass, jint, 
 
 extern "C" JNIEXPORT void JNICALL
 Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_drawIndexed0(JNIEnv*, jclass, jint, jint, jint, jint) {
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_multiDrawIndexed0(JNIEnv*, jclass, jobject, jint, jint) {
 }
 
 #endif

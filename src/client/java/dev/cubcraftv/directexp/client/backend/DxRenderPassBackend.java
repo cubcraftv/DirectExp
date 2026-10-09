@@ -16,6 +16,7 @@ import dev.cubcraftv.directexp.client.api.DxPushConstants;
 import dev.cubcraftv.directexp.client.shader.DxShaderInterfaceLayout;
 
 import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.nio.IntBuffer;
 import java.util.Collection;
 import java.util.HashMap;
@@ -305,7 +306,12 @@ final class DxRenderPassBackend implements RenderPassBackend, DxPushConstants {
 			if (!bindIndexBufferIfDirty()) {
 				return;
 			}
-			this.dxBridge.drawIndexed(indexCount, instanceCount, firstIndex, baseVertex);
+			long profileStart = DxPerformanceProfiler.start();
+			try {
+				this.dxBridge.drawIndexed(indexCount, instanceCount, firstIndex, baseVertex);
+			} finally {
+				DxPerformanceProfiler.record(DxPerformanceProfiler.Category.INDEXED_DRAW, profileStart, 1L);
+			}
 		} catch (UnsupportedOperationException | IllegalStateException error) {
 			report("draw-indexed", "DrawIndexedInstanced failed: " + error.getMessage());
 		}
@@ -313,12 +319,59 @@ final class DxRenderPassBackend implements RenderPassBackend, DxPushConstants {
 
 	@Override
 	public void multiDrawIndexed(IntBuffer drawParameters, int instanceCount, int firstInstance, int drawCount) {
+		if (drawCount <= 0) {
+			return;
+		}
+		if (firstInstance != 0) {
+			report("multi-draw-first-instance", "a non-zero first instance is not supported; multi-draw skipped");
+			return;
+		}
+		if (drawCount > Integer.MAX_VALUE / 3 || drawParameters.remaining() < drawCount * 3) {
+			throw new IllegalArgumentException("multiDrawIndexed requires three integer parameters per draw");
+		}
+
+		// Triangle fans need CPU expansion per draw; all other indexed topologies
+		// can be sent as one native batch.
+		if (isTriangleFanPipeline()) {
+			IntBuffer parameters = drawParameters.duplicate();
+			for (int drawIndex = 0; drawIndex < drawCount; drawIndex++) {
+				int firstIndex = parameters.get();
+				int indexCount = parameters.get();
+				int baseVertex = parameters.get();
+				drawIndexed(indexCount, instanceCount, firstIndex, baseVertex, firstInstance);
+			}
+			return;
+		}
+		if (this.indexBuffer == null || this.indexType == null) {
+			report("multi-draw-no-index-buffer", "multiDrawIndexed without an index buffer; draws skipped");
+			return;
+		}
+		if (!prepareDraw() || !bindIndexBufferIfDirty()) {
+			return;
+		}
+
 		IntBuffer parameters = drawParameters.duplicate();
-		for (int drawIndex = 0; drawIndex < drawCount; drawIndex++) {
-			int firstIndex = parameters.get();
-			int indexCount = parameters.get();
-			int baseVertex = parameters.get();
-			drawIndexed(indexCount, instanceCount, firstIndex, baseVertex, firstInstance);
+		parameters.limit(parameters.position() + drawCount * 3);
+		parameters = parameters.slice();
+		if (!parameters.isDirect() || parameters.order() != ByteOrder.nativeOrder()) {
+			if (drawCount > Integer.MAX_VALUE / (3 * Integer.BYTES)) {
+				throw new IllegalArgumentException("multiDrawIndexed batch is too large for a direct buffer");
+			}
+			ByteBuffer packed = ByteBuffer.allocateDirect(drawCount * 3 * Integer.BYTES)
+				.order(ByteOrder.nativeOrder());
+			packed.asIntBuffer().put(parameters);
+			parameters = packed.asIntBuffer();
+		}
+
+		try {
+			long profileStart = DxPerformanceProfiler.start();
+			try {
+				this.dxBridge.multiDrawIndexed(parameters, instanceCount, drawCount);
+			} finally {
+				DxPerformanceProfiler.record(DxPerformanceProfiler.Category.MULTI_DRAW, profileStart, drawCount);
+			}
+		} catch (UnsupportedOperationException | IllegalStateException error) {
+			report("multi-draw-indexed", "batched DrawIndexedInstanced failed: " + error.getMessage());
 		}
 	}
 
@@ -550,7 +603,12 @@ final class DxRenderPassBackend implements RenderPassBackend, DxPushConstants {
 		this.dxBridge.bindIndexBuffer(handle, true, 0);
 		// The scratch buffer displaced the pass's real index buffer.
 		this.indexBufferDirty = true;
-		this.dxBridge.drawIndexed(count, instanceCount, 0, baseVertex);
+		long profileStart = DxPerformanceProfiler.start();
+		try {
+			this.dxBridge.drawIndexed(count, instanceCount, 0, baseVertex);
+		} finally {
+			DxPerformanceProfiler.record(DxPerformanceProfiler.Category.INDEXED_DRAW, profileStart, 1L);
+		}
 	}
 
 	private void report(String key, String message) {
@@ -585,6 +643,11 @@ final class DxRenderPassBackend implements RenderPassBackend, DxPushConstants {
 			if (bound != null && bound.textureView() instanceof DxTextureView view && !view.isClosed() && view.hasNativeViewHandle()) {
 				return view.nativeViewHandle();
 			}
+			return 0L;
+		}
+
+		@Override
+		public long bufferShaderResourceHandle(String name) {
 			return 0L;
 		}
 

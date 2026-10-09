@@ -115,6 +115,39 @@ class DxResourceBinderTest {
 	}
 
 	@Test
+	void texelBufferShaderResourceViewsBindBeforeTextureFallbacks() {
+		DxResourceLayout layout = new DxResourceLayout("buffer-srv", List.of(
+			new DxResourceLayoutEntry("SectionTimeInfo", DxResourceKind.SAMPLED_TEXTURE, 3, 0, false, true)
+		));
+		DxResourceBinder.Source source = new DxResourceBinder.Source() {
+			@Override
+			public ByteBuffer uniformBytes(String name) {
+				return null;
+			}
+
+			@Override
+			public long textureViewHandle(String name) {
+				return 0L;
+			}
+
+			@Override
+			public long bufferShaderResourceHandle(String name) {
+				return name.equals("SectionTimeInfo") ? 7007L : 0L;
+			}
+
+			@Override
+			public long samplerHandle(String name) {
+				return 0L;
+			}
+		};
+
+		this.binder.bindTextures(layout, source, true);
+
+		assertTrue(this.calls.contains("bindSRV(3,7007," + DxBridge.STAGE_FRAGMENT + ")"));
+		assertFalse(this.reports.contains("texture-missing:buffer-srv:SectionTimeInfo"));
+	}
+
+	@Test
 	void missingTextureDiagnosticsAreReportedPerPipeline() {
 		DxResourceLayout firstPipeline = new DxResourceLayout("first", List.of(
 			new DxResourceLayoutEntry("Sampler0", DxResourceKind.SAMPLED_TEXTURE, 0, 0, false, true)

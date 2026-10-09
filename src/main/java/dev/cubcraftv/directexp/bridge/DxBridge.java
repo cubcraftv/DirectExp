@@ -1,6 +1,7 @@
 package dev.cubcraftv.directexp.bridge;
 
 import java.nio.ByteBuffer;
+import java.nio.IntBuffer;
 import java.util.List;
 
 /**
@@ -329,6 +330,20 @@ public interface DxBridge {
 	/** {@code DrawIndexedInstanced(indexCount, instanceCount, firstIndex, baseVertex, 0)}. */
 	default void drawIndexed(int indexCount, int instanceCount, int firstIndex, int baseVertex) {
 		throw new UnsupportedOperationException("DirectX indexed draw is not implemented by this bridge yet.");
+	}
+
+	/**
+	 * Issues interleaved {@code firstIndex, indexCount, baseVertex} indexed draws.
+	 * Native bridges should override this to keep the batch within one JNI call.
+	 */
+	default void multiDrawIndexed(IntBuffer drawParameters, int instanceCount, int drawCount) {
+		IntBuffer parameters = drawParameters.duplicate();
+		for (int draw = 0; draw < drawCount; draw++) {
+			int firstIndex = parameters.get();
+			int indexCount = parameters.get();
+			int baseVertex = parameters.get();
+			drawIndexed(indexCount, instanceCount, firstIndex, baseVertex);
+		}
 	}
 
 	default void presentSurface(long nativeSurfaceHandle) {

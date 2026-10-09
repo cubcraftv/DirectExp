@@ -789,3 +789,18 @@ not a bug in what's implemented so far).
   Phase 1 audit: buffer SRV creation/binding for texel buffers, native
   buffer-to-buffer copy and GPU-only buffers are not in this tree, so
   `u_SectionTimeInfo` stays unbound for now.
+
+- **2026-10-09 -- Sodium plan Phase 5: batched draws and opt-in timing.**
+  Added a native D3D11 interleaved indexed multi-draw entry point: a whole
+  `firstIndex, indexCount, baseVertex` batch crosses JNI once and issues
+  `DrawIndexedInstanced` calls on the immediate context. Direct native-order
+  input buffers are passed without repacking; heap or non-native-order input
+  is copied into a direct native-order buffer.
+  Triangle-fan expansion and the default bridge implementation retain
+  per-draw fallback behavior. Added `-Ddirectexp.profile.performance=true`
+  aggregation for indexed and batched draw bridge-call time, constant-buffer
+  uploads, and `copyToBuffer` byte/cost reporting. `persistentMapping`
+  intentionally remains false because D3D11 persistent-map semantics are not
+  provided and `DxFence` is still a stub. Verification in this session pending;
+  native Windows build and in-game profile are required before claiming runtime
+  performance results.

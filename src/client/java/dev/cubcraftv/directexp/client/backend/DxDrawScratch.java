@@ -76,7 +76,12 @@ final class DxDrawScratch implements AutoCloseable {
 			constantSlot.mirror.clear();
 			constantSlot.mirror.put(data.duplicate());
 			// A constant buffer is always re-sent whole; offset/length are ignored natively.
-			this.dxBridge.updateBuffer(constantSlot.handle, constantSlot.mirror, 0, constantSlot.width);
+			long profileStart = DxPerformanceProfiler.start();
+			try {
+				this.dxBridge.updateBuffer(constantSlot.handle, constantSlot.mirror, 0, constantSlot.width);
+			} finally {
+				DxPerformanceProfiler.record(DxPerformanceProfiler.Category.CONSTANT_BUFFER_UPDATE, profileStart, 1L);
+			}
 			return constantSlot.handle;
 		} catch (UnsupportedOperationException | IllegalStateException error) {
 			this.diagnostics.reportOnce("uniform-stage:" + slot, "could not stage constants for slot b" + slot + ": " + error.getMessage());

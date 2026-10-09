@@ -91,8 +91,13 @@ final class DxCommandEncoderBackend implements CommandEncoderBackend {
 
 	@Override
 	public void copyToBuffer(GpuBufferSlice source, GpuBufferSlice destination) {
-		ByteBuffer sourceBytes = ((DxBuffer) source.buffer()).sliceStorage(source.offset(), source.length());
-		((DxBuffer) destination.buffer()).write(destination.offset(), sourceBytes);
+		long profileStart = DxPerformanceProfiler.start();
+		try {
+			ByteBuffer sourceBytes = ((DxBuffer) source.buffer()).sliceStorage(source.offset(), source.length());
+			((DxBuffer) destination.buffer()).write(destination.offset(), sourceBytes);
+		} finally {
+			DxPerformanceProfiler.record(DxPerformanceProfiler.Category.BUFFER_COPY, profileStart, source.length());
+		}
 	}
 
 	@Override

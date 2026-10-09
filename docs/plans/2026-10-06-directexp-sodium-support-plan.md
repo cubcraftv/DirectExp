@@ -1,6 +1,7 @@
 # DirectExp + Sodium: Support Plan and Fork Plan
 
-**Created:** 2026-10-06. **Status:** proposal, not started. **Basis:** static reading of
+**Created:** 2026-10-06. **Status:** Phases 0-2 authored; Phase 5 implementation started
+2026-10-09 (runtime profiling and Windows native build pending). **Basis:** static reading of
 `DirectExp.zip` (re-verified against source, not docs; `patch9.patch` is already applied in this snapshot) and `sodium-26.2-stable.zip`. Nothing here was
 compiled or run; every "Sodium does X" / "DirectExp lacks Y" claim is from source, with file
 names so it can be re-checked.
@@ -56,12 +57,14 @@ close the capability gaps in DirectExp, then add a small Sodium patch.
   that still exist on a DirectX run, so they load but their code paths never execute.
 
 **DirectExp (current dev)**
-- `DxRenderPassBackend.multiDrawIndexed(IntBuffer, ...)` is implemented as a loop of
-  `drawIndexed`, and it reads `(firstIndex, indexCount, baseVertex)` per draw, which is the same
-  layout as Vulkan's `VkMultiDrawIndexedInfoEXT`. The 4-argument `PointerBuffer` variant and
-  `drawIndexedIndirect` throw `UnsupportedOperationException`.
-- `DeviceFeatures` is all `false` (`DxDeviceBackend`), so Sodium would use `MojangStagingBuffer`
-  (safe default) and no multidraw flags.
+- The initial audit found `DxRenderPassBackend.multiDrawIndexed(IntBuffer, ...)` implemented as a
+  loop over `drawIndexed`, reading `(firstIndex, indexCount, baseVertex)` per draw (the same layout
+  as Vulkan's `VkMultiDrawIndexedInfoEXT`). Phase 5 now sends that interleaved form through one
+  JNI entry; the separate-parameter `PointerBuffer` variant and `drawIndexedIndirect` remain
+  unsupported.
+- `DeviceFeatures` enables only `multiDrawDirectInterleaved` (`DxDeviceBackend`); Sodium receives
+  no shader-draw-parameters, indirect-draw, or persistent-mapping flags and keeps
+  `MojangStagingBuffer` for uploads.
 - `DxBuffer` keeps a **CPU mirror of every buffer** plus an eagerly synced native copy;
   `copyToBuffer` is implemented as CPU memcpy + re-upload.
 - Texel buffers: bind mask is 0 (`DxBufferBinding`); the 4.6 source-of-truth doc lists them as
@@ -194,11 +197,20 @@ Scope: the two factory mixins and two new classes from section 5b. Nothing else.
 - Compare against vanilla DirectX render and against Sodium-on-Vulkan on the same world.
 
 ### Phase 5: Performance
-- Native batched multi-draw (G7).
-- Optionally enable `persistentMapping` plus Sodium's `MappedStagingBuffer` only if D3D11 can back
-  it honestly (D3D11 `MAP_WRITE_NO_OVERWRITE` on a staging buffer is the closest analogue). Do not
-  claim support the device cannot provide; the feature flag changes Sodium's code path.
-- Profile draw-call JNI overhead, constant buffer updates, and arena copy costs.
+- **Implemented in source (2026-10-09; not yet Windows-build/runtime verified):** native
+  `multiDrawIndexed(IntBuffer, ...)` accepts the interleaved `firstIndex, indexCount, baseVertex`
+  format and issues the batch in one JNI entry. Non-direct source buffers are packed into a direct
+  native-order buffer; direct native-order input is passed through. Triangle fans retain the
+  existing per-draw expansion path. The generic `DxBridge` default remains a per-draw fallback for
+  non-native/test bridges.
+- `persistentMapping` remains **disabled**. D3D11 has no persistently mapped resource with the
+  semantics Sodium expects, and DirectExp's fence is still a stub. `MAP_WRITE_NO_OVERWRITE` on a
+  dynamic resource is not equivalent to Sodium's OpenGL mapped staging path; do not advertise it.
+- Opt-in timing aggregation is available with `-Ddirectexp.profile.performance=true`. Every
+  10-second report includes indexed draw bridge-call time, batched multi-draw bridge-call time
+  (with draw count), constant-buffer upload time, and `copyToBuffer` arena-copy time (with bytes).
+  These are Java wall-clock timings around bridge/copy operations, not isolated JNI-only CPU time;
+  runtime profiles still need to be collected and interpreted on Windows.
 
 ## 7. Risks
 
@@ -224,4 +236,5 @@ Scope: the two factory mixins and two new classes from section 5b. Nothing else.
 
 - ~~Whether defining `VULKAN` globally changes vanilla shaders~~ moot: shaderc already defines it
   for every Vulkan-semantics compile, so nothing changes.
-- Real draw-call counts per frame on a typical render distance, which decides how urgent G7 is.
+- Real draw-call counts and timings per frame on a typical render distance, to be collected with
+  the Phase 5 profiler on Windows.

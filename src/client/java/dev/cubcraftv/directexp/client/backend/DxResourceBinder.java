@@ -31,6 +31,11 @@ final class DxResourceBinder {
 		/** Native texture-view handle bound under this name, or 0 when none / CPU-only. */
 		long textureViewHandle(String name);
 
+		/** Native buffer SRV handle for texel-buffer / typed-buffer resources, or 0 when none / GPU-only. */
+		default long bufferShaderResourceHandle(String name) {
+			return 0L;
+		}
+
 		/** Explains why {@link #textureViewHandle(String)} returned 0. */
 		default String textureViewFailureReason(String name) {
 			return "no native texture view is available";
@@ -96,7 +101,10 @@ final class DxResourceBinder {
 		for (DxResourceLayoutEntry entry : layout.entries()) {
 			switch (entry.kind()) {
 				case SAMPLED_TEXTURE -> {
-					long view = source.textureViewHandle(entry.name());
+					long view = source.bufferShaderResourceHandle(entry.name());
+					if (view == 0L) {
+						view = source.textureViewHandle(entry.name());
+					}
 					if (entry.name().equals("Sampler0")) {
 						if (DxDebugProbes.enabled()) {
 							DxDebugProbes.logGuiTextureBinding(layout, view, source.textureViewDescription(entry.name()));
@@ -118,7 +126,15 @@ final class DxResourceBinder {
 						this.dxBridge.bindSampler(entry.slot(), sampler, stageMask(entry));
 					}
 				}
-				case STRUCTURED_BUFFER -> this.diagnostics.reportOnce("structured-buffer:" + entry.name(), "structured buffer '" + entry.name() + "' is not supported by the draw path yet");
+				case STRUCTURED_BUFFER -> {
+					long view = source.bufferShaderResourceHandle(entry.name());
+					if (view == 0L) {
+						this.diagnostics.reportOnce("structured-buffer-missing:" + layout.pipelineDebugLabel() + ":" + entry.name(), "pipeline " + layout.pipelineDebugLabel() + " uses structured/texel buffer '" + entry.name() + "' but " + "no native buffer SRV is available");
+					}
+					if (bindNativeState) {
+						this.dxBridge.bindShaderResource(entry.slot(), view, stageMask(entry));
+					}
+				}
 				case CONSTANT_BUFFER -> {
 				}
 			}

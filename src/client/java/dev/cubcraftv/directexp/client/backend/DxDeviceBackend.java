@@ -55,14 +55,16 @@ final class DxDeviceBackend implements GpuDeviceBackend {
 
 	/**
 	 * Only {@code multiDrawDirectInterleaved} is on: {@link DxRenderPassBackend}
-	 * implements {@code multiDrawIndexed(IntBuffer, ...)} (as a loop of indexed
-	 * draws), and only Blaze3D's {@code RenderPass} validation and Sodium read the
+	 * implements {@code multiDrawIndexed(IntBuffer, ...)} with one JNI call for a
+	 * batch, and only Blaze3D's {@code RenderPass} validation and Sodium read the
 	 * flag. Everything else stays off on purpose: there is no
 	 * {@code gl_DrawID}/base-instance support ({@code shaderDrawParameters},
 	 * {@code nonZeroFirstInstance}), no multi-draw variants beyond the interleaved
-	 * one, no indirect draws, and {@code persistentMapping} must stay false so
-	 * Sodium keeps its {@code writeToBuffer} staging path instead of one that
-	 * casts to OpenGL classes.
+	 * one, no indirect draws, and {@code persistentMapping} must stay false:
+	 * D3D11 cannot keep a mapped resource persistently accessible with the
+	 * semantics Sodium expects, and its fence implementation is still a stub.
+	 * Sodium therefore stays on its {@code writeToBuffer} staging path rather
+	 * than one that casts to OpenGL classes.
 	 */
 	static final DeviceFeatures FEATURES = new DeviceFeatures(false, true, false, false, false, false, false);
 

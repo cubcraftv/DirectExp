@@ -1,6 +1,8 @@
 package dev.cubcraftv.directexp.bridge;
 
 import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
+import java.nio.IntBuffer;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -288,6 +290,33 @@ public final class NativeDxBridge implements DxBridge, DxDebugProbeBridge {
 	@Override
 	public void drawIndexed(int indexCount, int instanceCount, int firstIndex, int baseVertex) {
 		drawIndexed0(indexCount, instanceCount, firstIndex, baseVertex);
+	}
+
+	@Override
+	public void multiDrawIndexed(IntBuffer drawParameters, int instanceCount, int drawCount) {
+		if (drawCount < 0 || instanceCount < 0) {
+			throw new IllegalArgumentException("multiDrawIndexed requires non-negative counts");
+		}
+		if (drawCount == 0) {
+			return;
+		}
+		if (drawCount > Integer.MAX_VALUE / 3 || drawParameters.remaining() < drawCount * 3) {
+			throw new IllegalArgumentException("multiDrawIndexed requires three integer parameters per draw");
+		}
+
+		IntBuffer parameters = drawParameters.duplicate();
+		parameters.limit(parameters.position() + drawCount * 3);
+		parameters = parameters.slice();
+		if (!parameters.isDirect() || parameters.order() != ByteOrder.nativeOrder()) {
+			if (drawCount > Integer.MAX_VALUE / (3 * Integer.BYTES)) {
+				throw new IllegalArgumentException("multiDrawIndexed batch is too large for a direct buffer");
+			}
+			ByteBuffer packed = ByteBuffer.allocateDirect(drawCount * 3 * Integer.BYTES)
+				.order(ByteOrder.nativeOrder());
+			packed.asIntBuffer().put(parameters);
+			parameters = packed.asIntBuffer();
+		}
+		multiDrawIndexed0(parameters, instanceCount, drawCount);
 	}
 
 	@Override
@@ -750,6 +779,8 @@ public final class NativeDxBridge implements DxBridge, DxDebugProbeBridge {
 	private static native void draw0(int vertexCount, int firstVertex);
 
 	private static native void drawIndexed0(int indexCount, int instanceCount, int firstIndex, int baseVertex);
+
+	private static native void multiDrawIndexed0(IntBuffer drawParameters, int instanceCount, int drawCount);
 
 	// Named "...0" per this file's convention for a native method whose
 	// public-facing override (compileGlslToSpirv) has a different
