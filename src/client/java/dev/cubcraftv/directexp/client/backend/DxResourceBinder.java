@@ -1,5 +1,6 @@
 package dev.cubcraftv.directexp.client.backend;
 
+import dev.cubcraftv.directexp.DirectExpMod;
 import dev.cubcraftv.directexp.bridge.DxBridge;
 import dev.cubcraftv.directexp.bridge.DxResourceKind;
 import dev.cubcraftv.directexp.client.shader.DxResourceLayout;
@@ -41,11 +42,6 @@ final class DxResourceBinder {
 			return "no native texture view is available";
 		}
 
-		/** Describes the texture behind a bound view for opt-in debug probes. */
-		default String textureViewDescription(String name) {
-			return "unavailable";
-		}
-
 		/** Native sampler handle bound under this name, or 0 when none / CPU-only. */
 		long samplerHandle(String name);
 	}
@@ -53,8 +49,6 @@ final class DxResourceBinder {
 	private final DxBridge dxBridge;
 	private final DxDrawScratch scratch;
 	private final DxDrawDiagnostics diagnostics;
-	private final DxDebugProbes.UniformProbe uniformProbe = new DxDebugProbes.UniformProbe();
-
 	DxResourceBinder(DxBridge dxBridge, DxDrawScratch scratch, DxDrawDiagnostics diagnostics) {
 		this.dxBridge = Objects.requireNonNull(dxBridge, "dxBridge");
 		this.scratch = Objects.requireNonNull(scratch, "scratch");
@@ -85,7 +79,9 @@ final class DxResourceBinder {
 				continue;
 			}
 
-			this.uniformProbe.logOnce(layout, entry, bytes);
+			if (entry.name().equals(DxShaderInterfaceLayout.PUSH_CONSTANT_BLOCK_NAME) && DxPushConstantTrace.shouldTrace()) {
+				DirectExpMod.LOGGER.info("DirectExp: {}", DxPushConstantTrace.describe(layout.pipelineDebugLabel(), entry.slot(), entry.sizeBytes(), bytes));
+			}
 			long handle = this.scratch.stageConstants(entry.slot(), bytes);
 			if (handle == 0L) {
 				complete = false;
@@ -104,11 +100,6 @@ final class DxResourceBinder {
 					long view = source.bufferShaderResourceHandle(entry.name());
 					if (view == 0L) {
 						view = source.textureViewHandle(entry.name());
-					}
-					if (entry.name().equals("Sampler0")) {
-						if (DxDebugProbes.enabled()) {
-							DxDebugProbes.logGuiTextureBinding(layout, view, source.textureViewDescription(entry.name()));
-						}
 					}
 					if (view == 0L) {
 						this.diagnostics.reportOnce("texture-missing:" + layout.pipelineDebugLabel() + ":" + entry.name(), "pipeline " + layout.pipelineDebugLabel() + " samples '" + entry.name() + "' but " + source.textureViewFailureReason(entry.name()));

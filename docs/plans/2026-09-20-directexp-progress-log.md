@@ -804,3 +804,54 @@ not a bug in what's implemented so far).
   provided and `DxFence` is still a stub. Verification in this session pending;
   native Windows build and in-game profile are required before claiming runtime
   performance results.
+
+- **2026-10-10 -- Updated project target and removed temporary GUI probes.**
+  Clarified that DirectExp is an independent DirectX 11 implementation informed
+  by MetalExp research, not a structural sibling. The compatibility target is
+  Minecraft versions newer than 26.2 on Windows desktop with a Win32 window
+  and D3D feature level 10.1 or higher; Gradle's pinned dependency versions
+  are development build inputs only. Removed the temporary button/atlas probe
+  instrumentation, Java debug bridge, texture readback and draw-replay JNI
+  entrypoints, tests, and launch-property documentation. The older 2026-10-05
+  entry above records the probes' history, not currently available features.
+  `.\gradlew.bat build` passed on Windows, compiling and linking the native DLL
+  and running the Java test suite.
+
+- **2026-10-10 -- Sodium plan Phase 1: GPU-only buffers (G1), native buffer copy (G2),
+  texel-buffer SRVs (G3); validation hooks for G4-G6.**
+  *G1:* `DxBuffer` has two storage modes. Vertex/index-only buffers of at least 1 MiB
+  that have a native handle (`DxBufferStoragePolicy`; `-Ddirectexp.gpuOnlyBufferMinBytes=N`,
+  `0` = all eligible, negative = never) keep **no CPU mirror**: writes go straight
+  to the GPU through the new `uploadBufferRange` (heap sources are staged through a
+  per-thread direct buffer), and the rare consumer that needs the bytes (read-mapping,
+  buffer-to-texture copy, triangle-fan index expansion -- which now reads back only the
+  fan's own index range) gets a native readback (`readBuffer`, a transient STAGING
+  buffer, which waits for the GPU). Constant buffers, texel buffers and per-frame
+  transient memory stay mirrored. GPU contents are undefined after creation (as on GL/VK).
+  *G2:* `DxBuffer.copy` + `copyBufferNative` = `CopySubresourceRegion`; overlapping ranges
+  of one buffer bounce through a temporary buffer; constant-buffer endpoints, a failed
+  native copy, or a mirrored destination fed from a GPU-only source fall back to a
+  correct read-and-write path. `DxCommandEncoderBackend.copyToBuffer` uses it.
+  *G3:* `createBufferShaderResourceViewNative` makes a typed-buffer SRV (format table
+  `DxTexelFormat`, 30 formats) carried in the existing `TextureView` wrapper so
+  `bindShaderResource`/`releaseTextureView0` are unchanged. `DxBuffer` caches views per
+  (format, range) and releases them on close. `DxRenderPassBackend` reads the current
+  pipeline's `TEXEL_BUFFER` uniforms (name -> `GpuFormat`) and its
+  `bufferShaderResourceHandle` now resolves the buffer/slice set under that name;
+  `setUniform` of a texel buffer marks textures dirty so the SRV is rebound.
+  *G5:* `DxSodiumVertexFormatTest` pins the compact format (stride 20, offsets
+  0/8/12/16, DXGI 17/28/36/30). `DxSodiumShaderInterfaceTest` checks integer inputs,
+  the push block and `isamplerBuffer` through `DxShaderInterfaceLayout`.
+  *G4/G6 (needs a Windows run):* opt-in `-Ddirectexp.debug.pushconstants=true` logs the
+  first 32 push-constant uploads decoded as Sodium's 20-byte block
+  (`DxPushConstantTrace`); `-Ddirectexp.debug.indexdraws=true` logs the first 32 indexed
+  draws and always reports a draw that breaks a rule (6 indices per quad, range inside the
+  32-bit index buffer, non-negative base vertex) (`DxIndexedDrawTrace`).
+  **Verification:** the new/changed Java buffer, policy, format, trace and
+  Sodium-interface tests (57 cases incl. the pre-existing `DxBufferTest`/`DxBufferBindingTest`)
+  were first compiled and run on Linux with a JUnit shim against the Blaze3D reference sources;
+  the native functions were syntax-checked against mock D3D11/JNI types. On 2026-10-10,
+  `.\gradlew.bat build` passed on Windows, compiling client code against the configured
+  Minecraft dependencies, compiling/linking the native DLL, and running the Java test suite.
+  **Not done:** any run on a D3D11 device. G1-G4 and G6 runtime behavior remains unverified;
+  exercise the push-constant and indexed-draw trace flags with Sodium on Windows.

@@ -152,52 +152,6 @@ Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_uploadTextureRegionRgba8Nativ
 	g_activeContext->UpdateSubresource(wrapper->texture, subresource, &box, rectData, static_cast<UINT>(rowPitch), 0);
 }
 
-// Diagnostics-only JNI entrypoint; the Java debug-probe layer gates all calls behind directexp.debug.probes.
-extern "C" JNIEXPORT jint JNICALL
-Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_readTexturePixelRgba8Native(JNIEnv* env, jclass, jlong nativeTextureHandle, jint mipLevel, jint x, jint y) {
-	Texture* wrapper = HandleToPointer<Texture>(nativeTextureHandle);
-	if (wrapper == nullptr || wrapper->texture == nullptr || g_activeDevice == nullptr || g_activeContext == nullptr) {
-		ThrowIllegalState(env, "readTexturePixelRgba8Native: invalid texture handle or no active device.");
-		return 0;
-	}
-	if (wrapper->formatCode != TEXTURE_FORMAT_RGBA8_UNORM || mipLevel < 0 || static_cast<UINT>(mipLevel) >= wrapper->mipLevels || x < 0 || y < 0) {
-		ThrowIllegalState(env, "readTexturePixelRgba8Native: only in-range RGBA8 texels can be read.");
-		return 0;
-	}
-	const UINT mipWidth = wrapper->width >> mipLevel > 0 ? wrapper->width >> mipLevel : 1;
-	const UINT mipHeight = wrapper->height >> mipLevel > 0 ? wrapper->height >> mipLevel : 1;
-	if (static_cast<UINT>(x) >= mipWidth || static_cast<UINT>(y) >= mipHeight) {
-		ThrowIllegalState(env, "readTexturePixelRgba8Native: only in-range RGBA8 texels can be read.");
-		return 0;
-	}
-	D3D11_TEXTURE2D_DESC desc = {};
-	desc.Width = 1;
-	desc.Height = 1;
-	desc.MipLevels = 1;
-	desc.ArraySize = 1;
-	desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-	desc.SampleDesc.Count = 1;
-	desc.Usage = D3D11_USAGE_STAGING;
-	desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
-	ID3D11Texture2D* staging = nullptr;
-	if (FAILED(g_activeDevice->CreateTexture2D(&desc, nullptr, &staging)) || staging == nullptr) {
-		ThrowIllegalState(env, "readTexturePixelRgba8Native: could not create the staging texture.");
-		return 0;
-	}
-	D3D11_BOX box = { static_cast<UINT>(x), static_cast<UINT>(y), 0, static_cast<UINT>(x) + 1, static_cast<UINT>(y) + 1, 1 };
-	g_activeContext->CopySubresourceRegion(staging, 0, 0, 0, 0, wrapper->texture, D3D11CalcSubresource(static_cast<UINT>(mipLevel), 0, wrapper->mipLevels), &box);
-	D3D11_MAPPED_SUBRESOURCE mapped = {};
-	jint result = 0;
-	if (SUCCEEDED(g_activeContext->Map(staging, 0, D3D11_MAP_READ, 0, &mapped)) && mapped.pData != nullptr) {
-		std::memcpy(&result, mapped.pData, sizeof(result));
-		g_activeContext->Unmap(staging, 0);
-	} else {
-		ThrowIllegalState(env, "readTexturePixelRgba8Native: Map failed.");
-	}
-	staging->Release();
-	return result;
-}
-
 extern "C" JNIEXPORT void JNICALL
 Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_releaseTexture0(JNIEnv*, jclass, jlong nativeTextureHandle) {
 	Texture* wrapper = HandleToPointer<Texture>(nativeTextureHandle);
@@ -283,9 +237,5 @@ extern "C" JNIEXPORT void JNICALL
 Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_blitSurfaceTexture0(JNIEnv*, jclass, jlong, jlong, jlong) {
 }
 
-extern "C" JNIEXPORT jint JNICALL
-Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_readTexturePixelRgba8Native(JNIEnv*, jclass, jlong, jint, jint, jint) {
-	return 0;
-}
 
 #endif

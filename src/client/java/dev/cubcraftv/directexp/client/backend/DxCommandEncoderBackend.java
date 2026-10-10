@@ -93,8 +93,9 @@ final class DxCommandEncoderBackend implements CommandEncoderBackend {
 	public void copyToBuffer(GpuBufferSlice source, GpuBufferSlice destination) {
 		long profileStart = DxPerformanceProfiler.start();
 		try {
-			ByteBuffer sourceBytes = ((DxBuffer) source.buffer()).sliceStorage(source.offset(), source.length());
-			((DxBuffer) destination.buffer()).write(destination.offset(), sourceBytes);
+			// GPU-side CopySubresourceRegion when both buffers are native (the case for
+			// arena moves and uploads); falls back to a CPU copy otherwise.
+			DxBuffer.copy((DxBuffer) source.buffer(), source.offset(), (DxBuffer) destination.buffer(), destination.offset(), source.length());
 		} finally {
 			DxPerformanceProfiler.record(DxPerformanceProfiler.Category.BUFFER_COPY, profileStart, source.length());
 		}

@@ -25,29 +25,22 @@ import java.util.concurrent.atomic.AtomicBoolean;
  */
 final class DxTexture extends GpuTexture {
 	private final DxBridge dxBridge;
-	private final String debugLabel;
 	private final ByteBuffer[] mipStorage;
 	private final int layerCount;
 	private final boolean cubemap;
 	private final long nativeTextureHandle;
 	private final int nativeBindMask;
 	private final AtomicBoolean loggedNativeTextureUploadFailure = new AtomicBoolean(false);
-	private volatile String lastNativeUpload = "not uploaded";
 	private boolean closed;
 
 	DxTexture(DxBridge dxBridge, int usage, String label, GpuFormat format, int width, int height, int depthOrLayers, int mipLevels) {
 		super(usage, label, format, width, height, depthOrLayers, mipLevels);
 		this.dxBridge = dxBridge;
-		this.debugLabel = label;
 		this.mipStorage = new ByteBuffer[mipLevels];
 		this.layerCount = depthOrLayers;
 		this.cubemap = (usage & DxTextureBinding.USAGE_CUBEMAP) != 0;
 		this.nativeBindMask = DxTextureBinding.bindMask(usage, format.hasDepthAspect());
 		this.nativeTextureHandle = createNativeTextureHandle(format, width, height, depthOrLayers, mipLevels, this.cubemap);
-		if (this.nativeTextureHandle == 0L) {
-			this.lastNativeUpload = "not attempted: no native texture";
-		}
-
 		for (int mipLevel = 0; mipLevel < mipLevels; mipLevel++) {
 			int mipWidth = getWidth(mipLevel);
 			int mipHeight = getHeight(mipLevel);
@@ -92,16 +85,6 @@ final class DxTexture extends GpuTexture {
 			}
 		}
 
-		DxDebugProbes.traceCpuAccess(
-			this.debugLabel, hasNativeRenderTarget(), getWidth(0), getHeight(0),
-			"writeRegion(CPU upload)", mipLevel, dstX, dstY, width, height
-		);
-		if (DxDebugProbes.enabled()) {
-			DxDebugProbes.logButtonSpriteUpload(
-				this.debugLabel, getFormat().toString(), sourceCopy, destination, sourceBytesPerPixel, sourceStride, mipWidth,
-				destinationBytesPerPixel, mipLevel, dstX, dstY, width, height, srcX, srcY
-			);
-		}
 		syncRegionToNative(mipLevel, layer, dstX, dstY, width, height);
 	}
 
@@ -110,10 +93,6 @@ final class DxTexture extends GpuTexture {
 	}
 
 	ByteBuffer readRegion(int mipLevel, int layer, int srcX, int srcY, int width, int height) {
-		DxDebugProbes.traceCpuAccess(
-			this.debugLabel, hasNativeRenderTarget(), getWidth(0), getHeight(0),
-			"readRegion(CPU mirror read, GPU draws are NOT visible)", mipLevel, srcX, srcY, width, height
-		);
 		if (layer < 0 || layer >= this.layerCount) {
 			throw new IllegalArgumentException("Texture layer is outside the allocated layer range.");
 		}
@@ -142,10 +121,6 @@ final class DxTexture extends GpuTexture {
 	}
 
 	void fillRegion(int mipLevel, int dstX, int dstY, int width, int height, int packedValue) {
-		DxDebugProbes.traceCpuAccess(
-			this.debugLabel, hasNativeRenderTarget(), getWidth(0), getHeight(0),
-			"fillRegion(CPU clear)", mipLevel, dstX, dstY, width, height
-		);
 		ByteBuffer destination = this.mipStorage[mipLevel].duplicate().order(ByteOrder.nativeOrder());
 		int bytesPerPixel = getFormat().blockSize();
 		int mipWidth = getWidth(mipLevel);
@@ -168,14 +143,6 @@ final class DxTexture extends GpuTexture {
 
 	long nativeTextureHandle() {
 		return this.nativeTextureHandle;
-	}
-
-	String debugLabel() {
-		return this.debugLabel;
-	}
-
-	String debugDescription() {
-		return this.debugLabel + " " + getWidth(0) + "x" + getHeight(0) + " (" + getMipLevels() + " mips, nativeUpload=" + this.lastNativeUpload + ")";
 	}
 
 	boolean hasNativeTextureHandle() {
@@ -229,7 +196,7 @@ final class DxTexture extends GpuTexture {
 
 		try {
 			long handle = this.dxBridge.createTexture(
-				formatCode, width, height, depthOrLayers, mipLevels, this.nativeBindMask, cubemap, this.debugLabel
+				formatCode, width, height, depthOrLayers, mipLevels, this.nativeBindMask, cubemap, getLabel()
 			);
 			if (handle != 0L && LOGGED_NATIVE_TEXTURE_SUCCESS.compareAndSet(false, true)) {
 				DirectExpMod.LOGGER.info(
@@ -285,12 +252,10 @@ final class DxTexture extends GpuTexture {
 				getHeight(mipLevel),
 				x, y, width, height
 			);
-			this.lastNativeUpload = "UpdateSubresource(box " + x + "," + y + " " + width + "x" + height + ") for mip " + mipLevel + ", layer " + layer;
 		} catch (UnsupportedOperationException error) {
 			// Bridge without region support: fall back to the whole-mip upload.
 			syncMipToNative(mipLevel, layer);
 		} catch (IllegalStateException error) {
-			this.lastNativeUpload = "failed for region on mip " + mipLevel + ", layer " + layer + ": " + error.getMessage();
 			if (this.loggedNativeTextureUploadFailure.compareAndSet(false, true)) {
 				DirectExpMod.LOGGER.warn("DirectExp: native texture region upload failed (texture {}, mip {}, layer {}): {}", this.nativeTextureHandle, mipLevel, layer, error.getMessage());
 			}
@@ -313,10 +278,7 @@ final class DxTexture extends GpuTexture {
 				getWidth(mipLevel),
 				getHeight(mipLevel)
 			);
-			this.lastNativeUpload = "UpdateSubresource returned for mip " + mipLevel + ", layer " + layer
-				+ " (" + getWidth(mipLevel) + "x" + getHeight(mipLevel) + ")";
 		} catch (UnsupportedOperationException | IllegalStateException error) {
-			this.lastNativeUpload = "failed for mip " + mipLevel + ", layer " + layer + ": " + error.getMessage();
 			if (this.loggedNativeTextureUploadFailure.compareAndSet(false, true)) {
 				DirectExpMod.LOGGER.warn(
 					"DirectExp: native texture upload failed (texture {}, mip {}, layer {}, {}x{}): {}; GPU-sampled textures may contain stale or empty texels.",

@@ -1,36 +1,20 @@
-# Native Bridge
+# DirectExp Documentation
 
-This directory is reserved for the Windows native bridge used by `DirectExp`.
+DirectExp is an independent native Direct3D 11 backend for Minecraft versions
+newer than 26.2 on Windows desktop, using a window with a Win32 `HWND` and
+devices at D3D feature level 10.1 or higher. MetalExp research informed some
+early exploration; it is not a structural sibling or implementation template.
 
-Planned responsibilities:
+The backend includes Win32/DXGI surface management, D3D11 device and resource
+lifecycles, shader translation and draw submission. Current implementation
+and validation status is recorded in the
+[progress log](plans/2026-09-20-directexp-progress-log.md) and individual
+[plans](plans/).
 
-- resolve the GLFW-owned window into its Win32 `HWND`
-- create the `ID3D11Device` / `ID3D11DeviceContext` pair at feature level
-  10.1 or higher (with a defined fallback/reject policy below that)
-- create and manage an `IDXGISwapChain` bound to that `HWND`
-- own core D3D11 object lifecycles (device, immediate context, swap chain,
-  render target views)
-- expose a small JNI bridge to the Fabric-side backend
-
-Current scope:
-
-- a minimal JNI-loadable stub library target named `directexp_native`
-- a native probe entrypoint that:
-  - creates a temporary `ID3D11Device` via `D3D11CreateDevice` with a
-    feature-level request list capped at `D3D_FEATURE_LEVEL_11_1` and
-    floored at `D3D_FEATURE_LEVEL_10_1`
-  - reports the negotiated feature level back to Java
-  - reports `DXGI_ADAPTER_DESC` identity (description string, vendor ID,
-    dedicated video memory) for diagnostics
-  - reports failure distinctly for "no D3D11 runtime", "no adapter
-    reaching 10.1", and "device creation failed for another reason"
-- no swap chain, no window attachment, no command list/draw submission yet
-- (Milestone 4.1) `shaderc`/`SPIRV-Cross`/`d3dcompiler` linked, plus a
-  `JNI_OnLoad`-triggered smoke test (`directexp_shader_toolchain.cpp`) that
-  compiles one hardcoded GLSL string through `shaderc` to SPIR-V and
-  through SPIRV-Cross's `CompilerHLSL` to HLSL text, logging both -- not
-  yet wired to any real Mojang shader source, JNI entrypoint, or
-  `D3DCompile` call (see the Milestone 4 breakdown doc for what those need)
+The Gradle configuration currently pins a Minecraft/Fabric/Loom dependency
+set for compilation. These values are development inputs, not the project's
+compatibility target; Minecraft-facing code must be maintained as supported
+Minecraft APIs evolve.
 
 ## Local build requirements
 
@@ -107,16 +91,12 @@ On Windows, `./gradlew.bat build` emits
 the bundled DLL before loading it; `runClient` uses the freshly built file
 directly through the `directexp.nativeLibraryPath` system property.
 
-## Why CMake instead of a raw compiler invocation
+## Why CMake
 
-MetalExp calls `xcrun clang` directly because Apple's toolchain is
-effectively fixed per-OS. On Windows there are two genuinely different,
-both-legitimate toolchains (MSVC and MinGW-w64/MSYS2), so the native build
-goes through CMake instead of a hardcoded compiler command line -- CMake
-abstracts the compiler invocation and library-naming differences between
-the two (see the "bare library names" comment in `CMakeLists.txt`), and a
-future contributor building on their own machine gets a normal CMake error
-message instead of a hardcoded-path failure.
+Windows development commonly uses either MSVC or MinGW-w64/MSYS2. CMake
+abstracts compiler invocation and library-naming differences between the
+toolchains (see the "bare library names" comment in `CMakeLists.txt`), so
+contributors get normal CMake diagnostics instead of hardcoded-path failures.
 
 ## Known toolchain-specific caveats
 

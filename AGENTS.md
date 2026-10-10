@@ -8,8 +8,9 @@ It applies to the repository root and all git worktrees created from it.
 
 `DirectExp` is not a lightweight tweak mod. It is an experimental Fabric-delivered
 backend program whose goal is to add a real native DirectX 11 backend to
-modern Minecraft on Windows, targeting the 26.2 release APIs and feature
-level 10.1 devices at minimum.
+Minecraft versions newer than 26.2 on Windows desktop, with a window that
+provides a Win32 `HWND` and D3D11 devices at feature level 10.1 or higher.
+The current Gradle dependency versions are build inputs, not the support target.
 
 The intended architecture is:
 
@@ -19,15 +20,15 @@ The intended architecture is:
 - a native Windows bridge for Win32, `IDXGISwapChain`, and D3D11 device/context lifecycle
 - a shader/toolchain route based on `GLSL -> SPIR-V -> HLSL`
 
-## Reference Project
+## Research Background
 
-`DirectExp` is a structural sibling of `MetalExp` (same author's Metal-backend
-equivalent for macOS, same Minecraft architecture line). Where a design question
-has already been answered by MetalExp and nothing about DirectX 11 forces a
-different answer, follow MetalExp's precedent instead of re-deriving it from
-scratch. Where DirectX 11 genuinely differs (see "Where DirectExp Diverges
-From MetalExp" below), document the divergence in the design spec rather than
-silently drifting.
+DirectExp is an independent DirectX 11 implementation. MetalExp research
+informed some early investigation, but DirectExp is not a structural sibling,
+does not share an implementation plan, and should not copy MetalExp's
+architecture by default. Use project-local D3D11 research and the current
+Minecraft API as the source of truth. Consult MetalExp research only when it
+provides relevant background, and document any adopted idea with its DirectX
+11 rationale.
 
 ## Non-Goals
 
@@ -42,23 +43,18 @@ Do not drift into these directions unless the user explicitly changes scope:
 - silently dropping the feature level 10.1 floor to chase broader hardware
   coverage without an explicit decision to do so
 
-## Where DirectExp Diverges From MetalExp
+## DirectX 11 Constraints
 
-- **Window/surface handle**: Metal needs an `NSWindow` *and* `NSView` pair to
-  attach a `CAMetalLayer`. D3D11/DXGI only needs the Win32 `HWND` to build an
-  `IDXGISwapChain`. `Win32HostSurface` is therefore a single-field record,
-  not a pair like `CocoaHostSurface`.
-- **Feature level gating**: MetalExp does not have an equivalent concept.
-  DirectExp must probe and reject devices below `D3D_FEATURE_LEVEL_10_1`
+- **Window/surface handle**: D3D11/DXGI uses the Win32 `HWND` to build an
+  `IDXGISwapChain`; `Win32HostSurface` therefore carries that handle.
+- **Feature level gating**: DirectExp must probe and reject devices below
+  `D3D_FEATURE_LEVEL_10_1`
   before doing anything else, and report *why* a device was rejected
   (no D3D11 runtime vs. below floor vs. other) distinctly in diagnostics.
-- **Native toolchain**: MetalExp shells out to `xcrun clang` directly because
-  Apple's toolchain is fixed per-OS. DirectExp's native build goes through
-  CMake (see `native/README.md`) because the Windows toolchain story (MSVC
-  vs. clang-cl, SDK location) is not as uniform.
-- **Shader destination**: MSL for MetalExp, HLSL for DirectExp. Both start
-  from the same GLSL source and the same SPIR-V intermediate step
-  (SPIRV-Cross for the SPIR-V -> target-language step).
+- **Native toolchain**: DirectExp's Windows native build goes through CMake
+  (see `native/README.md`) to support available Windows toolchains and SDKs.
+- **Shader destination**: DirectExp translates GLSL through SPIR-V to HLSL
+  using SPIRV-Cross.
 - **Binding model**: D3D11 has no argument buffers and no root signatures,
   only flat constant-buffer/SRV/sampler/UAV slot binding. This is actually a
   slightly easier fit for the engine-owned slot map than Metal is.
@@ -75,44 +71,16 @@ Read these before making architecture-affecting changes.
    `docs/research/2026-09-20-directexp-d3d11-research-notes.md`
 
 When working on Minecraft integration points, use those docs as the source
-of truth before inventing a new path. When working on backend-agnostic
-bootstrap/config/diagnostics code, the equivalent MetalExp source file is
-often the fastest way to find the intended shape.
+of truth before inventing a new path. MetalExp may be consulted as research
+background, but it is not DirectExp's implementation template.
 
-## Current Implementation Path
+## Implementation Guidance
 
-Build the project in these major slices:
-
-1. Bootstrap, config persistence, diagnostics, and planning (this session's scaffold)
-2. Settings UI replacement with a `DirectExp`-owned graphics API option (this session's scaffold)
-3. Startup backend negotiation override driven by `DirectExp` config (this session's scaffold)
-4. Real `DxBackend` introduction as a backend parallel to GL and Vulkan (stubbed, not real yet)
-5. Native bridge bring-up for Win32 window extraction, `IDXGISwapChain`, device, context, and drawable lifecycle
-6. Surface/device/resource core
-7. Shader toolchain and pipeline compilation
-8. Rendering viability for menu, world entry, resize, and shutdown
-
-Do not skip directly to broad renderer work if the previous layer is still
-fake or only half-wired. Current status (see docs/plans's Progress Log for
-exact dates and build-verification status): slices 1-3 are wired end to end
-(config -> plan -> mixin override -> settings UI) and build-verified.
-Slice 4 exists as compiling stub classes implementing the real Blaze3D
-backend interfaces but backed by CPU-side placeholder storage (same shape
-MetalExp used at its own bootstrap stage). Slice 5 (swap chain lifecycle --
-device/context/flip-model `IDXGISwapChain1`, resize, CPU-upload blit,
-present, release) is build-verified and runtime-verified, reachable end to
-end through `DxBackend` -> `DxBackendBootstrapContext` -> `DxSurfaceLease`.
-GPU-texture-backed resources (slice 6/Milestone 3 -- `createTexture` /
-`uploadTextureRgba8` / `blitSurfaceTexture` against a real
-`ID3D11Texture2D`) are implemented and now runtime-verified too: the
-`native GPU texture path active` diagnostic log line confirms textures
-upload to real GPU memory rather than falling back to `DxTexture`'s
-CPU-side path. Shader/pipeline work (slice 7/Milestone 4) is underway per
-`docs/plans/2026-09-25-directexp-milestone4-breakdown.md`'s sub-milestones
-(4.1 native toolchain bring-up, 4.2 source/preprocessing stage, and 4.3
-IR stage/real GLSL -> SPIR-V are authored; see that plan and the
-bootstrap plan's Progress Log for exact build/runtime-verification status
-of each) -- nothing issues real draw calls yet, and won't until 4.6.
+Work incrementally from backend negotiation through native device/surface
+lifecycle, resources, shader/pipeline support, and rendering validation. Do not
+skip ahead while a dependency layer is fake or only half-wired. Consult the
+bootstrap plan and progress log for the current work and verification status;
+do not rely on a static roadmap summary here.
 
 ## Git And PR Rules
 
@@ -148,13 +116,13 @@ of each) -- nothing issues real draw calls yet, and won't until 4.6.
   on an actual Windows machine with the D3D11 SDK on PATH — say so explicitly
   rather than claiming a Windows-only build step succeeded from a non-Windows
   session.
-- If reverse-engineering Minecraft internals is needed, use the same
-  decompiled-source workflow MetalExp's AGENTS.md describes instead of guessing
+- If reverse-engineering Minecraft internals is needed, inspect the current
+  Minecraft decompile and checked-in API references instead of guessing
 
 ## DirectX Integration Guidance
 
-The point at which DirectX 11 is considered "really integrated" is not when
-docs mention it. It is when:
+DirectX 11 integration is established by the implementation and its evidence,
+not by documentation claims. Verify that:
 
 - `BackendKind.DIRECTX` resolves to a real `DxBackend`
 - startup negotiation actually instantiates and tries `DxBackend`
@@ -162,17 +130,11 @@ docs mention it. It is when:
 - the backend exposes a valid device (feature level >= 10.1) and swap-chain-backed
   surface path instead of being skipped up front
 
-Until then, any DirectX path is scaffolding, not completion. That is exactly
-where this scaffold currently sits: the negotiation and config plumbing is
-real, but `DxBackend.createDevice(...)` does not yet stand up a real device.
-
 ## Notes For Future Agents
 
 - Treat the design spec and research docs as constraints, not inspiration-only reading
 - Preserve the repo's current milestone discipline even when work lands on `dev`
 - If a worktree or branch is only a scratch area, do not treat it as the canonical development branch
 - Prefer adding or updating `docs/plans/` when a new major milestone starts
-- This is a multi-session project. Before starting work, read the bootstrap
-  plan's "Progress Log" section (bottom of the file) to see what the last
-  session actually finished vs. only stubbed, then update it before ending
-  your own session.
+- Keep progress documentation evidence-based; distinguish implementation
+  from build and runtime verification.

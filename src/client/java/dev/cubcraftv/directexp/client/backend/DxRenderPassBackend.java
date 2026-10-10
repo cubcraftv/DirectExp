@@ -4,14 +4,17 @@ import com.mojang.blaze3d.GpuFormat;
 import com.mojang.blaze3d.IndexType;
 import com.mojang.blaze3d.buffers.GpuBuffer;
 import com.mojang.blaze3d.buffers.GpuBufferSlice;
+import com.mojang.blaze3d.pipeline.BindGroupLayout;
 import com.mojang.blaze3d.pipeline.RenderPipeline;
 import com.mojang.blaze3d.systems.GpuQueryPool;
 import com.mojang.blaze3d.systems.RenderPass;
 import com.mojang.blaze3d.systems.RenderPassBackend;
 import com.mojang.blaze3d.systems.RenderPassDescriptor;
+import com.mojang.blaze3d.shaders.UniformType;
 import com.mojang.blaze3d.textures.GpuSampler;
 import com.mojang.blaze3d.textures.GpuTextureView;
 import dev.cubcraftv.directexp.bridge.DxBridge;
+import dev.cubcraftv.directexp.bridge.DxTexelFormat;
 import dev.cubcraftv.directexp.client.api.DxPushConstants;
 import dev.cubcraftv.directexp.client.shader.DxShaderInterfaceLayout;
 
@@ -21,6 +24,7 @@ import java.nio.IntBuffer;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.OptionalDouble;
 import java.util.Optional;
 import java.util.function.BiConsumer;
@@ -61,6 +65,10 @@ import org.lwjgl.PointerBuffer;
  * {@code VulkanRenderPass} line for line (see the method comment).
  */
 final class DxRenderPassBackend implements RenderPassBackend, DxPushConstants {
+	/** Texel-buffer uniforms (name -> element format) per pipeline; pipelines are long-lived and their layouts immutable. */
+	private static final Map<RenderPipeline, Map<String, DxTexelFormat>> TEXEL_BUFFER_FORMATS = new ConcurrentHashMap<>();
+	private static final Map<String, DxTexelFormat> NO_TEXEL_BUFFERS = Map.of();
+
 	private final DxTextureView colorView;
 	private final DxTextureView depthView;
 	private final DxTexture colorTarget;
@@ -81,6 +89,8 @@ final class DxRenderPassBackend implements RenderPassBackend, DxPushConstants {
 	private final boolean nativeTargetsBound;
 
 	private RenderPipeline pipeline;
+	/** The current pipeline's texel-buffer uniforms; empty when it has none. */
+	private Map<String, DxTexelFormat> texelBufferFormats = NO_TEXEL_BUFFERS;
 	private DxBuffer indexBuffer;
 	private IndexType indexType;
 	private boolean scissorEnabled;
@@ -201,6 +211,30 @@ final class DxRenderPassBackend implements RenderPassBackend, DxPushConstants {
 	@Override
 	public void setPipeline(RenderPipeline renderPipeline) {
 		this.pipeline = renderPipeline;
+		this.texelBufferFormats = renderPipeline == null ? NO_TEXEL_BUFFERS : TEXEL_BUFFER_FORMATS.computeIfAbsent(renderPipeline, DxRenderPassBackend::texelBufferFormatsOf);
+	}
+
+	/**
+	 * The pipeline's {@code UniformType.TEXEL_BUFFER} uniforms with their declared element
+	 * format. A format D3D11 cannot view a buffer as is left out (and reported when the
+	 * pipeline compiles to a draw with a missing resource), so it never resolves to a view.
+	 */
+	private static Map<String, DxTexelFormat> texelBufferFormatsOf(RenderPipeline pipeline) {
+		Map<String, DxTexelFormat> formats = null;
+		for (BindGroupLayout.UniformDescription uniform : BindGroupLayout.flattenUniforms(pipeline.getBindGroupLayouts())) {
+			if (uniform.type() != UniformType.TEXEL_BUFFER || uniform.gpuFormat() == null) {
+				continue;
+			}
+			DxTexelFormat format = DxTexelFormat.fromGpuFormatName(uniform.gpuFormat().name());
+			if (format == null) {
+				continue;
+			}
+			if (formats == null) {
+				formats = new HashMap<>();
+			}
+			formats.put(uniform.name(), format);
+		}
+		return formats == null ? NO_TEXEL_BUFFERS : Map.copyOf(formats);
 	}
 
 	@Override
@@ -234,12 +268,26 @@ final class DxRenderPassBackend implements RenderPassBackend, DxPushConstants {
 	public void setUniform(String name, GpuBuffer gpuBuffer) {
 		this.uniformBuffers.put(name, gpuBuffer);
 		this.uniformSlices.remove(name);
+		markTexelBufferChanged(gpuBuffer);
 	}
 
 	@Override
 	public void setUniform(String name, GpuBufferSlice gpuBufferSlice) {
 		this.uniformSlices.put(name, gpuBufferSlice);
 		this.uniformBuffers.remove(name);
+		markTexelBufferChanged(gpuBufferSlice == null ? null : gpuBufferSlice.buffer());
+	}
+
+	/**
+	 * Constant buffers are re-staged every draw, but a texel buffer's SRV is bound with the
+	 * textures, which only re-bind when something about them changed. Setting a texel buffer
+	 * is such a change; ordinary uniform buffers are not, so per-draw {@code setUniform} calls
+	 * (Sodium sets several per region) do not trigger texture rebinding.
+	 */
+	private void markTexelBufferChanged(GpuBuffer buffer) {
+		if (buffer != null && (buffer.usage() & DxBufferBinding.USAGE_UNIFORM_TEXEL_BUFFER) != 0) {
+			this.texturesDirty = true;
+		}
 	}
 
 	@Override
@@ -290,7 +338,12 @@ final class DxRenderPassBackend implements RenderPassBackend, DxPushConstants {
 		if (fan) {
 			// The pipeline topology is TRIANGLELIST; the fan's indices become
 			// triangle-list indices here, still relative to the draw's base vertex.
-			expandIndexedFan(firstIndex, indexCount);
+			try {
+				expandIndexedFan(firstIndex, indexCount);
+			} catch (UnsupportedOperationException | IllegalStateException | IllegalArgumentException error) {
+				report("draw-indexed-fan", "could not read the index buffer for a triangle-fan draw: " + error.getMessage());
+				return;
+			}
 		}
 
 		if (!prepareDraw()) {
@@ -306,6 +359,7 @@ final class DxRenderPassBackend implements RenderPassBackend, DxPushConstants {
 			if (!bindIndexBufferIfDirty()) {
 				return;
 			}
+			traceIndexedDraw(firstIndex, indexCount, baseVertex);
 			long profileStart = DxPerformanceProfiler.start();
 			try {
 				this.dxBridge.drawIndexed(indexCount, instanceCount, firstIndex, baseVertex);
@@ -361,6 +415,16 @@ final class DxRenderPassBackend implements RenderPassBackend, DxPushConstants {
 				.order(ByteOrder.nativeOrder());
 			packed.asIntBuffer().put(parameters);
 			parameters = packed.asIntBuffer();
+		}
+
+		if (DxIndexedDrawTrace.enabled()) {
+			IntBuffer traced = parameters.duplicate();
+			for (int drawIndex = 0; drawIndex < drawCount; drawIndex++) {
+				int firstIndex = traced.get();
+				int indexCount = traced.get();
+				int baseVertex = traced.get();
+				traceIndexedDraw(firstIndex, indexCount, baseVertex);
+			}
 		}
 
 		try {
@@ -431,22 +495,7 @@ final class DxRenderPassBackend implements RenderPassBackend, DxPushConstants {
 				issueExpandedFan(1, 0);
 				return;
 			}
-			boolean probesEnabled = DxDebugProbes.enabled();
-			DxDebugProbes.SpriteSource sprite = probesEnabled
-				? DxDebugProbes.spriteSource(boundTextureView("Sprite"))
-				: null;
-			int[] atlasBefore = probesEnabled
-				? DxDebugProbes.captureAtlasTexelsBeforeDraw(
-					this.colorTarget, this.colorTargetMipLevel, this.pipeline, sprite, this.dxBridge, this.bindingSource
-				)
-				: null;
 			this.dxBridge.draw(vertexCount, firstVertex);
-			if (probesEnabled) {
-				DxDebugProbes.logGuiAtlasCompositionDraw(
-					this.colorTarget, this.colorView, this.colorTargetMipLevel, this.pipeline, this.boundPipeline,
-					sprite, this.bindingSource, this.dxBridge, vertexCount, firstVertex, atlasBefore
-				);
-			}
 		} catch (UnsupportedOperationException | IllegalStateException error) {
 			report("draw", "Draw failed: " + error.getMessage());
 		}
@@ -481,6 +530,26 @@ final class DxRenderPassBackend implements RenderPassBackend, DxPushConstants {
 	}
 
 	/** D3D11 has no fan topology: fan pipelines are TRIANGLELIST and every draw expands its indices. */
+	/** See {@link DxIndexedDrawTrace}: logs the first draws in full and any draw that breaks an indexed-draw rule. */
+	private void traceIndexedDraw(int firstIndex, int indexCount, int baseVertex) {
+		if (!DxIndexedDrawTrace.enabled() || this.indexBuffer == null || this.indexType == null) {
+			return;
+		}
+		boolean wide = this.indexType == IndexType.INT;
+		boolean quads = this.pipeline != null && this.pipeline.getPrimitiveTopology() == com.mojang.blaze3d.PrimitiveTopology.QUADS;
+		long indexBytes = this.indexBuffer.logicalSize();
+		String label = this.pipeline == null ? "<no pipeline>" : this.pipeline.getLocation().toString();
+		boolean broken = !DxIndexedDrawTrace.problems(wide, indexBytes, firstIndex, indexCount, baseVertex, quads).isEmpty();
+		if (broken || DxIndexedDrawTrace.shouldLogDraw()) {
+			String message = DxIndexedDrawTrace.describe(label, wide, indexBytes, firstIndex, indexCount, baseVertex, quads);
+			if (broken) {
+				report("indexed-draw-trace:" + label + ":" + message.hashCode(), message);
+			} else {
+				dev.cubcraftv.directexp.DirectExpMod.LOGGER.info("DirectExp: {}", message);
+			}
+		}
+	}
+
 	boolean isTriangleFanPipeline() {
 		return this.pipeline != null && this.pipeline.getPrimitiveTopology() == com.mojang.blaze3d.PrimitiveTopology.TRIANGLE_FAN;
 	}
@@ -488,6 +557,12 @@ final class DxRenderPassBackend implements RenderPassBackend, DxPushConstants {
 	/** Expands the bound index buffer's fan range into {@link #fanExpander()}; indices stay relative to the draw's base vertex. */
 	void expandIndexedFan(int firstIndex, int indexCount) {
 		int indexBytes = this.indexType.bytes;
+		if (this.indexBuffer.isGpuOnly()) {
+			// Only the fan's own indices come back from the GPU, not the whole (large) buffer.
+			ByteBuffer range = this.indexBuffer.sliceStorage((long) firstIndex * indexBytes, (long) indexCount * indexBytes);
+			this.fanExpander.expandIndexed(range, indexBytes, 0, indexCount);
+			return;
+		}
 		this.fanExpander.expandIndexed(this.indexBuffer.logicalStorage(), indexBytes, firstIndex, indexCount);
 	}
 
@@ -646,13 +721,47 @@ final class DxRenderPassBackend implements RenderPassBackend, DxPushConstants {
 			return 0L;
 		}
 
+		/**
+		 * The native SRV for a texel-buffer uniform: the buffer {@code setUniform} bound under
+		 * {@code name}, viewed as the element format the pipeline declared. 0 for every name that
+		 * is not a texel buffer of the current pipeline (ordinary sampled textures fall through
+		 * to {@link #textureViewHandle}) and when nothing usable is bound.
+		 */
 		@Override
 		public long bufferShaderResourceHandle(String name) {
-			return 0L;
+			DxTexelFormat format = DxRenderPassBackend.this.texelBufferFormats.get(name);
+			if (format == null) {
+				return 0L;
+			}
+
+			DxBuffer buffer;
+			long offset;
+			long length;
+			GpuBufferSlice slice = DxRenderPassBackend.this.uniformSlices.get(name);
+			if (slice != null) {
+				buffer = (DxBuffer) slice.buffer();
+				offset = slice.offset();
+				length = slice.length();
+			} else {
+				GpuBuffer whole = DxRenderPassBackend.this.uniformBuffers.get(name);
+				if (whole == null) {
+					return 0L;
+				}
+				buffer = (DxBuffer) whole;
+				offset = 0L;
+				length = buffer.logicalSize();
+			}
+			return buffer.isClosed() ? 0L : buffer.texelBufferShaderResourceView(format, offset, length);
 		}
 
 		@Override
 		public String textureViewFailureReason(String name) {
+			if (DxRenderPassBackend.this.texelBufferFormats.containsKey(name)) {
+				boolean set = DxRenderPassBackend.this.uniformSlices.containsKey(name) || DxRenderPassBackend.this.uniformBuffers.containsKey(name);
+				return set
+					? "the texel buffer bound to it has no native shader-resource view (no native buffer handle, closed, or an unaligned range)"
+					: "the render pass never set that texel buffer (setUniform)";
+			}
 			BoundTexture bound = DxRenderPassBackend.this.boundTextures.get(name);
 			if (bound == null) {
 				return "the render pass has no texture binding for that name";
@@ -667,21 +776,6 @@ final class DxRenderPassBackend implements RenderPassBackend, DxPushConstants {
 				return "the bound view's texture has no native texture handle";
 			}
 			return "the bound texture view has no native SRV";
-		}
-
-		@Override
-		public String textureViewDescription(String name) {
-			BoundTexture bound = DxRenderPassBackend.this.boundTextures.get(name);
-			if (bound == null) {
-				return "no bound texture";
-			}
-			if (!(bound.textureView() instanceof DxTextureView view)) {
-				return "non-DirectExp texture view (" + bound.textureView().texture().getClass().getSimpleName() + ")";
-			}
-			if (!(view.texture() instanceof DxTexture texture)) {
-				return "non-DirectExp texture (" + view.texture().getClass().getSimpleName() + ")";
-			}
-			return texture.debugDescription();
 		}
 
 		@Override

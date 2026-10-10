@@ -31,6 +31,7 @@
 #ifdef _WIN32
 
 #include <algorithm>
+#include <cstring>
 
 using namespace directexp;
 
@@ -54,6 +55,50 @@ bool SetDebugObjectName(JNIEnv* env, ID3D11DeviceChild* object, const std::strin
 		return false;
 	}
 	return true;
+}
+
+// Texel-buffer element formats. The codes are DxTexelFormat.code() on the Java
+// side (1..30); they are an ABI between the two and deliberately not DXGI
+// numbers, like the TEXTURE_FORMAT_* / BUFFER_BIND_* codes.
+struct TexelFormatInfo {
+	DXGI_FORMAT format;
+	UINT bytesPerElement;
+};
+
+bool ResolveTexelFormat(jint code, TexelFormatInfo& out) {
+	switch (code) {
+		case 1: out = { DXGI_FORMAT_R8_UNORM, 1 }; return true;
+		case 2: out = { DXGI_FORMAT_R8_UINT, 1 }; return true;
+		case 3: out = { DXGI_FORMAT_R8_SINT, 1 }; return true;
+		case 4: out = { DXGI_FORMAT_R8G8_UNORM, 2 }; return true;
+		case 5: out = { DXGI_FORMAT_R8G8_UINT, 2 }; return true;
+		case 6: out = { DXGI_FORMAT_R8G8_SINT, 2 }; return true;
+		case 7: out = { DXGI_FORMAT_R8G8B8A8_UNORM, 4 }; return true;
+		case 8: out = { DXGI_FORMAT_R8G8B8A8_UINT, 4 }; return true;
+		case 9: out = { DXGI_FORMAT_R8G8B8A8_SINT, 4 }; return true;
+		case 10: out = { DXGI_FORMAT_R16_UINT, 2 }; return true;
+		case 11: out = { DXGI_FORMAT_R16_SINT, 2 }; return true;
+		case 12: out = { DXGI_FORMAT_R16_FLOAT, 2 }; return true;
+		case 13: out = { DXGI_FORMAT_R16G16_UINT, 4 }; return true;
+		case 14: out = { DXGI_FORMAT_R16G16_SINT, 4 }; return true;
+		case 15: out = { DXGI_FORMAT_R16G16_FLOAT, 4 }; return true;
+		case 16: out = { DXGI_FORMAT_R16G16B16A16_UINT, 8 }; return true;
+		case 17: out = { DXGI_FORMAT_R16G16B16A16_SINT, 8 }; return true;
+		case 18: out = { DXGI_FORMAT_R16G16B16A16_FLOAT, 8 }; return true;
+		case 19: out = { DXGI_FORMAT_R32_UINT, 4 }; return true;
+		case 20: out = { DXGI_FORMAT_R32_SINT, 4 }; return true;
+		case 21: out = { DXGI_FORMAT_R32_FLOAT, 4 }; return true;
+		case 22: out = { DXGI_FORMAT_R32G32_UINT, 8 }; return true;
+		case 23: out = { DXGI_FORMAT_R32G32_SINT, 8 }; return true;
+		case 24: out = { DXGI_FORMAT_R32G32_FLOAT, 8 }; return true;
+		case 25: out = { DXGI_FORMAT_R32G32B32_UINT, 12 }; return true;
+		case 26: out = { DXGI_FORMAT_R32G32B32_SINT, 12 }; return true;
+		case 27: out = { DXGI_FORMAT_R32G32B32_FLOAT, 12 }; return true;
+		case 28: out = { DXGI_FORMAT_R32G32B32A32_UINT, 16 }; return true;
+		case 29: out = { DXGI_FORMAT_R32G32B32A32_SINT, 16 }; return true;
+		case 30: out = { DXGI_FORMAT_R32G32B32A32_FLOAT, 16 }; return true;
+		default: return false;
+	}
 }
 
 } // namespace
@@ -184,6 +229,229 @@ Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_updateBufferNative(
 
 	// pSrcData points at the first byte of the *range* (not of the buffer).
 	g_activeContext->UpdateSubresource(wrapper->buffer, 0, &box, base + offset, 0, 0);
+}
+
+// Writes [srcOffset, srcOffset + length) of a direct ByteBuffer to
+// [dstOffset, dstOffset + length) of the GPU buffer. The Java side uses this for
+// buffers that have no CPU mirror (large vertex/index arenas), so unlike
+// updateBufferNative the source is just the written bytes.
+extern "C" JNIEXPORT void JNICALL
+Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_uploadBufferRangeNative(
+	JNIEnv* env, jclass, jlong nativeBufferHandle, jint dstOffset, jobject source, jint srcOffset, jint length
+) {
+	Buffer* wrapper = HandleToPointer<Buffer>(nativeBufferHandle);
+	if (wrapper == nullptr || wrapper->buffer == nullptr) {
+		ThrowIllegalState(env, "uploadBufferRangeNative called with an invalid or already-released buffer handle.");
+		return;
+	}
+	if (g_activeContext == nullptr) {
+		ThrowIllegalState(env, "uploadBufferRangeNative called with no active DirectX context (no surface bootstrapped yet?).");
+		return;
+	}
+	if ((wrapper->bindFlags & D3D11_BIND_CONSTANT_BUFFER) != 0) {
+		// UpdateSubresource cannot partially update a constant buffer; those use updateBufferNative.
+		ThrowIllegalState(env, "uploadBufferRangeNative does not support constant buffers.");
+		return;
+	}
+
+	unsigned char* base = static_cast<unsigned char*>(env->GetDirectBufferAddress(source));
+	if (base == nullptr) {
+		ThrowIllegalState(env, "uploadBufferRangeNative requires a direct ByteBuffer.");
+		return;
+	}
+	const jlong capacity = env->GetDirectBufferCapacity(source);
+	if (dstOffset < 0 || srcOffset < 0 || length <= 0
+		|| static_cast<jlong>(dstOffset) + length > static_cast<jlong>(wrapper->byteWidth)
+		|| static_cast<jlong>(srcOffset) + length > capacity) {
+		ThrowIllegalState(env, "uploadBufferRangeNative: range is outside the buffer or the source.");
+		return;
+	}
+
+	D3D11_BOX box = {};
+	box.left = static_cast<UINT>(dstOffset);
+	box.right = static_cast<UINT>(dstOffset) + static_cast<UINT>(length);
+	box.top = 0;
+	box.bottom = 1;
+	box.front = 0;
+	box.back = 1;
+	g_activeContext->UpdateSubresource(wrapper->buffer, 0, &box, base + srcOffset, 0, 0);
+}
+
+// Copies a range of the GPU buffer into a direct ByteBuffer through a transient
+// STAGING buffer. Map(READ) waits for every queued GPU write to the source, so
+// this is for the rare moments the CPU needs bytes of a GPU-only buffer
+// (triangle-fan index expansion, read-mapping), not for per-frame use.
+extern "C" JNIEXPORT void JNICALL
+Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_readBufferNative(
+	JNIEnv* env, jclass, jlong nativeBufferHandle, jint srcOffset, jobject destination, jint dstOffset, jint length
+) {
+	Buffer* wrapper = HandleToPointer<Buffer>(nativeBufferHandle);
+	if (wrapper == nullptr || wrapper->buffer == nullptr) {
+		ThrowIllegalState(env, "readBufferNative called with an invalid or already-released buffer handle.");
+		return;
+	}
+	if (g_activeDevice == nullptr || g_activeContext == nullptr) {
+		ThrowIllegalState(env, "readBufferNative called with no active DirectX device (no surface bootstrapped yet?).");
+		return;
+	}
+
+	unsigned char* base = static_cast<unsigned char*>(env->GetDirectBufferAddress(destination));
+	if (base == nullptr) {
+		ThrowIllegalState(env, "readBufferNative requires a direct ByteBuffer.");
+		return;
+	}
+	const jlong capacity = env->GetDirectBufferCapacity(destination);
+	if (srcOffset < 0 || dstOffset < 0 || length <= 0
+		|| static_cast<jlong>(srcOffset) + length > static_cast<jlong>(wrapper->byteWidth)
+		|| static_cast<jlong>(dstOffset) + length > capacity) {
+		ThrowIllegalState(env, "readBufferNative: range is outside the buffer or the destination.");
+		return;
+	}
+
+	D3D11_BUFFER_DESC desc = {};
+	desc.ByteWidth = static_cast<UINT>(length);
+	desc.Usage = D3D11_USAGE_STAGING;
+	desc.BindFlags = 0;
+	desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+	ID3D11Buffer* staging = nullptr;
+	if (FAILED(g_activeDevice->CreateBuffer(&desc, nullptr, &staging)) || staging == nullptr) {
+		ThrowIllegalState(env, "readBufferNative: could not create the staging buffer (out of memory?).");
+		return;
+	}
+
+	D3D11_BOX box = {};
+	box.left = static_cast<UINT>(srcOffset);
+	box.right = static_cast<UINT>(srcOffset) + static_cast<UINT>(length);
+	box.top = 0;
+	box.bottom = 1;
+	box.front = 0;
+	box.back = 1;
+	g_activeContext->CopySubresourceRegion(staging, 0, 0, 0, 0, wrapper->buffer, 0, &box);
+
+	D3D11_MAPPED_SUBRESOURCE mapped = {};
+	if (FAILED(g_activeContext->Map(staging, 0, D3D11_MAP_READ, 0, &mapped))) {
+		staging->Release();
+		ThrowIllegalState(env, "readBufferNative: ID3D11DeviceContext::Map failed.");
+		return;
+	}
+	memcpy(base + dstOffset, mapped.pData, static_cast<size_t>(length));
+	g_activeContext->Unmap(staging, 0);
+	staging->Release();
+}
+
+// GPU-side buffer-to-buffer copy. D3D11 forbids CopySubresourceRegion between
+// overlapping ranges of one resource, so that case bounces through a temporary
+// buffer; everything else is a single copy command.
+extern "C" JNIEXPORT void JNICALL
+Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_copyBufferNative(
+	JNIEnv* env, jclass, jlong sourceHandle, jint srcOffset, jlong destinationHandle, jint dstOffset, jint length
+) {
+	Buffer* source = HandleToPointer<Buffer>(sourceHandle);
+	Buffer* destination = HandleToPointer<Buffer>(destinationHandle);
+	if (source == nullptr || source->buffer == nullptr || destination == nullptr || destination->buffer == nullptr) {
+		ThrowIllegalState(env, "copyBufferNative called with an invalid or already-released buffer handle.");
+		return;
+	}
+	if (g_activeDevice == nullptr || g_activeContext == nullptr) {
+		ThrowIllegalState(env, "copyBufferNative called with no active DirectX device (no surface bootstrapped yet?).");
+		return;
+	}
+	if (((source->bindFlags | destination->bindFlags) & D3D11_BIND_CONSTANT_BUFFER) != 0) {
+		ThrowIllegalState(env, "copyBufferNative does not support constant buffers.");
+		return;
+	}
+	if (srcOffset < 0 || dstOffset < 0 || length <= 0
+		|| static_cast<jlong>(srcOffset) + length > static_cast<jlong>(source->byteWidth)
+		|| static_cast<jlong>(dstOffset) + length > static_cast<jlong>(destination->byteWidth)) {
+		ThrowIllegalState(env, "copyBufferNative: range is outside the source or destination buffer.");
+		return;
+	}
+
+	D3D11_BOX box = {};
+	box.left = static_cast<UINT>(srcOffset);
+	box.right = static_cast<UINT>(srcOffset) + static_cast<UINT>(length);
+	box.top = 0;
+	box.bottom = 1;
+	box.front = 0;
+	box.back = 1;
+
+	const bool sameResource = source->buffer == destination->buffer;
+	const bool overlaps = sameResource
+		&& static_cast<jlong>(srcOffset) < static_cast<jlong>(dstOffset) + length
+		&& static_cast<jlong>(dstOffset) < static_cast<jlong>(srcOffset) + length;
+	if (!overlaps) {
+		g_activeContext->CopySubresourceRegion(destination->buffer, 0, static_cast<UINT>(dstOffset), 0, 0, source->buffer, 0, &box);
+		return;
+	}
+
+	D3D11_BUFFER_DESC desc = {};
+	desc.ByteWidth = static_cast<UINT>(length);
+	desc.Usage = D3D11_USAGE_DEFAULT;
+	desc.BindFlags = 0;
+	ID3D11Buffer* temporary = nullptr;
+	if (FAILED(g_activeDevice->CreateBuffer(&desc, nullptr, &temporary)) || temporary == nullptr) {
+		ThrowIllegalState(env, "copyBufferNative: could not create the temporary buffer for an overlapping copy (out of memory?).");
+		return;
+	}
+	g_activeContext->CopySubresourceRegion(temporary, 0, 0, 0, 0, source->buffer, 0, &box);
+	g_activeContext->CopySubresourceRegion(destination->buffer, 0, static_cast<UINT>(dstOffset), 0, 0, temporary, 0, nullptr);
+	temporary->Release();
+}
+
+// A typed-buffer SRV for texel buffers (GLSL samplerBuffer / isamplerBuffer, e.g.
+// Sodium's u_SectionTimeInfo). The result reuses the TextureView wrapper with only
+// shaderView filled in, so bindShaderResource0 and releaseTextureView0 handle it
+// without a second code path; the view holds its own COM reference on the buffer.
+extern "C" JNIEXPORT jlong JNICALL
+Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_createBufferShaderResourceViewNative(
+	JNIEnv* env, jclass, jlong nativeBufferHandle, jint formatCode, jint firstElement, jint elementCount
+) {
+	if (g_activeDevice == nullptr) {
+		ThrowIllegalState(env, "createBufferShaderResourceViewNative called with no active DirectX device (no surface bootstrapped yet?).");
+		return 0;
+	}
+	Buffer* buffer = HandleToPointer<Buffer>(nativeBufferHandle);
+	if (buffer == nullptr || buffer->buffer == nullptr) {
+		ThrowIllegalState(env, "createBufferShaderResourceViewNative called with an invalid or already-released buffer handle.");
+		return 0;
+	}
+	if ((buffer->bindFlags & D3D11_BIND_SHADER_RESOURCE) == 0) {
+		ThrowIllegalState(env, "createBufferShaderResourceViewNative: the buffer was not created with BUFFER_BIND_SHADER_RESOURCE.");
+		return 0;
+	}
+
+	TexelFormatInfo info = {};
+	if (!ResolveTexelFormat(formatCode, info)) {
+		ThrowIllegalState(env, "createBufferShaderResourceViewNative: unknown texel format code.");
+		return 0;
+	}
+	if (firstElement < 0 || elementCount <= 0
+		|| (static_cast<jlong>(firstElement) + elementCount) * static_cast<jlong>(info.bytesPerElement) > static_cast<jlong>(buffer->byteWidth)) {
+		ThrowIllegalState(env, "createBufferShaderResourceViewNative: element range is outside the buffer.");
+		return 0;
+	}
+
+	D3D11_SHADER_RESOURCE_VIEW_DESC desc = {};
+	desc.Format = info.format;
+	desc.ViewDimension = D3D11_SRV_DIMENSION_BUFFER;
+	desc.Buffer.FirstElement = static_cast<UINT>(firstElement);
+	desc.Buffer.NumElements = static_cast<UINT>(elementCount);
+
+	ID3D11ShaderResourceView* view = nullptr;
+	if (FAILED(g_activeDevice->CreateShaderResourceView(buffer->buffer, &desc, &view)) || view == nullptr) {
+		ThrowIllegalState(env, "ID3D11Device::CreateShaderResourceView failed for a buffer (format not supported as a buffer SRV on this device?).");
+		return 0;
+	}
+	const std::string name = "texel buffer SRV [format " + std::to_string(formatCode) + ", elements "
+		+ std::to_string(firstElement) + ".." + std::to_string(static_cast<jlong>(firstElement) + elementCount - 1) + "]";
+	if (!SetDebugObjectName(env, view, name, "buffer shader-resource view")) {
+		view->Release();
+		return 0;
+	}
+
+	TextureView* wrapper = new TextureView();
+	wrapper->shaderView = view;
+	return PointerToHandle(wrapper);
 }
 
 extern "C" JNIEXPORT void JNICALL
@@ -512,6 +780,23 @@ Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_updateBufferNative(JNIEnv*, j
 
 extern "C" JNIEXPORT void JNICALL
 Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_releaseBuffer0(JNIEnv*, jclass, jlong) {
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_uploadBufferRangeNative(JNIEnv*, jclass, jlong, jint, jobject, jint, jint) {
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_readBufferNative(JNIEnv*, jclass, jlong, jint, jobject, jint, jint) {
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_copyBufferNative(JNIEnv*, jclass, jlong, jint, jlong, jint, jint) {
+}
+
+extern "C" JNIEXPORT jlong JNICALL
+Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_createBufferShaderResourceViewNative(JNIEnv*, jclass, jlong, jint, jint, jint) {
+	return 0;
 }
 
 extern "C" JNIEXPORT jlong JNICALL

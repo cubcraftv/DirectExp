@@ -127,7 +127,8 @@ final class DxTransientMemory implements TransientMemory {
 		if (size < 0L || size > Integer.MAX_VALUE) {
 			throw new IllegalArgumentException("Transient buffer size is outside the supported range: " + size);
 		}
-		DxBuffer buffer = new DxBuffer(this.dxBridge, usage, size);
+		// Per-frame memory is written through sliceStorage and synced by its owner, so it keeps the CPU mirror.
+		DxBuffer buffer = new DxBuffer(this.dxBridge, usage, size, false);
 		this.buffers.add(buffer);
 		return buffer;
 	}

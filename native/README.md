@@ -1,41 +1,21 @@
 # Native Bridge
 
-This directory is reserved for the Windows native bridge used by `DirectExp`.
+The Windows native bridge is the C++/JNI implementation for DirectExp's
+Win32, DXGI, and D3D11 backend. It resolves the GLFW host window to an
+`HWND`, owns the D3D11 device/context and swap chain, manages native
+resources and pipelines, and exposes shader/draw operations to the Java
+backend.
 
-Planned responsibilities:
+The project compatibility target is Minecraft versions newer than 26.2 on
+Windows desktop with a window-backed surface and D3D feature level 10.1 or
+higher. Minecraft/Fabric/Loom coordinates in Gradle are pinned development
+dependencies, not a fixed product target.
 
-- resolve the GLFW-owned window into its Win32 `HWND`
-- create the `ID3D11Device` / `ID3D11DeviceContext` pair at feature level
-  10.1 or higher (with a defined fallback/reject policy below that)
-- create and manage an `IDXGISwapChain` bound to that `HWND`
-- own core D3D11 object lifecycles (device, immediate context, swap chain,
-  render target views)
-- expose a small JNI bridge to the Fabric-side backend
-
-Current scope:
-
-- a minimal JNI-loadable stub library target named `directexp_native`
-- a native probe entrypoint that:
-  - creates a temporary `ID3D11Device` via `D3D11CreateDevice` with a
-    feature-level request list capped at `D3D_FEATURE_LEVEL_11_1` and
-    floored at `D3D_FEATURE_LEVEL_10_1`
-  - reports the negotiated feature level back to Java
-  - reports `DXGI_ADAPTER_DESC` identity (description string, vendor ID,
-    dedicated video memory) for diagnostics
-  - reports failure distinctly for "no D3D11 runtime", "no adapter
-    reaching 10.1", and "device creation failed for another reason"
-- no swap chain, no window attachment, no command list/draw submission yet
-- (Milestone 4.1) `shaderc`/`SPIRV-Cross`/`d3dcompiler` linked, plus a
-  `JNI_OnLoad`-triggered smoke test (`directexp_shader_toolchain.cpp`) that
-  compiles one hardcoded GLSL string through `shaderc` to SPIR-V and
-  through SPIRV-Cross's `CompilerHLSL` to HLSL text, logging both -- not
-  yet wired to any real Mojang shader source, JNI entrypoint, or
-  `D3DCompile` call (see the Milestone 4 breakdown doc for what those need)
-- (Milestone 4.3) a real `compileGlslToSpirv0` JNI entrypoint
-  (`directexp_bridge_shader.cpp`) that compiles real, on-demand preprocessed
-  GLSL text (from 4.2) to SPIR-V via the same `shaderc` call 4.1's smoke
-  test uses, returning either the SPIR-V bytes or a structured compile
-  error -- still no `D3DCompile` call anywhere (that's Milestone 4.5)
+The native library currently includes device probing, swap-chain lifecycle,
+resource creation and transfer, render-pass state and draw submission, and
+the GLSL -> SPIR-V -> HLSL -> D3D shader path. Consult the project
+[progress log](../docs/plans/2026-09-20-directexp-progress-log.md) for the
+current build and runtime verification status.
 
 ## Local build requirements
 
@@ -57,12 +37,12 @@ SPIRV-Tools, and native bridge objects. The next native build can reuse them.
 pacman -S mingw-w64-ucrt-x86_64-toolchain mingw-w64-ucrt-x86_64-cmake mingw-w64-ucrt-x86_64-ninja
 ```
 
-Milestone 4 (shader toolchain) additionally needs `shaderc` and
-`SPIRV-Cross`, both available as prebuilt UCRT64 packages -- no need to
-build either from source:
+The shader toolchain needs `SPIRV-Cross` from the UCRT64 repository.
+`CMakeLists.txt` fetches and builds shaderc and its matching glslang,
+SPIRV-Tools, and SPIRV-Headers dependencies from pinned upstream revisions:
 
 ```
-pacman -S mingw-w64-ucrt-x86_64-shaderc mingw-w64-ucrt-x86_64-spirv-cross
+pacman -S mingw-w64-ucrt-x86_64-spirv-cross
 ```
 
 `d3dcompiler` needs no separate package on either toolchain (see "Known
@@ -98,16 +78,12 @@ loader extracts the bundled DLL to a temporary file and loads it. During
 development, `runClient` still sets `directexp.nativeLibraryPath` to load
 the freshly built DLL directly instead.
 
-## Why CMake instead of a raw compiler invocation
+## Why CMake
 
-MetalExp calls `xcrun clang` directly because Apple's toolchain is
-effectively fixed per-OS. On Windows there are two genuinely different,
-both-legitimate toolchains (MSVC and MinGW-w64/MSYS2), so the native build
-goes through CMake instead of a hardcoded compiler command line -- CMake
-abstracts the compiler invocation and library-naming differences between
-the two (see the "bare library names" comment in `CMakeLists.txt`), and a
-future contributor building on their own machine gets a normal CMake error
-message instead of a hardcoded-path failure.
+Windows development commonly uses either MSVC or MinGW-w64/MSYS2. CMake
+abstracts compiler invocation and library-naming differences between these
+toolchains (see the "bare library names" comment in `CMakeLists.txt`), so
+contributors get normal CMake diagnostics instead of hardcoded-path failures.
 
 ## Known toolchain-specific caveats
 

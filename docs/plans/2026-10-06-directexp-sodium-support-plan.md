@@ -65,29 +65,29 @@ close the capability gaps in DirectExp, then add a small Sodium patch.
 - `DeviceFeatures` enables only `multiDrawDirectInterleaved` (`DxDeviceBackend`); Sodium receives
   no shader-draw-parameters, indirect-draw, or persistent-mapping flags and keeps
   `MojangStagingBuffer` for uploads.
-- `DxBuffer` keeps a **CPU mirror of every buffer** plus an eagerly synced native copy;
-  `copyToBuffer` is implemented as CPU memcpy + re-upload.
-- Texel buffers: bind mask is 0 (`DxBufferBinding`); the 4.6 source-of-truth doc lists them as
-  still open.
+- `DxBuffer` now has a GPU-only policy for eligible large vertex/index buffers; smaller and
+  special-purpose buffers remain mirrored. `copyToBuffer` uses native buffer copies when possible
+  and preserves a CPU fallback for unsupported combinations.
+- Typed texel-buffer SRVs now have format mapping, native creation/lifetime management, caching,
+  and render-pass resource resolution.
 - (Pre-Phase-2 state; the missing `VULKAN` define was never needed, see Option B) No push-constant or loose-uniform handling, and no `VULKAN` define in the shader stage
   (`DxShaderInterfaceLayout` only injects the `gl_VertexID`/`gl_InstanceID` defines). Re-checked:
   zero hits for push constants / root constants in `src` and `native/src`.
-- Re-verified in code, not docs: texel buffers have no native path (no buffer SRV anywhere);
-  native buffer-to-buffer copy does not exist (`CopySubresourceRegion` is only used for texture
-  and readback staging); `DxBuffer` still CPU-mirrors everything.
+- The G1-G3 paths are implemented in source; their behavior on a Windows D3D11 device is not yet
+  verified. See the 2026-10-10 progress entry for test/build evidence and remaining checks.
 - `firstInstance != 0` and instanced non-indexed draws are rejected (Sodium does not need them).
 
 ## 4. Capability gaps in DirectExp (must close first)
 
 | # | Gap | Why Sodium needs it | Fix |
 |---|-----|---------------------|-----|
-| G1 | CPU-mirrored, eagerly-synced buffers | Sodium arenas are very large vertex/index buffers updated by GPU-side copies. Mirroring doubles RAM and makes every upload a second copy. | Add a **GPU-only buffer mode** (no CPU mirror) for `USAGE_VERTEX`/`USAGE_INDEX` buffers above a size threshold; writes go straight to `UpdateSubresource`/staging. |
-| G2 | `copyToBuffer` via CPU | Arena defragmentation and staging uploads are GPU->GPU copies. | Native `CopySubresourceRegion` (buffer to buffer, with `D3D11_BOX`). |
-| G3 | Texel buffers | `u_SectionTimeInfo` (only used when fog/fade is enabled, but the binding is declared always). | Bind mask `SRV`; create `Buffer<int>` SRV (`DXGI_FORMAT_R32_SINT`); reflect `isamplerBuffer` -> `Buffer<int>` in the SPIR-V->HLSL step. Works at feature level 10.1. |
-| G4 | Per-region values (push constants) | `u_RegionOffset`, `u_CurrentTime`, `u_RegionID` change per region. | See section 5, decision A vs B. |
-| G5 | Integer vertex attributes | `RG32_UINT`, `RG16_UINT`, `RGBA8_UINT` inputs. | **Resolved in code:** `DxPipelineStateMapping` maps them to DXGI 17, 36, 30 (R32G32/R16G16/R8G8B8A8_UINT). Just add a Sodium-format test. |
-| G6 | `QUADS` + 32-bit shared index buffer | Sodium supplies its own index buffer; `DxPipelineStateMapping` already treats `QUADS` as pre-expanded triangle list. | Verify with a real Sodium draw; no new code expected. |
-| G7 | Throughput of the multi-draw loop | Hundreds of draws per region, thousands per frame, each crossing JNI. | Add a native `multiDrawIndexed(int[]/ByteBuffer, count)` call so one JNI crossing issues the whole batch. Do after correctness. |
+| G1 | CPU-mirrored, eagerly-synced buffers | Sodium arenas are very large vertex/index buffers updated by GPU-side copies. Mirroring doubles RAM and makes every upload a second copy. | **Source and Windows build verified 2026-10-10:** GPU-only storage for eligible large vertex/index buffers; D3D11 runtime validation pending. |
+| G2 | `copyToBuffer` via CPU | Arena defragmentation and staging uploads are GPU->GPU copies. | **Source and Windows build verified 2026-10-10:** native D3D11 buffer copies with overlap handling; runtime validation pending. |
+| G3 | Texel buffers | `u_SectionTimeInfo` (only used when fog/fade is enabled, but the binding is declared always). | **Source and Windows build verified 2026-10-10:** typed-buffer SRV formats, native creation/lifetime, and render-pass resolution; runtime validation pending. |
+| G4 | Per-region values (push constants) | `u_RegionOffset`, `u_CurrentTime`, `u_RegionID` change per region. | See section 5, decision A vs B. **Status 2026-10-10: Java translation tested; `-Ddirectexp.debug.pushconstants=true` trace added, runtime check pending.** |
+| G5 | Integer vertex attributes | `RG32_UINT`, `RG16_UINT`, `RGBA8_UINT` inputs. | **Source/test implemented 2026-10-10:** `DxPipelineStateMapping` maps them to DXGI 17, 36, 30 (R32G32/R16G16/R8G8B8A8_UINT); the Sodium vertex-format test pins the mapping. |
+| G6 | `QUADS` + 32-bit shared index buffer | Sodium supplies its own index buffer; `DxPipelineStateMapping` already treats `QUADS` as pre-expanded triangle list. | Verify with a real Sodium draw; no new code expected. **Status 2026-10-10: `-Ddirectexp.debug.indexdraws=true` validator added, real Sodium draw pending.** |
+| G7 | Throughput of the multi-draw loop | Hundreds of draws per region, thousands per frame, each crossing JNI. | **Implemented 2026-10-09:** interleaved native `multiDrawIndexed(IntBuffer, ...)` issues the batch through one JNI entry; runtime profiling pending. |
 | G8 | Timestamp/fence stubs | Sodium's staging path uses fences. | `DxFence` currently stubbed; fine for the Mojang staging path, revisit if we later enable the mapped staging path. |
 
 ## 5. Design decisions
@@ -152,11 +152,9 @@ and for what is explicitly *not* verified.
   `DxPushConstants.setPushConstants(ByteBuffer)` (client API, max 128 bytes) is implemented by
   `DxRenderPassBackend` and re-staged with every draw by the existing binder. Texel buffers no
   longer reflect a bogus `Sampler` entry.
-- **Phase 1 audit that this relies on:** the texel-buffer bind flag exists, but buffer SRV
-  creation/binding (G3 runtime), native buffer-to-buffer copy (G2) and GPU-only buffers (G1) were
-  not present in the tree this phase was built on. Until G3 runtime lands,
-  `u_SectionTimeInfo` is unbound (reported once as a missing texture), which reads as zero:
-  terrain draws but without the fade-in animation.
+- **Phase 1 follow-up:** G1-G3 have source implementations (see the capability table), but have
+  not yet been validated on a Windows D3D11 device. Until that runtime check succeeds,
+  `u_SectionTimeInfo` and arena/resource behavior remain unverified.
 - The add-on's per-region `updateData` should build the 20-byte block (`float x, y, z` at 0/4/8,
   `int time` at 12, `uint regionId` at 16, native byte order) and call `setPushConstants` once per
   region before that region's multi-draw.
@@ -197,7 +195,7 @@ Scope: the two factory mixins and two new classes from section 5b. Nothing else.
 - Compare against vanilla DirectX render and against Sodium-on-Vulkan on the same world.
 
 ### Phase 5: Performance
-- **Implemented in source (2026-10-09; not yet Windows-build/runtime verified):** native
+- **Implemented in source and Windows-build verified (2026-10-09; runtime profile pending):** native
   `multiDrawIndexed(IntBuffer, ...)` accepts the interleaved `firstIndex, indexCount, baseVertex`
   format and issues the batch in one JNI entry. Non-direct source buffers are packed into a direct
   native-order buffer; direct native-order input is passed through. Triangle fans retain the
@@ -226,11 +224,11 @@ Scope: the two factory mixins and two new classes from section 5b. Nothing else.
 
 ## 8. Suggested first concrete steps
 
-1. Decide 2.1 and 2.2 (needs you).
-2. Add this file to `docs/plans/` and link it from `2026-10-03-directexp-plan-progress.md` as a
-   *planned, unstarted* item (the progress ledger should only carry evidence-backed status).
-3. Start Phase 1 with G2 (native buffer copy) and G3 (texel buffer), since both are independently
-   testable and also useful for vanilla.
+1. Validate G1-G3 on Windows with a D3D11 device at feature level 10.1 or higher.
+2. Exercise the G4/G6 traces in a real Sodium render, then verify visuals and stability through
+   the Phase 4 scenarios.
+3. Capture Phase 5 profiles with `-Ddirectexp.profile.performance=true` and compare costs against
+   Sodium on Vulkan on the same system.
 
 ## 9. Unknowns I could not resolve from source
 

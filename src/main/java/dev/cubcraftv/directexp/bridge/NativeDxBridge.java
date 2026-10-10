@@ -9,7 +9,7 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Supplier;
 
-public final class NativeDxBridge implements DxBridge, DxDebugProbeBridge {
+public final class NativeDxBridge implements DxBridge {
 	private static final NativeDxBridge INSTANCE = new NativeDxBridge();
 
 	// D3D11's immediate-context model means there is no real object to
@@ -134,6 +134,36 @@ public final class NativeDxBridge implements DxBridge, DxDebugProbeBridge {
 	}
 
 	@Override
+	public void uploadBufferRange(long nativeBufferHandle, int destinationOffset, ByteBuffer source, int sourceOffset, int length) {
+		uploadBufferRangeNative(nativeBufferHandle, destinationOffset, source, sourceOffset, length);
+	}
+
+	@Override
+	public void readBuffer(long nativeBufferHandle, int sourceOffset, ByteBuffer destination, int destinationOffset, int length) {
+		readBufferNative(nativeBufferHandle, sourceOffset, destination, destinationOffset, length);
+	}
+
+	@Override
+	public void copyBuffer(long sourceBufferHandle, int sourceOffset, long destinationBufferHandle, int destinationOffset, int length) {
+		copyBufferNative(sourceBufferHandle, sourceOffset, destinationBufferHandle, destinationOffset, length);
+	}
+
+	@Override
+	public long createBufferShaderResourceView(long nativeBufferHandle, int texelFormatCode, int firstElement, int elementCount) {
+		return createBufferShaderResourceViewNative(nativeBufferHandle, texelFormatCode, firstElement, elementCount);
+	}
+
+	@Override
+	public void releaseBufferShaderResourceView(long nativeBufferViewHandle) {
+		if (nativeBufferViewHandle == 0L) {
+			return;
+		}
+		// A buffer SRV is carried in the same native wrapper as a texture view
+		// (only its shader-resource slot is filled), so it releases the same way.
+		releaseTextureView0(nativeBufferViewHandle);
+	}
+
+	@Override
 	public long createSampler(
 		int addressU, int addressV, boolean minLinear, boolean magLinear, boolean mipLinear, int maxAnisotropy, float maxLod
 	) {
@@ -224,27 +254,6 @@ public final class NativeDxBridge implements DxBridge, DxDebugProbeBridge {
 	@Override
 	public void clearDepthRegion(long nativeTextureHandle, int x, int y, int width, int height, float depth) {
 		clearDepthRegion0(nativeTextureHandle, x, y, width, height, depth);
-	}
-
-	// Debug-probe operations are separated from DxBridge and invoked by the client only when enabled.
-	@Override
-	public int readTexturePixelRgba8(long nativeTextureHandle, int mipLevel, int x, int y) {
-		return readTexturePixelRgba8Native(nativeTextureHandle, mipLevel, x, y);
-	}
-
-	@Override
-	public String describeDrawState(int srvSlot, long expectedTextureHandle) {
-		return describeDrawState0(srvSlot, expectedTextureHandle);
-	}
-
-	@Override
-	public String runSamplingExperiment(long nativeTextureViewHandle) {
-		return runSamplingExperiment0(nativeTextureViewHandle);
-	}
-
-	@Override
-	public String runPixelSubstitutionProbe(int x, int y, int vertexCount, int firstVertex) {
-		return runPixelSubstitutionProbe0(x, y, vertexCount, firstVertex);
 	}
 
 	@Override
@@ -717,6 +726,15 @@ public final class NativeDxBridge implements DxBridge, DxDebugProbeBridge {
 
 	private static native void releaseBuffer0(long nativeBufferHandle);
 
+	// Sodium-scale buffers (directexp_bridge_resource.cpp).
+	private static native void uploadBufferRangeNative(long nativeBufferHandle, int destinationOffset, ByteBuffer source, int sourceOffset, int length);
+
+	private static native void readBufferNative(long nativeBufferHandle, int sourceOffset, ByteBuffer destination, int destinationOffset, int length);
+
+	private static native void copyBufferNative(long sourceBufferHandle, int sourceOffset, long destinationBufferHandle, int destinationOffset, int length);
+
+	private static native long createBufferShaderResourceViewNative(long nativeBufferHandle, int texelFormatCode, int firstElement, int elementCount);
+
 	// Milestone 4.6 commit 2 (directexp_bridge_resource.cpp / directexp_bridge_pipeline.cpp).
 	private static native long createTextureNative(int format, int width, int height, int arrayLayers, int mipLevels, int bindMask, boolean cubemap, String debugLabel);
 
@@ -753,14 +771,6 @@ public final class NativeDxBridge implements DxBridge, DxDebugProbeBridge {
 	private static native void clearDepthTexture0(long nativeTextureHandle, float depth);
 
 	private static native void clearDepthRegion0(long nativeTextureHandle, int x, int y, int width, int height, float depth);
-
-	private static native int readTexturePixelRgba8Native(long nativeTextureHandle, int mipLevel, int x, int y);
-
-	private static native String describeDrawState0(int srvSlot, long expectedTextureHandle);
-
-	private static native String runSamplingExperiment0(long nativeTextureViewHandle);
-
-	private static native String runPixelSubstitutionProbe0(int x, int y, int vertexCount, int firstVertex);
 
 	private static native void setScissor0(int x, int y, int width, int height);
 

@@ -117,6 +117,64 @@ public interface DxBridge {
 	default void releaseBuffer(long nativeBufferHandle) {
 	}
 
+	// ---- Sodium-scale buffers: GPU-only storage, native copies, texel-buffer views ----
+	//
+	// A buffer created for large vertex/index arenas keeps no CPU mirror (see
+	// DxBuffer), so it needs a way to be written from an arbitrary source
+	// buffer, read back on the rare occasion the CPU needs its bytes, copied
+	// to another buffer without a CPU round trip, and viewed as a texel
+	// buffer. Like every call above, these act on the single active device and
+	// immediate context, so they are ordered with the draws around them.
+
+	/**
+	 * Writes {@code length} bytes from {@code source} (a direct buffer; absolute
+	 * {@code sourceOffset}, position/limit ignored) to
+	 * {@code [destinationOffset, destinationOffset + length)} of the GPU buffer.
+	 * Unlike {@link #updateBuffer} the source is only the written range, not a
+	 * full mirror. Not supported for constant buffers (D3D11 cannot partially
+	 * update one); those always go through {@link #updateBuffer}.
+	 */
+	default void uploadBufferRange(long nativeBufferHandle, int destinationOffset, ByteBuffer source, int sourceOffset, int length) {
+		throw new UnsupportedOperationException("DirectX buffer range upload is not implemented by this bridge yet.");
+	}
+
+	/**
+	 * Reads {@code length} bytes from {@code [sourceOffset, sourceOffset + length)}
+	 * of the GPU buffer into {@code destination} (a direct buffer) starting at the
+	 * absolute index {@code destinationOffset}. Waits for the GPU to finish
+	 * writing the buffer, so it is for rare CPU-side needs only.
+	 */
+	default void readBuffer(long nativeBufferHandle, int sourceOffset, ByteBuffer destination, int destinationOffset, int length) {
+		throw new UnsupportedOperationException("DirectX buffer readback is not implemented by this bridge yet.");
+	}
+
+	/**
+	 * GPU-side copy of {@code length} bytes between two native buffers
+	 * ({@code CopySubresourceRegion}); no CPU storage is touched. Source and
+	 * destination may be the same buffer, even with overlapping ranges (the
+	 * native side stages through a temporary buffer in that case). Neither
+	 * buffer may be a constant buffer.
+	 */
+	default void copyBuffer(long sourceBufferHandle, int sourceOffset, long destinationBufferHandle, int destinationOffset, int length) {
+		throw new UnsupportedOperationException("DirectX buffer copy is not implemented by this bridge yet.");
+	}
+
+	/**
+	 * Creates a typed-buffer {@code ID3D11ShaderResourceView} over
+	 * {@code [firstElement, firstElement + elementCount)} of a buffer created with
+	 * {@link #BUFFER_BIND_SHADER_RESOURCE}, viewed as the {@link DxTexelFormat}
+	 * with {@code texelFormatCode}.
+	 *
+	 * @return a handle {@link #bindShaderResource} accepts exactly like a texture-view
+	 *         handle; release with {@link #releaseBufferShaderResourceView}
+	 */
+	default long createBufferShaderResourceView(long nativeBufferHandle, int texelFormatCode, int firstElement, int elementCount) {
+		throw new UnsupportedOperationException("DirectX buffer shader resource views are not implemented by this bridge yet.");
+	}
+
+	default void releaseBufferShaderResourceView(long nativeBufferViewHandle) {
+	}
+
 	/**
 	 * Creates an {@code ID3D11SamplerState}.
 	 *

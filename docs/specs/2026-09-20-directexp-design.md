@@ -4,21 +4,24 @@
 
 `DirectExp` is an experimental, private Fabric mod project that aims to add
 a native DirectX 11 rendering backend to modern Minecraft builds on Windows,
-targeting the Minecraft 26.2 release APIs and feature level 10.1 hardware at
-minimum.
+targeting Minecraft versions newer than 26.2 and D3D11 hardware at feature
+level 10.1 or higher. Its host platform is Windows desktop with a Win32 window.
 
 The project is explicitly **not** a lightweight compatibility patch. It is a
-backend program delivered in mod form, structurally mirroring the `MetalExp`
-sibling project:
+backend program delivered in mod form. It is an independent DirectX 11
+implementation; MetalExp research informed some early investigation but is
+not a structural or implementation template:
 
 - the user-facing graphics API setting is replaced by a `DirectExp`-owned setting
 - the startup backend negotiation path is overridden by mixins
 - the renderer itself is implemented as a first-class backend stack
 - the project includes a native Windows bridge for Win32 and D3D11/DXGI APIs
 
-The current target is the modern Blaze3D architecture in Minecraft `26.2`
-(release). Initial backend research was done against `26.2-snapshot-1`;
-the release retarget requires active maintenance of Minecraft-facing code.
+The compatibility target is Minecraft versions newer than `26.2`; the current
+development build uses a pinned Minecraft/Fabric/Loom toolchain for compiling
+and testing, not as a fixed support target. Initial API research used
+`26.2-snapshot-1` and the `26.2` release baseline. Minecraft-facing code must
+continue to adapt as newer APIs evolve.
 
 ## Goals
 
@@ -32,8 +35,8 @@ the release retarget requires active maintenance of Minecraft-facing code.
   across unrelated codepaths
 - Provide a clean user-visible graphics API choice: `DirectX`, `Vulkan`, or `OpenGL`
 - Build strong diagnostics and failure reporting into the project from the start
-- Stay structurally consistent with `MetalExp` wherever DirectX 11 does not
-  force a different answer, so both projects remain easy to cross-reference
+- Keep the DirectX 11 architecture grounded in D3D11 constraints and
+  project-local research rather than copying another backend's design
 
 ## Non-Goals
 
@@ -48,8 +51,7 @@ the release retarget requires active maintenance of Minecraft-facing code.
 ## Product Positioning
 
 `DirectExp` is intended, at minimum, for its own author's use as a technical
-experiment, with the same honesty MetalExp commits to if it is ever shared
-further:
+experiment:
 
 - Windows only
 - Minecraft-version-sensitive
@@ -60,11 +62,10 @@ further:
 
 ## Background
 
-Initial research on Minecraft `26.2-snapshot-1` (validated against the
-`MetalExp` reference project in this same workspace) showed Blaze3D's
-explicit backend boundary. The active target is now Minecraft 26.2 release;
-its checked-in decompile and assets are the source of truth for current API
-and shader behavior:
+Initial research, informed in part by earlier MetalExp research, identified
+Blaze3D's explicit backend boundary. The checked-in Minecraft decompile and
+assets for the active development baseline are the source of truth for current
+API and shader behavior:
 
 - `GpuBackend`
 - `GpuDeviceBackend`
@@ -72,9 +73,8 @@ and shader behavior:
 - `CommandEncoderBackend`
 - `RenderPassBackend`
 
-This is the same boundary MetalExp targets. The DirectX 11 backend sits
-alongside `GlBackend`, `VulkanBackend`, and `MetalBackend` (if that mod is
-also installed) as one more `GpuBackend` implementation. See
+The DirectX 11 backend sits alongside `GlBackend` and `VulkanBackend` as one
+more `GpuBackend` implementation. See
 `docs/research/2026-09-20-directexp-d3d11-research-notes.md` for feature
 level and shader-route specifics.
 
@@ -185,7 +185,7 @@ Responsibilities:
 
 - shader source lookup
 - preprocessing and define injection
-- GLSL to SPIR-V compilation (`shaderc`, same as MetalExp)
+- GLSL to SPIR-V compilation with `shaderc`
 - SPIR-V reflection
 - resource layout construction
 - SPIR-V to HLSL translation (SPIRV-Cross)
@@ -194,7 +194,7 @@ Responsibilities:
 - shader/pipeline cache keys
 
 This is one of the two highest-risk parts of the project and must remain
-structurally isolated, matching MetalExp's stance on its own shader layer.
+structurally isolated behind DirectExp-owned shader interfaces.
 
 #### 5. Native Bridge Layer
 
@@ -216,12 +216,11 @@ This layer is a formal subsystem, not a bag of helper calls.
 
 ### Why Not Extend Mojang's Enum
 
-Same rationale as MetalExp: dynamically adding `DIRECTX` to
-`PreferredGraphicsApi` creates avoidable fragility around enum constant
-arrays, codecs and config serialization, switch tables, option instance
-behavior, and snapshot-to-snapshot maintenance. Replacing the setting at the
-UI and configuration layer produces cleaner product semantics with much less
-runtime fragility.
+Dynamically adding `DIRECTX` to `PreferredGraphicsApi` creates avoidable
+fragility around enum constant arrays, codecs and config serialization,
+switch tables, option instance behavior, and snapshot-to-snapshot
+maintenance. Replacing the setting at the UI and configuration layer
+produces cleaner product semantics with much less runtime fragility.
 
 ### Integration Entry Points
 
@@ -265,12 +264,11 @@ Once `DxBackend.createDevice(...)` succeeds:
 
 ### Chosen Route
 
-`GLSL -> SPIR-V -> HLSL`, kept deliberately parallel to MetalExp's
-`GLSL -> SPIR-V -> MSL` route:
+`GLSL -> SPIR-V -> HLSL`:
 
 - aligns with the existing Mojang Vulkan-era shader story
 - reuses the engine's current source and preprocessing expectations
-- produces a stable intermediate representation shared with the Metal backend's route
+- produces a stable intermediate representation for shader reflection and translation
 - SPIRV-Cross's HLSL backend is mature and widely used (it is, notably, part
   of how Proton/DXVK-adjacent and Vulkan-portability tooling handles the
   reverse direction; the SPIR-V -> HLSL direction used here is a
@@ -287,15 +285,14 @@ Once `DxBackend.createDevice(...)` succeeds:
 #### 2. IR Stage
 
 - use `shaderc` to compile source into SPIR-V
-- treat SPIR-V as the canonical intermediate representation, same as MetalExp
+- treat SPIR-V as the canonical intermediate representation
 
 #### 3. Reflection and Binding Stage
 
 - inspect SPIR-V resources
 - combine reflection results with Blaze3D pipeline declarations
-- build an engine-owned resource layout model (shared conceptually with
-  MetalExp's layout model, even though the concrete Metal/HLSL slot mapping
-  differs)
+- build an engine-owned resource layout model that does not encode
+  Vulkan-specific descriptor-set assumptions
 
 #### 4. HLSL Emission Stage
 
@@ -314,10 +311,7 @@ Once `DxBackend.createDevice(...)` succeeds:
 D3D11 has no argument buffers and no root signatures -- only flat
 constant-buffer/SRV/sampler/UAV register-slot binding via the immediate
 context's `PSSetConstantBuffers` / `VSSetShaderResources` / etc. family of
-calls. This means the engine-managed slot map MetalExp chose for its own
-first version is, if anything, a more natural fit for D3D11 than it is for
-Metal (which does have argument buffers as an alternative it deliberately
-avoided in v1).
+calls. An engine-managed slot map is a direct fit for D3D11's binding model.
 
 The layout model must distinguish at least:
 
@@ -327,9 +321,9 @@ The layout model must distinguish at least:
   itself, same as Metal and Vulkan, unlike GL's combined sampler model)
 - structured/typed buffer resources where the pipeline needs them
 
-The important architectural decision, shared with MetalExp, is that the
-project owns an intermediate layout model. It must not permanently encode
-Vulkan descriptor-set assumptions into the DirectX backend.
+The important architectural decision is that DirectExp owns an intermediate
+layout model. It must not permanently encode Vulkan descriptor-set
+assumptions into the DirectX backend.
 
 ### Pipeline Compilation
 
@@ -344,8 +338,7 @@ Vulkan descriptor-set assumptions into the DirectX backend.
 - resource layout references
 - stable cache keys
 
-Pipeline caching must key on actual render state, not only shader identity,
-same as MetalExp.
+Pipeline caching must key on actual render state, not only shader identity.
 
 ## Command Encoding, Synchronization, and Presentation
 
@@ -385,8 +378,7 @@ state, draw, unbind" sequence reasonably directly:
 
 ### Synchronization Strategy
 
-The first implementation should be conservative, matching MetalExp's own
-stance:
+The first implementation should be conservative:
 
 - single immediate context, no deferred contexts/command lists in v1
 - render and resource-upload work ordered explicitly by call order (D3D11's
@@ -398,9 +390,8 @@ stance:
 
 ### Surface and Output Path
 
-Same as MetalExp: the engine renders primarily into internal render targets
-and only later emits the final image to the presentable surface (the swap
-chain back buffer).
+The engine renders primarily into internal render targets and only later
+emits the final image to the presentable surface (the swap-chain back buffer).
 
 Advantages:
 
@@ -427,8 +418,7 @@ It must support:
   "feature level below floor" vs. other failures
 
 The project should prefer a small, disciplined JNI surface instead of
-leaking large quantities of low-level D3D11/DXGI interaction into Java, same
-discipline MetalExp applies to its Objective-C boundary.
+leaking large quantities of low-level D3D11/DXGI interaction into Java.
 
 ## Configuration
 
@@ -448,7 +438,7 @@ The UI should reflect this config, and startup must consume it directly.
 
 ## Diagnostics and Supportability
 
-Diagnostics are a core feature of the project, same as MetalExp.
+Diagnostics are a core feature of the project.
 
 The project must log or export:
 
@@ -506,10 +496,10 @@ Cover:
 
 ## Compatibility Policy
 
-Same as MetalExp: the first version does not promise compatibility with
-other deep rendering mods. Intended support target is a plain Fabric
-environment, non-renderer mods on a best-effort basis, no promise for
-Sodium/Iris-equivalent render-stack rewrites.
+The compatibility target is Windows desktop, Minecraft versions newer than
+26.2, and D3D11 devices at feature level 10.1 or higher. Other renderer mods
+are not guaranteed to work unless explicitly validated. Non-renderer mods
+are best-effort.
 
 ## Versioning and Maintenance Strategy
 
@@ -521,11 +511,12 @@ must separate:
 - shader/toolchain core code
 - native bridge code
 
-This keeps release retargeting work concentrated in the adaptation layer
-instead of destabilizing the entire renderer. Since `gradle.properties`
-intentionally tracks the same `minecraft_version` as MetalExp, retargeting
-both projects together (when the user chooses to) keeps their Blaze3D
-assumptions from silently drifting apart.
+This keeps Minecraft API adaptation concentrated rather than destabilizing
+the entire renderer. `gradle.properties` pins the current development
+dependencies needed to compile; those values do not define the supported
+Minecraft-version range. Update them as needed to validate newer Minecraft
+versions, without treating a particular Loom or Fabric API release as a
+product target.
 
 ## Milestones
 
@@ -611,9 +602,9 @@ assumptions from silently drifting apart.
 
 ### Lower but Still Relevant Risk
 
-- underestimated maintenance cost even for a private, single-maintainer project
+- underestimated maintenance cost as Minecraft APIs evolve
 - toolchain friction (MSVC/Windows SDK availability) slowing iteration
-  compared to MetalExp's more uniform Apple toolchain story
+  across the available Windows native toolchains
 
 ## Open Decisions
 
