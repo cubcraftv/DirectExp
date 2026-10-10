@@ -7,8 +7,12 @@
 	"authors": [
 		"cubcraftv"
 	],
-	"contact": {},
+	"contact": {
+		"homepage": "https://fabricmc.net/",
+		"sources": "https://github.com/cubcraftv/DirectExp"
+	},
 	"license": "MIT",
+	"icon": "assets/directexp/icon.png",
 	"environment": "*",
 	"entrypoints": {
 		"main": [

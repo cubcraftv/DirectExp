@@ -1,40 +1,26 @@
 # DirectExp
 
 DirectExp is an experimental Fabric-delivered project that adds a native
-DirectX 11 rendering backend to modern Minecraft on Windows. Its compatibility
-goal is Minecraft versions **newer than 26.2**, running in a Windows desktop
-window with a D3D11 device at feature level **10.1 or higher**.
-
-DirectExp is an independent implementation, not a structural sibling or
-shared codebase with MetalExp. MetalExp research informed some early
-architectural investigations; DirectExp's renderer, native bridge, and
-Minecraft integration are designed and maintained for DirectX 11 and Windows.
+DirectX 11 rendering backend to modern Minecraft on Windows.
 
 The backend is a first-class Blaze3D implementation: DirectExp owns the
 graphics-API setting and startup backend negotiation, and provides the
 `DxBackend` through Mojang's GPU backend interfaces.
 
-**Status:** Backend negotiation, swap-chain presentation, GPU textures, draw
-submission, and Sodium-oriented GPU buffer/texel-buffer paths are implemented
-in source. Runtime validation on a D3D11 device remains outstanding. Check the
-[progress log](docs/plans/2026-09-20-directexp-progress-log.md) and
-[Sodium support plan](docs/plans/2026-10-06-directexp-sodium-support-plan.md)
-for verification status; source implementation is not a claim of runtime
-compatibility.
+**Status:** Done, beta testing. Not in active development, because my potato can now run minecraft without "GLFW Error 65542" thank to this mod, also see [Direcium](https://github.com/cubcraftv/Direcium) for sodium compatible.
 
 ## Compatibility target
 
 | Area | Target |
 |---|---|
-| Minecraft | Versions newer than `26.2`; Minecraft APIs evolve, so newer releases may require adaptation |
+| Minecraft | Versions newer than `26.2` |
 | Platform | Windows desktop with a window that exposes a Win32 `HWND` |
 | Graphics API | Native Direct3D 11 / DXGI |
 | Device support | D3D feature level `10_1` or higher; lower feature levels are rejected |
 
-The Gradle properties pin Minecraft, Fabric, Loom, and Java inputs for the
-current development build. Those build-time dependency versions are not the
-project's compatibility target or a promise that only that exact version is
-supported.
+**Only use this mod if your device not supporting OpenGL or Vulkan or encounting GLFW Error 65542 and similar.**
+
+**Vulkan backend is already good or even better with sodium installed.**
 
 ## Repository layout
 
@@ -66,4 +52,4 @@ toolchain.
 
 ## License
 
-MIT licensed (see [LICENSE](LICENSE)). Private repository for now.
+MIT licensed (see [LICENSE](LICENSE)).

@@ -165,7 +165,7 @@ and for what is explicitly *not* verified.
 
 ## 5b. Add-on architecture (replaces the fork)
 
-New Fabric mod (suggested id `directexp-sodium`), depends on `sodium` and `directexp`,
+New Fabric mod (suggested id `direcium`), depends on `sodium` and `directexp`,
 compiles against Sodium as `compileOnly`, ships no Sodium code. Mixin targets:
 
 - `DrawContext.create()`: `@Inject(HEAD, cancellable)`; if the device is DirectExp, return `new DxSodiumDrawContext()`.
