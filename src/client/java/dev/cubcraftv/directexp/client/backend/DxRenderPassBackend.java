@@ -557,6 +557,15 @@ final class DxRenderPassBackend implements RenderPassBackend, DxPushConstants {
 			report("pipeline-closed:" + compiled.name(), "pipeline " + compiled.name() + " is closed; draws skipped");
 			return false;
 		}
+		if (!compiled.isSupported()) {
+			// Compile already warned once per reload (DxPipelineCompiler); this
+			// dedupes per pass on top of that.
+			report(
+				"pipeline-unsupported:" + compiled.name(),
+				"pipeline " + compiled.name() + " uses unsupported state (" + compiled.unsupportedReason() + "); draws skipped"
+			);
+			return false;
+		}
 		try {
 			if (compiled != this.boundPipeline) {
 				this.dxBridge.bindPipeline(compiled.nativePipelineHandle());

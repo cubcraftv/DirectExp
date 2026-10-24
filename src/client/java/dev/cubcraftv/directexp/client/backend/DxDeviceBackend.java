@@ -190,7 +190,7 @@ final class DxDeviceBackend implements GpuDeviceBackend {
 				return null;
 			}
 			DxRenderPipeline compiled = DxPipelineCompiler.compile(pipelineCreateInfo, spirv, this.dxBridge);
-			if (compiled != null && this.loggedFirstValidPipeline.compareAndSet(false, true)) {
+			if (compiled != null && compiled.isSupported() && this.loggedFirstValidPipeline.compareAndSet(false, true)) {
 				DirectExpMod.LOGGER.info("DirectExp: first native render pipeline assembled ({}).", pipelineCreateInfo.name());
 			}
 			return compiled;

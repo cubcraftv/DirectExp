@@ -76,7 +76,26 @@ final class DxPipelineCompiler {
 
 			dumpHlslForDiagnostics(name, hlsl);
 
-			DxPipelineStateDescriptor state = DxPipelineStateMapping.describe(info);
+			DxPipelineStateDescriptor state;
+			try {
+				state = DxPipelineStateMapping.describe(info);
+			} catch (UnsupportedOperationException error) {
+				// describe() only throws this for state D3D11 cannot express yet
+				// (multiple vertex-buffer bindings, multiple color targets, ...).
+				// 26.3's compilation contract turns a null finishCompile into a
+				// failed reload for the engine's *required* pipelines, so an
+				// unsupported pipeline must stay a valid pipeline object that the
+				// draw path skips -- see DxRenderPipeline.unsupported. Layout
+				// reflection and HLSL have already succeeded here, so the object
+				// carries the real layout/uniforms.
+				DirectExpMod.LOGGER.warn(
+					"DirectExp: pipeline {} uses state this backend does not support ({}); draws using it are skipped.",
+					name,
+					error.getMessage()
+				);
+				return DxRenderPipeline.unsupported(name, bridge, error.getMessage(), layout, info.primitiveTopology(), info.uniforms());
+			}
+
 			long handle = bridge.createPipeline(hlsl.modules().vertex().bytecode(), hlsl.modules().fragment().bytecode(), state);
 			return new DxRenderPipeline(name, bridge, handle, layout, info.primitiveTopology(), info.uniforms());
 		} catch (UnsupportedOperationException | IllegalStateException error) {
