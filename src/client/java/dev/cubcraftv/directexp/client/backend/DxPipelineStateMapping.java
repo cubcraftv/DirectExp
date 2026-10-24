@@ -23,8 +23,10 @@ import dev.cubcraftv.directexp.bridge.DxPipelineStateDescriptor;
  *       write / function come from it; depth bias is enabled only when both
  *       the constant and the scale factor are non-zero;</li>
  *   <li>cull = back when {@code isCull()}, else none;</li>
- *   <li>blend enabled iff {@code blendFunction()} is present; color write
- *       mask from the four write flags;</li>
+ *   <li>blend: per color target, one entry each (D3D11's independent blend);
+ *       enabled iff that target's {@code blendFunction()} is present; color
+ *       write mask from the four write flags; a null target state (depth-only
+ *       pipelines) writes nothing;</li>
  *   <li>topology: {@code QUADS} and {@code LINES} arrive as already-expanded
  *       triangle indices (Vulkan maps both to a triangle list), so they use
  *       TRIANGLELIST; {@code TRIANGLE_FAN} has no D3D11 topology, so the
@@ -109,6 +111,9 @@ final class DxPipelineStateMapping {
 	 * locations the shader declares, so locations the shader skips are filled
 	 * with an unused 32-bit float element, which D3D11 accepts in an input layout
 	 * that is a superset of the shader's inputs.
+	 *
+	 * <p>Color targets: one entry per {@code colorTargetStates} element, D3D11
+	 * slot = list index.
 	 */
 	static DxPipelineStateDescriptor describe(BackendRenderPipeline.CreateInfo info) {
 		// The frontend reports one VertexBuffer per used D3D11 input slot
@@ -168,41 +173,54 @@ final class DxPipelineStateMapping {
 		float biasScale = depthTest ? depthStencil.depthBiasScaleFactor() : 0.0F;
 		boolean biasEnabled = biasConstant != 0.0F && biasScale != 0.0F;
 
-		// The native pipeline has one render target; the first used color target
-		// decides blend/write mask. (Multi-target pipelines only exist for the
-		// order-independent transparency path, which this device does not offer.)
-		ColorTargetState colorTarget = null;
-		int usedTargets = 0;
-		for (ColorTargetState state : info.colorTargetStates()) {
-			if (state != null) {
-				usedTargets++;
-				if (colorTarget == null) {
-					colorTarget = state;
-				}
+		// Per-target blend/write state: the list index is the D3D11 render-target
+		// slot (the decompiled Vulkan backend orders attachments the same way).
+		// A null entry (depth-only pipelines) becomes a target that writes
+		// nothing; more than D3D11 supports stays an explicit rejection.
+		int targetCount = info.colorTargetStates().size();
+		if (targetCount < 1 || targetCount > DxPipelineStateDescriptor.MAX_COLOR_TARGETS) {
+			throw new UnsupportedOperationException("a render pipeline needs 1.." + DxPipelineStateDescriptor.MAX_COLOR_TARGETS + " color targets (D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT), not " + targetCount);
+		}
+		int[] targetBlendEnable = new int[targetCount];
+		int[] targetSrcColor = new int[targetCount];
+		int[] targetDstColor = new int[targetCount];
+		int[] targetColorOp = new int[targetCount];
+		int[] targetSrcAlpha = new int[targetCount];
+		int[] targetDstAlpha = new int[targetCount];
+		int[] targetAlphaOp = new int[targetCount];
+		int[] targetWriteMask = new int[targetCount];
+		for (int target = 0; target < targetCount; target++) {
+			ColorTargetState colorTarget = info.colorTargetStates().get(target);
+			targetBlendEnable[target] = 0;
+			targetSrcColor[target] = BLEND_ONE;
+			targetDstColor[target] = BLEND_ZERO;
+			targetColorOp[target] = OP_ADD;
+			targetSrcAlpha[target] = BLEND_ONE;
+			targetDstAlpha[target] = BLEND_ZERO;
+			targetAlphaOp[target] = OP_ADD;
+			targetWriteMask[target] = 0;
+			if (colorTarget == null) {
+				continue;
 			}
-		}
-		if (usedTargets > 1) {
-			throw new UnsupportedOperationException("multiple color targets are not supported yet");
-		}
-		BlendFunction blend = colorTarget == null ? null : colorTarget.blendFunction().orElse(null);
-		int writeMask = colorTarget == null ? 0 : colorWriteMask(colorTarget.writeRed(), colorTarget.writeGreen(), colorTarget.writeBlue(), colorTarget.writeAlpha());
-		int[] colorFactors = {BLEND_ONE, BLEND_ZERO};
-		int[] alphaFactors = {BLEND_ONE, BLEND_ZERO};
-		int colorOp = OP_ADD;
-		int alphaOp = OP_ADD;
-		if (blend != null) {
-			colorFactors = new int[] {blendFactor(blend.color().sourceFactor(), false), blendFactor(blend.color().destFactor(), false)};
-			alphaFactors = new int[] {blendFactor(blend.alpha().sourceFactor(), true), blendFactor(blend.alpha().destFactor(), true)};
-			colorOp = blendOp(blend.color().op());
-			alphaOp = blendOp(blend.alpha().op());
+			targetWriteMask[target] = colorWriteMask(colorTarget.writeRed(), colorTarget.writeGreen(), colorTarget.writeBlue(), colorTarget.writeAlpha());
+			BlendFunction blend = colorTarget.blendFunction().orElse(null);
+			if (blend == null) {
+				continue;
+			}
+			targetBlendEnable[target] = 1;
+			targetSrcColor[target] = blendFactor(blend.color().sourceFactor(), false);
+			targetDstColor[target] = blendFactor(blend.color().destFactor(), false);
+			targetColorOp[target] = blendOp(blend.color().op());
+			targetSrcAlpha[target] = blendFactor(blend.alpha().sourceFactor(), true);
+			targetDstAlpha[target] = blendFactor(blend.alpha().destFactor(), true);
+			targetAlphaOp[target] = blendOp(blend.alpha().op());
 		}
 
 		return new DxPipelineStateDescriptor(
 			topology(info.primitiveTopology()),
-			blend != null,
-			colorFactors[0], colorFactors[1], colorOp,
-			alphaFactors[0], alphaFactors[1], alphaOp,
-			writeMask,
+			targetCount,
+			targetBlendEnable, targetSrcColor, targetDstColor, targetColorOp,
+			targetSrcAlpha, targetDstAlpha, targetAlphaOp, targetWriteMask,
 			depthTest, depthWrite, depthFunc,
 			info.cull() ? CULL_BACK : CULL_NONE,
 			fillMode(info.polygonMode()),

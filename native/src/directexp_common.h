@@ -58,6 +58,10 @@ constexpr jint TEXTURE_FORMAT_D32_FLOAT = 2;
 constexpr jint TEXTURE_FORMAT_D24_UNORM_S8_UINT = 3;
 constexpr jint TEXTURE_FORMAT_D32_FLOAT_S8_UINT = 4;
 constexpr jint TEXTURE_FORMAT_D16_UNORM = 5;
+// Float color targets of the order-independent-transparency passes
+// (depth bounds / transmittance coefficients / accumulation).
+constexpr jint TEXTURE_FORMAT_RGBA16_FLOAT = 6;
+constexpr jint TEXTURE_FORMAT_RGBA32_FLOAT = 7;
 
 // Keep in sync with DxBridge.TEXTURE_BIND_*.
 constexpr jint TEXTURE_BIND_SHADER_RESOURCE = 1;
@@ -79,6 +83,12 @@ inline bool ResolveTextureFormat(jint code, TextureFormatInfo& out) {
 	switch (code) {
 		case TEXTURE_FORMAT_RGBA8_UNORM:
 			out = { DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_FORMAT_R8G8B8A8_UNORM, false };
+			return true;
+		case TEXTURE_FORMAT_RGBA16_FLOAT:
+			out = { DXGI_FORMAT_R16G16B16A16_FLOAT, DXGI_FORMAT_R16G16B16A16_FLOAT, DXGI_FORMAT_R16G16B16A16_FLOAT, false };
+			return true;
+		case TEXTURE_FORMAT_RGBA32_FLOAT:
+			out = { DXGI_FORMAT_R32G32B32A32_FLOAT, DXGI_FORMAT_R32G32B32A32_FLOAT, DXGI_FORMAT_R32G32B32A32_FLOAT, false };
 			return true;
 		case TEXTURE_FORMAT_D32_FLOAT:
 			out = { DXGI_FORMAT_R32_TYPELESS, DXGI_FORMAT_R32_FLOAT, DXGI_FORMAT_D32_FLOAT, true };

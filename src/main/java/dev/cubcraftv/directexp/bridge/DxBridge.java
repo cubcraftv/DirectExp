@@ -219,6 +219,9 @@ public interface DxBridge {
 	int TEXTURE_FORMAT_D24_UNORM_S8_UINT = 3;
 	int TEXTURE_FORMAT_D32_FLOAT_S8_UINT = 4;
 	int TEXTURE_FORMAT_D16_UNORM = 5;
+	/** Color formats needed by the order-independent-transparency render passes (RGBA16/32_FLOAT). */
+	int TEXTURE_FORMAT_RGBA16_FLOAT = 6;
+	int TEXTURE_FORMAT_RGBA32_FLOAT = 7;
 
 	// What a texture will be used for; decides the D3D11 bind flags and which
 	// views createTextureView can produce (SRV / RTV / DSV).
@@ -299,13 +302,15 @@ public interface DxBridge {
 	int STAGE_FRAGMENT = 2;
 
 	/**
-	 * Binds the render target and depth-stencil views carried by two
-	 * texture-view handles (see {@link #createTextureView}) and sets the
-	 * viewport to {@code (0, 0, width, height)}, depth 0..1. Either handle may
-	 * be 0 (no color target / no depth target). Throws {@link IllegalStateException}
-	 * if a non-zero handle carries no render-target / depth-stencil view.
+	 * Binds up to eight render-target views carried by texture-view handles
+	 * (see {@link #createTextureView}), index = D3D11 render-target slot, and
+	 * the depth-stencil view of a texture-view handle; then sets the viewport
+	 * to {@code (0, 0, width, height)}, depth 0..1. The depth handle, and
+	 * individual color handles too, may be 0 (no depth target / no view in
+	 * that slot). Throws {@link IllegalStateException} if a non-zero handle
+	 * carries no render-target / depth-stencil view.
 	 */
-	default void setRenderTargets(long colorViewHandle, long depthViewHandle, int width, int height) {
+	default void setRenderTargets(long[] colorViewHandles, long depthViewHandle, int width, int height) {
 		throw new UnsupportedOperationException("DirectX render target binding is not implemented by this bridge yet.");
 	}
 

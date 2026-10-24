@@ -47,7 +47,9 @@ final class DxPipelineStateMappingCreateInfoTest {
 		assertArrayEquals(new int[] {0, 0, 0, 0}, state.attributeStepRates());
 		assertEquals(20, state.vertexStrideOf(0));
 		assertEquals(0, state.vertexStrideOf(1));
-		assertTrue(state.blendEnable());
+		assertEquals(1, state.colorTargetCount());
+		assertEquals(1, state.targetBlendEnable()[0]);
+		assertEquals(0xF, state.targetWriteMask()[0]);
 	}
 
 	@Test
@@ -83,15 +85,33 @@ final class DxPipelineStateMappingCreateInfoTest {
 	}
 
 	@Test
-	void multipleColorTargetsAreRejected() {
+	void twoColorTargetsKeepTheirOwnBlendStates() {
+		// Like the OIT transmittance pipelines: target 0 blends translucent,
+		// target 1 writes an unblended coefficient pair (DEFAULT) next to it.
+		DxPipelineStateDescriptor state = DxPipelineStateMapping.describe(info(
+			List.of(),
+			List.of(),
+			Arrays.asList(new ColorTargetState(BlendFunction.TRANSLUCENT), ColorTargetState.DEFAULT)
+		));
+		assertEquals(2, state.colorTargetCount());
+		assertArrayEquals(new int[] {1, 0}, state.targetBlendEnable());
+		assertArrayEquals(new int[] {0xF, 0xF}, state.targetWriteMask());
+	}
+
+	@Test
+	void moreColorTargetsThanD3d11SupportsAreRejected() {
+		ColorTargetState[] targets = new ColorTargetState[DxPipelineStateDescriptor.MAX_COLOR_TARGETS + 1];
+		Arrays.fill(targets, ColorTargetState.DEFAULT);
 		assertThrows(UnsupportedOperationException.class, () -> DxPipelineStateMapping.describe(info(
-			List.of(), List.of(), Arrays.asList(ColorTargetState.DEFAULT, ColorTargetState.DEFAULT)
+			List.of(), List.of(), Arrays.asList(targets)
 		)));
 	}
 
 	@Test
 	void depthOnlyPipelineWritesNoColor() {
 		DxPipelineStateDescriptor state = DxPipelineStateMapping.describe(info(List.of(), List.of(), Arrays.asList((ColorTargetState) null)));
-		assertEquals(0, state.colorWriteMask());
+		assertEquals(1, state.colorTargetCount());
+		assertArrayEquals(new int[] {0}, state.targetBlendEnable());
+		assertArrayEquals(new int[] {0}, state.targetWriteMask());
 	}
 }

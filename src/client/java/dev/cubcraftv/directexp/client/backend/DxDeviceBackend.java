@@ -49,7 +49,11 @@ final class DxDeviceBackend implements GpuDeviceBackend {
 	 */
 	static final int MAX_MULTI_DRAW_DIRECT_INTERLEAVED_DRAW_COUNT = 65536;
 
-	static final DeviceLimits DEFAULT_LIMITS = new DeviceLimits(16, 256, 16384, Long.MAX_VALUE, MAX_MULTI_DRAW_DIRECT_INTERLEAVED_DRAW_COUNT, 1, 0);
+	// maxColorAttachments = 8 = D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT (pinned
+	// natively by static_assert): everything fits, including the order-
+	// independent-transparency passes (two transmittance coefficient targets
+	// + depth bounds + accumulation).
+	static final DeviceLimits DEFAULT_LIMITS = new DeviceLimits(16, 256, 16384, Long.MAX_VALUE, MAX_MULTI_DRAW_DIRECT_INTERLEAVED_DRAW_COUNT, 8, 0);
 
 	/**
 	 * Only {@code multiDrawDirectInterleaved} is on: {@link DxRenderPassBackend}

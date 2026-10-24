@@ -52,6 +52,7 @@ static_assert(D3D_PRIMITIVE_TOPOLOGY_POINTLIST == 1 && D3D_PRIMITIVE_TOPOLOGY_LI
 	&& D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP == 5, "D3D topology values changed");
 // DxBridge.GEOMETRY_VIEWPORT_CBUFFER_SLOT (Java) must be a valid constant buffer slot.
 static_assert(13 < D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT, "geometry viewport cbuffer slot out of range");
+static_assert(D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT == 8, "D3D11 simultaneous render target count changed");
 static_assert(DXGI_FORMAT_R32G32B32A32_FLOAT == 2 && DXGI_FORMAT_R32G32B32_FLOAT == 6 && DXGI_FORMAT_R32G32_FLOAT == 16
 	&& DXGI_FORMAT_R32_FLOAT == 41 && DXGI_FORMAT_R8G8B8A8_UNORM == 28 && DXGI_FORMAT_R8G8B8A8_SNORM == 31
 	&& DXGI_FORMAT_R16G16_SINT == 38 && DXGI_FORMAT_R32G32B32A32_UINT == 3, "DXGI_FORMAT values changed");
@@ -66,22 +67,33 @@ namespace {
 // DxPipelineStateDescriptor.STATE_* (Java).
 enum StateIndex : int {
 	STATE_TOPOLOGY = 0,
-	STATE_BLEND_ENABLE,
-	STATE_SRC_COLOR,
-	STATE_DST_COLOR,
-	STATE_OP_COLOR,
-	STATE_SRC_ALPHA,
-	STATE_DST_ALPHA,
-	STATE_OP_ALPHA,
-	STATE_COLOR_WRITE_MASK,
+	STATE_TARGET_COUNT,
+	STATE_CULL_MODE,
+	STATE_FILL_MODE,
 	STATE_DEPTH_TEST_ENABLE,
 	STATE_DEPTH_WRITE,
 	STATE_DEPTH_FUNC,
-	STATE_CULL_MODE,
-	STATE_FILL_MODE,
 	STATE_DEPTH_BIAS,
-	STATE_COUNT
+	// One strip of TargetStateOffset entries per color target, starting here
+	// (DxPipelineStateDescriptor.STATE_TARGET_BASE / TARGET_STATE_STRIP).
+	STATE_TARGET_BASE
 };
+
+enum TargetStateOffset : int {
+	TARGET_STATE_BLEND_ENABLE = 0,
+	TARGET_STATE_SRC_COLOR,
+	TARGET_STATE_DST_COLOR,
+	TARGET_STATE_OP_COLOR,
+	TARGET_STATE_SRC_ALPHA,
+	TARGET_STATE_DST_ALPHA,
+	TARGET_STATE_OP_ALPHA,
+	TARGET_STATE_WRITE_MASK,
+	TARGET_STATE_COUNT
+};
+
+constexpr int kTargetStateStrip = TARGET_STATE_COUNT;
+constexpr int kMaxColorTargets = D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT;
+constexpr int kExpectedStateCount = STATE_TARGET_BASE + kTargetStateStrip * kMaxColorTargets;
 
 // float[] state indices. Keep in sync with DxPipelineStateDescriptor.FSTATE_*.
 enum FloatStateIndex : int {
@@ -161,9 +173,26 @@ Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_createPipelineNative(
 		ThrowIllegalState(env, "createPipelineNative requires non-empty vertex and pixel shader bytecode.");
 		return 0;
 	}
-	if (st.data == nullptr || st.length != STATE_COUNT || floatState == nullptr || env->GetArrayLength(floatState) != FSTATE_COUNT) {
+	if (st.data == nullptr || st.length != kExpectedStateCount || floatState == nullptr || env->GetArrayLength(floatState) != FSTATE_COUNT) {
 		ThrowIllegalState(env, "createPipelineNative: state arrays have the wrong length (Java/native STATE_* out of sync).");
 		return 0;
+	}
+	const jint targetCount = st.data[STATE_TARGET_COUNT];
+	if (targetCount < 1 || targetCount > kMaxColorTargets) {
+		ThrowIllegalState(env, "createPipelineNative: the color-target count is out of D3D11's render-target range.");
+		return 0;
+	}
+	for (int target = 0; target < targetCount; target++) {
+		const jint base = STATE_TARGET_BASE + target * kTargetStateStrip;
+		if (st.data[base + TARGET_STATE_BLEND_ENABLE] != 0 && st.data[base + TARGET_STATE_BLEND_ENABLE] != 1) {
+			ThrowIllegalState(env, "createPipelineNative: a target's blend enable is not 0 or 1.");
+			return 0;
+		}
+		const jint writeMask = st.data[base + TARGET_STATE_WRITE_MASK];
+		if (writeMask < 0 || writeMask > 0xF) {
+			ThrowIllegalState(env, "createPipelineNative: a target's write mask is not a D3D11_COLOR_WRITE_ENABLE mask.");
+			return 0;
+		}
 	}
 	if (formats.length != offsets.length
 		|| formats.length != slots.length
@@ -253,18 +282,36 @@ Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_createPipelineNative(
 		}
 	}
 
+	// Per-target blend state: D3D11 uses one D3D11_RENDER_TARGET_BLEND_DESC
+	// per render-target slot. With IndependentBlendEnable TRUE every bound
+	// target uses its own entry; with FALSE all bound targets use entry 0.
+	// All slot entries are filled either way -- the blend codes in a
+	// zero-initialized desc are not valid D3D11_BLEND values.
 	D3D11_BLEND_DESC blend = {};
 	blend.AlphaToCoverageEnable = FALSE;
-	blend.IndependentBlendEnable = FALSE;
-	D3D11_RENDER_TARGET_BLEND_DESC& rt = blend.RenderTarget[0];
-	rt.BlendEnable = st.data[STATE_BLEND_ENABLE] != 0 ? TRUE : FALSE;
-	rt.SrcBlend = static_cast<D3D11_BLEND>(st.data[STATE_SRC_COLOR]);
-	rt.DestBlend = static_cast<D3D11_BLEND>(st.data[STATE_DST_COLOR]);
-	rt.BlendOp = static_cast<D3D11_BLEND_OP>(st.data[STATE_OP_COLOR]);
-	rt.SrcBlendAlpha = static_cast<D3D11_BLEND>(st.data[STATE_SRC_ALPHA]);
-	rt.DestBlendAlpha = static_cast<D3D11_BLEND>(st.data[STATE_DST_ALPHA]);
-	rt.BlendOpAlpha = static_cast<D3D11_BLEND_OP>(st.data[STATE_OP_ALPHA]);
-	rt.RenderTargetWriteMask = static_cast<UINT8>(st.data[STATE_COLOR_WRITE_MASK] & 0xF);
+	blend.IndependentBlendEnable = targetCount > 1 ? TRUE : FALSE;
+	for (int target = 0; target < kMaxColorTargets; target++) {
+		D3D11_RENDER_TARGET_BLEND_DESC& rt = blend.RenderTarget[target];
+		const jint base = STATE_TARGET_BASE + target * kTargetStateStrip;
+		if (target < targetCount) {
+			rt.BlendEnable = st.data[base + TARGET_STATE_BLEND_ENABLE] != 0 ? TRUE : FALSE;
+			rt.SrcBlend = static_cast<D3D11_BLEND>(st.data[base + TARGET_STATE_SRC_COLOR]);
+			rt.DestBlend = static_cast<D3D11_BLEND>(st.data[base + TARGET_STATE_DST_COLOR]);
+			rt.BlendOp = static_cast<D3D11_BLEND_OP>(st.data[base + TARGET_STATE_OP_COLOR]);
+			rt.SrcBlendAlpha = static_cast<D3D11_BLEND>(st.data[base + TARGET_STATE_SRC_ALPHA]);
+			rt.DestBlendAlpha = static_cast<D3D11_BLEND>(st.data[base + TARGET_STATE_DST_ALPHA]);
+			rt.BlendOpAlpha = static_cast<D3D11_BLEND_OP>(st.data[base + TARGET_STATE_OP_ALPHA]);
+			rt.RenderTargetWriteMask = static_cast<UINT8>(st.data[base + TARGET_STATE_WRITE_MASK] & 0xF);
+		} else {
+			// D3D11's default: no blending, all channels written (the CD3D11
+			// struct helper uses the same defaults).
+			rt.BlendEnable = FALSE;
+			rt.SrcBlend = rt.SrcBlendAlpha = D3D11_BLEND_ONE;
+			rt.DestBlend = rt.DestBlendAlpha = D3D11_BLEND_ZERO;
+			rt.BlendOp = rt.BlendOpAlpha = D3D11_BLEND_OP_ADD;
+			rt.RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
+		}
+	}
 	if (FAILED(g_activeDevice->CreateBlendState(&blend, &pipeline->blendState))) {
 		return fail("ID3D11Device::CreateBlendState failed.");
 	}

@@ -178,6 +178,11 @@ final class DxTexture extends BaseGpuTexture {
 	static int nativeFormatCode(GpuFormat format) {
 		return switch (format) {
 			case RGBA8_UNORM -> DxBridge.TEXTURE_FORMAT_RGBA8_UNORM;
+			// Float color targets: the order-independent-transparency passes
+			// (depth bounds, transmittance coefficients, accumulation) render
+			// into RGBA16/32_FLOAT and sample the results back as SRVs.
+			case RGBA16_FLOAT -> DxBridge.TEXTURE_FORMAT_RGBA16_FLOAT;
+			case RGBA32_FLOAT -> DxBridge.TEXTURE_FORMAT_RGBA32_FLOAT;
 			case D32_FLOAT -> DxBridge.TEXTURE_FORMAT_D32_FLOAT;
 			case D24_UNORM_S8_UINT -> DxBridge.TEXTURE_FORMAT_D24_UNORM_S8_UINT;
 			case D32_FLOAT_S8_UINT -> DxBridge.TEXTURE_FORMAT_D32_FLOAT_S8_UINT;

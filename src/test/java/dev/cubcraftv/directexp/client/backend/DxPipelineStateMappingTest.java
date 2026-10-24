@@ -84,22 +84,33 @@ class DxPipelineStateMappingTest {
 		int[] strides = new int[DxPipelineStateDescriptor.VERTEX_BUFFER_SLOT_COUNT];
 		strides[0] = 16;
 		DxPipelineStateDescriptor d = new DxPipelineStateDescriptor(
-			4, true, 5, 6, 1, 2, 6, 1, 15, true, false, 4, 3, 3, -1, 2.5F,
+			4, 2,
+			new int[] {1, 0},
+			new int[] {5, 2},
+			new int[] {6, 9},
+			new int[] {1, 2},
+			new int[] {2, 3}, new int[] {15, 4}, new int[] {3, 4}, new int[] {0xF, 0x0},
+			true, false, 4, 3, 3, -1, 2.5F,
 			new int[] {6, 0x1c}, new int[] {0, 12}, new int[] {0, 0}, new int[] {0, 0}, strides
 		);
 		int[] s = d.stateArray();
 		assertEquals(DxPipelineStateDescriptor.STATE_COUNT, s.length);
 		assertEquals(4, s[DxPipelineStateDescriptor.STATE_TOPOLOGY]);
-		assertEquals(1, s[DxPipelineStateDescriptor.STATE_BLEND_ENABLE]);
-		assertEquals(5, s[DxPipelineStateDescriptor.STATE_SRC_COLOR]);
-		assertEquals(6, s[DxPipelineStateDescriptor.STATE_DST_COLOR]);
-		assertEquals(2, s[DxPipelineStateDescriptor.STATE_SRC_ALPHA]);
-		assertEquals(15, s[DxPipelineStateDescriptor.STATE_COLOR_WRITE_MASK]);
-		assertEquals(1, s[DxPipelineStateDescriptor.STATE_DEPTH_TEST_ENABLE]);
-		assertEquals(0, s[DxPipelineStateDescriptor.STATE_DEPTH_WRITE]);
-		assertEquals(4, s[DxPipelineStateDescriptor.STATE_DEPTH_FUNC]);
+		assertEquals(2, s[DxPipelineStateDescriptor.STATE_TARGET_COUNT]);
 		assertEquals(3, s[DxPipelineStateDescriptor.STATE_CULL_MODE]);
 		assertEquals(-1, s[DxPipelineStateDescriptor.STATE_DEPTH_BIAS]);
+		assertEquals(4, s[DxPipelineStateDescriptor.STATE_DEPTH_FUNC]);
+		assertEquals(0, s[DxPipelineStateDescriptor.STATE_DEPTH_WRITE]);
+		assertEquals(1, s[DxPipelineStateDescriptor.STATE_DEPTH_TEST_ENABLE]);
+		// Target 0 strip: blend on, src semi-transparent alpha, dst inv alpha.
+		assertEquals(1, s[DxPipelineStateDescriptor.targetStateIndex(0, DxPipelineStateDescriptor.TARGET_STATE_BLEND_ENABLE)]);
+		assertEquals(5, s[DxPipelineStateDescriptor.targetStateIndex(0, DxPipelineStateDescriptor.TARGET_STATE_SRC_COLOR)]);
+		assertEquals(6, s[DxPipelineStateDescriptor.targetStateIndex(0, DxPipelineStateDescriptor.TARGET_STATE_DST_COLOR)]);
+		assertEquals(2, s[DxPipelineStateDescriptor.targetStateIndex(0, DxPipelineStateDescriptor.TARGET_STATE_SRC_ALPHA)]);
+		assertEquals(0xF, s[DxPipelineStateDescriptor.targetStateIndex(0, DxPipelineStateDescriptor.TARGET_STATE_WRITE_MASK)]);
+		// Target 1 strip: unblended coefficient write, no-channel target indent (0xF only in target 0).
+		assertEquals(0, s[DxPipelineStateDescriptor.targetStateIndex(1, DxPipelineStateDescriptor.TARGET_STATE_BLEND_ENABLE)]);
+		assertEquals(0, s[DxPipelineStateDescriptor.targetStateIndex(1, DxPipelineStateDescriptor.TARGET_STATE_WRITE_MASK)]);
 		assertEquals(2.5F, d.floatStateArray()[DxPipelineStateDescriptor.FSTATE_SLOPE_SCALED_DEPTH_BIAS]);
 	}
 }

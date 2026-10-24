@@ -170,7 +170,7 @@ void ResetDrawState() {
 
 extern "C" JNIEXPORT void JNICALL
 Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_setRenderTargets0(
-	JNIEnv* env, jclass, jlong colorViewHandle, jlong depthViewHandle, jint width, jint height
+	JNIEnv* env, jclass, jlongArray colorViewHandles, jlong depthViewHandle, jint width, jint height
 ) {
 	if (!RequireContext(env, "setRenderTargets0")) {
 		return;
@@ -179,18 +179,26 @@ Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_setRenderTargets0(
 		ThrowIllegalState(env, "setRenderTargets0 requires a positive target size.");
 		return;
 	}
+	if (colorViewHandles == nullptr || env->GetArrayLength(colorViewHandles) < 0
+		|| env->GetArrayLength(colorViewHandles) > D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT) {
+		ThrowIllegalState(env, "setRenderTargets0: the color-view array must hold 0..8 handles (D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT).");
+		return;
+	}
+	const jsize colorCount = env->GetArrayLength(colorViewHandles);
 
-	ID3D11RenderTargetView* renderTargetView = nullptr;
-	ID3D11DepthStencilView* depthStencilView = nullptr;
-
-	if (colorViewHandle != 0) {
-		TextureView* color = HandleToPointer<TextureView>(colorViewHandle);
+	jlong colorHandleStorage[D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT] = {};
+	env->GetLongArrayRegion(colorViewHandles, 0, colorCount, colorHandleStorage);
+	ID3D11RenderTargetView* renderTargetViews[D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT] = {};
+	for (jsize index = 0; index < colorCount; index++) {
+		TextureView* color = HandleToPointer<TextureView>(colorHandleStorage[index]);
 		if (color == nullptr || color->renderTargetView == nullptr) {
-			ThrowIllegalState(env, "setRenderTargets0: the color view handle has no render-target view.");
+			ThrowIllegalState(env, "setRenderTargets0: a color view handle has no render-target view.");
 			return;
 		}
-		renderTargetView = color->renderTargetView;
+		renderTargetViews[index] = color->renderTargetView;
 	}
+
+	ID3D11DepthStencilView* depthStencilView = nullptr;
 	if (depthViewHandle != 0) {
 		TextureView* depth = HandleToPointer<TextureView>(depthViewHandle);
 		if (depth == nullptr || depth->depthStencilView == nullptr) {
@@ -200,7 +208,7 @@ Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_setRenderTargets0(
 		depthStencilView = depth->depthStencilView;
 	}
 
-	g_activeContext->OMSetRenderTargets(renderTargetView != nullptr ? 1 : 0, renderTargetView != nullptr ? &renderTargetView : nullptr, depthStencilView);
+	g_activeContext->OMSetRenderTargets(static_cast<UINT>(colorCount), colorCount > 0 ? renderTargetViews : nullptr, depthStencilView);
 
 	D3D11_VIEWPORT viewport = {};
 	viewport.TopLeftX = 0.0f;
@@ -635,7 +643,7 @@ Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_multiDrawIndexed0(JNIEnv* env
 #else // !_WIN32
 
 extern "C" JNIEXPORT void JNICALL
-Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_setRenderTargets0(JNIEnv*, jclass, jlong, jlong, jint, jint) {
+Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_setRenderTargets0(JNIEnv*, jclass, jlongArray, jlong, jint, jint) {
 }
 
 extern "C" JNIEXPORT void JNICALL

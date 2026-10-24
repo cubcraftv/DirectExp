@@ -233,8 +233,8 @@ public final class NativeDxBridge implements DxBridge {
 	}
 
 	@Override
-	public void setRenderTargets(long colorViewHandle, long depthViewHandle, int width, int height) {
-		setRenderTargets0(colorViewHandle, depthViewHandle, width, height);
+	public void setRenderTargets(long[] colorViewHandles, long depthViewHandle, int width, int height) {
+		setRenderTargets0(colorViewHandles, depthViewHandle, width, height);
 	}
 
 	@Override
@@ -764,7 +764,7 @@ public final class NativeDxBridge implements DxBridge {
 
 	// Milestone 4.6 commit 4: draw path. Suffix "0" because the public
 	// overrides above share names and parameter lists with these.
-	private static native void setRenderTargets0(long colorViewHandle, long depthViewHandle, int width, int height);
+	private static native void setRenderTargets0(long[] colorViewHandles, long depthViewHandle, int width, int height);
 
 	private static native void clearRenderTarget0(long colorViewHandle, float red, float green, float blue, float alpha);
 
