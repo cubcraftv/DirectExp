@@ -35,7 +35,9 @@ public record DxPipelineStateDescriptor(
 	float slopeScaledDepthBias,
 	int[] attributeFormats,
 	int[] attributeOffsets,
-	int vertexStride
+	int[] attributeSlots,
+	int[] attributeStepRates,
+	int[] vertexStrides
 ) {
 	public static final int STATE_TOPOLOGY = 0;
 	public static final int STATE_BLEND_ENABLE = 1;
@@ -57,29 +59,78 @@ public record DxPipelineStateDescriptor(
 	public static final int FSTATE_SLOPE_SCALED_DEPTH_BIAS = 0;
 	public static final int FSTATE_COUNT = 1;
 
+	/**
+	 * D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT (d3d11.h, pinned by
+	 * static_assert natively): how wide {@link #vertexStrides} is, and the
+	 * upper bound for every {@code bufferSlot}.
+	 */
+	public static final int VERTEX_BUFFER_SLOT_COUNT = 32;
+
+	/**
+	 * A positive stepRate marks a vertex-buffer binding instanced (the value
+	 * is the instance divisor, Renderpearl/Vulkan semantics); 0 is per-vertex.
+	 * An attribute inherits the rate of the slot it reads from.
+	 */
+	public static final int PER_VERTEX_STEP_RATE = 0;
+
 	public DxPipelineStateDescriptor {
 		Objects.requireNonNull(attributeFormats, "attributeFormats");
 		Objects.requireNonNull(attributeOffsets, "attributeOffsets");
-		if (attributeFormats.length != attributeOffsets.length) {
-			throw new IllegalArgumentException("attributeFormats and attributeOffsets must have the same length.");
+		Objects.requireNonNull(attributeSlots, "attributeSlots");
+		Objects.requireNonNull(attributeStepRates, "attributeStepRates");
+		Objects.requireNonNull(vertexStrides, "vertexStrides");
+		if (attributeFormats.length != attributeOffsets.length
+			|| attributeFormats.length != attributeSlots.length
+			|| attributeFormats.length != attributeStepRates.length) {
+			throw new IllegalArgumentException("attribute arrays must all have the same length.");
+		}
+		if (vertexStrides.length != VERTEX_BUFFER_SLOT_COUNT) {
+			throw new IllegalArgumentException("vertexStrides must have one entry per D3D11 input slot.");
+		}
+		for (int slot : attributeSlots) {
+			if (slot < 0 || slot >= VERTEX_BUFFER_SLOT_COUNT) {
+				throw new IllegalArgumentException("attribute slot out of D3D11's input-slot range.");
+			}
+		}
+		for (int stride : vertexStrides) {
+			if (stride < 0) {
+				throw new IllegalArgumentException("vertex strides must not be negative.");
+			}
+		}
+		for (int stepRate : attributeStepRates) {
+			// The native side accepts any UINT the D3D11 InstanceDataStepRate
+			// field does; the guard here only rejects the nonsense sign.
+			if (stepRate < 0) {
+				throw new IllegalArgumentException("attribute step rates must not be negative.");
+			}
 		}
 		// A pipeline with an empty VertexFormat (a full-screen-quad/blit
 		// shader that generates its own positions from gl_VertexIndex and
 		// binds no vertex buffer -- vanilla has several: blit, clouds,
 		// sprite-animation, lightmap, outline shaders) legitimately has
-		// vertexStride 0, matching attributeFormats/attributeOffsets also
-		// being empty (VertexFormat.getVertexSize() is 0 with no elements;
-		// see DxPipelineStateMapping). Only reject stride 0 when there IS
-		// at least one attribute to stride through -- that combination
-		// really would be a degenerate/buggy vertex format.
-		if (vertexStride <= 0 && attributeFormats.length > 0) {
-			throw new IllegalArgumentException("vertexStride must be positive when attributeFormats is non-empty.");
-		}
-		if (vertexStride < 0) {
-			throw new IllegalArgumentException("vertexStride must not be negative.");
-		}
+		// zero attributes and no used slots. Only reject stride 0 where the
+		// attributes need it -- each declaring slot is validated by its own
+		// stride entry in DxPipelineStateMapping.
 		attributeFormats = attributeFormats.clone();
 		attributeOffsets = attributeOffsets.clone();
+		attributeSlots = attributeSlots.clone();
+		attributeStepRates = attributeStepRates.clone();
+		vertexStrides = vertexStrides.clone();
+	}
+
+	/** Stride of one vertex-buffer slot; 0 means the pipeline declares no binding for it. */
+	public int vertexStrideOf(int slot) {
+		return this.vertexStrides[slot];
+	}
+
+	/** True when a slot carries instanced data (any positive step rate among its attributes). */
+	public boolean slotIsInstanced(int slot) {
+		for (int index = 0; index < this.attributeSlots.length; index++) {
+			if (this.attributeSlots[index] == slot && this.attributeStepRates[index] > PER_VERTEX_STEP_RATE) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	public int[] stateArray() {

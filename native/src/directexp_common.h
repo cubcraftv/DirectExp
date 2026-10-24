@@ -156,7 +156,15 @@ struct Pipeline {
 	ID3D11DepthStencilState* depthStencilState = nullptr;
 	ID3D11RasterizerState* rasterizerState = nullptr;
 	D3D_PRIMITIVE_TOPOLOGY topology = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
-	UINT vertexStride = 0;
+	// Per-input-slot strides the input layout declares, indexed by D3D11
+	// vertex-buffer slot. 0 for slots the pipeline does not use; the draw
+	// path (bindVertexBuffer0) takes the stride for whichever slot it binds
+	// from here rather than one fixed slot-0 value. Vertex attributes
+	// reading instanced slots (InputSlotClass PER_INSTANCE_DATA) get that
+	// from the input layout itself; the stride stays per-slot. Array width
+	// is pinned in directexp_bridge_pipeline.cpp's static_asserts.
+	static constexpr UINT MAX_VERTEX_BUFFER_SLOTS = 32;
+	UINT vertexStrides[MAX_VERTEX_BUFFER_SLOTS] = {};
 	// Viewport size last written into geometryViewportBuffer by the draw path
 	// (directexp_bridge_draw.cpp); 0 until the first bind.
 	UINT geometryViewportWidth = 0;

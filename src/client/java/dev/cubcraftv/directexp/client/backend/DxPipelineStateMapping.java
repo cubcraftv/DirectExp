@@ -31,7 +31,10 @@ import dev.cubcraftv.directexp.bridge.DxPipelineStateDescriptor;
  *       immutable pipeline is also TRIANGLELIST and the draw path must
  *       expand each fan's indices ({@link DxTriangleFanExpander});</li>
  *   <li>vertex inputs: one element per {@code VertexFormat} element, in order
- *       (the element index is also the shader location), slot 0, per-vertex.</li>
+ *       (the element index is also the shader location); the element reads
+ *       from the input slot its {@code AttribBinding.bufferSlot} names, at
+ *       that slot's rate (per-vertex, or instanced with divisor stepRate --
+ *       the same semantics the decompiled Vulkan backend uses).</li>
  * </ul>
  * Known approximations, all recorded in the Milestone 4.6 source of truth:
  * D3D11 has no 3-component 8/16-bit vertex formats so {@code RGB8_*}/{@code RGB16_*}
@@ -108,30 +111,53 @@ final class DxPipelineStateMapping {
 	 * that is a superset of the shader's inputs.
 	 */
 	static DxPipelineStateDescriptor describe(BackendRenderPipeline.CreateInfo info) {
-		int vertexStride = 0;
+		// The frontend reports one VertexBuffer per used D3D11 input slot
+		// (Renderpearl semantics verified against the decompiled Vulkan
+		// backend: stepRate 0 = per-vertex, stepRate > 0 = instanced with
+		// divisor stepRate; AttribBinding carries the slot it reads from).
+		int[] vertexStrides = new int[DxPipelineStateDescriptor.VERTEX_BUFFER_SLOT_COUNT];
+		int[] slotStepRates = new int[DxPipelineStateDescriptor.VERTEX_BUFFER_SLOT_COUNT];
 		for (BackendRenderPipeline.CreateInfo.VertexBuffer vertexBuffer : info.vertexBuffers()) {
-			if (vertexBuffer.bufferSlot() != 0) {
-				throw new UnsupportedOperationException("multiple vertex-buffer bindings are not supported yet");
+			if (vertexBuffer.bufferSlot() < 0 || vertexBuffer.bufferSlot() >= DxPipelineStateDescriptor.VERTEX_BUFFER_SLOT_COUNT) {
+				throw new UnsupportedOperationException("vertex-buffer slot out of D3D11's input-slot range");
 			}
-			if (vertexBuffer.stepRate() != 0) {
-				throw new UnsupportedOperationException("instanced vertex buffers are not supported yet");
+			if (vertexBuffer.stepRate() < 0) {
+				throw new UnsupportedOperationException("the vertex-buffer step rate is negative");
 			}
-			vertexStride = vertexBuffer.stride();
+			if (vertexStrides[vertexBuffer.bufferSlot()] != 0 && vertexStrides[vertexBuffer.bufferSlot()] != vertexBuffer.stride()) {
+				throw new UnsupportedOperationException("contradictory vertex-buffer bindings for the same slot");
+			}
+			vertexStrides[vertexBuffer.bufferSlot()] = vertexBuffer.stride();
+			slotStepRates[vertexBuffer.bufferSlot()] = vertexBuffer.stepRate();
 		}
 
 		int elementCount = 0;
+		int[] formats = new int[0];
 		for (BackendRenderPipeline.CreateInfo.AttribBinding attrib : info.attribBindings()) {
 			elementCount = Math.max(elementCount, attrib.location() + 1);
 		}
-		int[] formats = new int[elementCount];
-		int[] offsets = new int[elementCount];
-		java.util.Arrays.fill(formats, DXGI_FORMAT_R32_FLOAT);
+		int[] offsets = new int[0];
+		int[] slots = new int[0];
+		int[] stepRates = new int[0];
+		if (elementCount > 0) {
+			formats = new int[elementCount];
+			offsets = new int[elementCount];
+			slots = new int[elementCount];
+			stepRates = new int[elementCount];
+			java.util.Arrays.fill(formats, DXGI_FORMAT_R32_FLOAT);
+		}
 		for (BackendRenderPipeline.CreateInfo.AttribBinding attrib : info.attribBindings()) {
+			int slot = attrib.bufferSlot();
+			if (slot < 0 || slot >= DxPipelineStateDescriptor.VERTEX_BUFFER_SLOT_COUNT) {
+				throw new UnsupportedOperationException("attribute slot out of D3D11's input-slot range");
+			}
+			if (vertexStrides[slot] == 0) {
+				throw new UnsupportedOperationException("vertex attributes without a vertex buffer binding (slot " + slot + ")");
+			}
 			formats[attrib.location()] = vertexAttributeFormat(attrib.format());
 			offsets[attrib.location()] = attrib.offset();
-		}
-		if (elementCount > 0 && vertexStride == 0) {
-			throw new UnsupportedOperationException("vertex attributes without a vertex buffer binding");
+			slots[attrib.location()] = slot;
+			stepRates[attrib.location()] = slotStepRates[slot];
 		}
 
 		DepthStencilState depthStencil = info.depthStencilState();
@@ -182,7 +208,7 @@ final class DxPipelineStateMapping {
 			fillMode(info.polygonMode()),
 			biasEnabled ? Math.round(biasConstant) : 0,
 			biasEnabled ? biasScale : 0.0F,
-			formats, offsets, vertexStride
+			formats, offsets, slots, stepRates, vertexStrides
 		);
 	}
 

@@ -2,6 +2,7 @@ package dev.cubcraftv.directexp.client.backend;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -42,15 +43,41 @@ final class DxPipelineStateMappingCreateInfoTest {
 		assertEquals(4, state.attributeFormats().length);
 		assertEquals(DxPipelineStateMapping.DXGI_FORMAT_R32_FLOAT, state.attributeFormats()[1]);
 		assertArrayEquals(new int[] {0, 0, 0, 12}, state.attributeOffsets());
-		assertEquals(20, state.vertexStride());
+		assertArrayEquals(new int[] {0, 0, 0, 0}, state.attributeSlots());
+		assertArrayEquals(new int[] {0, 0, 0, 0}, state.attributeStepRates());
+		assertEquals(20, state.vertexStrideOf(0));
+		assertEquals(0, state.vertexStrideOf(1));
 		assertTrue(state.blendEnable());
 	}
 
 	@Test
-	void secondVertexBufferIsRejected() {
+	void secondVertexBufferSlotIsAccepted() {
+		DxPipelineStateDescriptor state = DxPipelineStateMapping.describe(info(
+			List.of(
+				new BackendRenderPipeline.CreateInfo.VertexBuffer(0, 16, 0),
+				new BackendRenderPipeline.CreateInfo.VertexBuffer(1, 32, 1)
+			),
+			List.of(
+				new BackendRenderPipeline.CreateInfo.AttribBinding(0, 0, 0, GpuFormat.RGB32_FLOAT),
+				new BackendRenderPipeline.CreateInfo.AttribBinding(1, 2, 12, GpuFormat.RG32_FLOAT)
+			),
+			Arrays.asList(ColorTargetState.DEFAULT)
+		));
+		assertEquals(3, state.attributeFormats().length); // location 1 is skipped filler
+		assertArrayEquals(new int[] {0, 0, 1}, state.attributeSlots());
+		assertArrayEquals(new int[] {0, 0, 1}, state.attributeStepRates());
+		assertArrayEquals(new int[] {0, 0, 12}, state.attributeOffsets());
+		assertEquals(16, state.vertexStrideOf(0));
+		assertEquals(32, state.vertexStrideOf(1));
+		assertTrue(state.slotIsInstanced(1));
+		assertFalse(state.slotIsInstanced(0));
+	}
+
+	@Test
+	void attributesWithoutTheirOwnSlotsBindingAreRejected() {
 		assertThrows(UnsupportedOperationException.class, () -> DxPipelineStateMapping.describe(info(
-			List.of(new BackendRenderPipeline.CreateInfo.VertexBuffer(0, 16, 0), new BackendRenderPipeline.CreateInfo.VertexBuffer(1, 16, 0)),
-			List.of(),
+			List.of(new BackendRenderPipeline.CreateInfo.VertexBuffer(0, 16, 0)),
+			List.of(new BackendRenderPipeline.CreateInfo.AttribBinding(1, 0, 0, GpuFormat.RGB32_FLOAT)),
 			Arrays.asList(ColorTargetState.DEFAULT)
 		)));
 	}

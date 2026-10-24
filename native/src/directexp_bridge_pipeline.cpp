@@ -18,8 +18,13 @@
 // Input layout: SPIRV-Cross's HLSL backend names every vertex-stage input
 // TEXCOORD<location> (CompilerHLSL::to_semantic, no remap table is set by
 // directexp_shader_hlsl.cpp), and the Vulkan backend assigns location = the
-// element's index in VertexFormat.getElements(), all in vertex buffer slot 0
-// with per-vertex input rate. This file builds exactly that.
+// element's index in VertexFormat.getElements(). Each element reads from the
+// vertex-buffer slot its AttribBinding names (D3D11 InputSlot), at that
+// slot's rate: per-vertex, or instanced with divisor stepRate > 0 (the
+// Renderpearl field the decompiled Vulkan backend maps straight onto D3D11's
+// InstanceDataStepRate). The per-slot strides and profiles cross JNI as
+// separate arrays; the draw path (bindVertexBuffer0) picks the stride for
+// whichever slot it binds.
 //
 #include "directexp_common.h"
 
@@ -50,6 +55,10 @@ static_assert(13 < D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT, "geometry 
 static_assert(DXGI_FORMAT_R32G32B32A32_FLOAT == 2 && DXGI_FORMAT_R32G32B32_FLOAT == 6 && DXGI_FORMAT_R32G32_FLOAT == 16
 	&& DXGI_FORMAT_R32_FLOAT == 41 && DXGI_FORMAT_R8G8B8A8_UNORM == 28 && DXGI_FORMAT_R8G8B8A8_SNORM == 31
 	&& DXGI_FORMAT_R16G16_SINT == 38 && DXGI_FORMAT_R32G32B32A32_UINT == 3, "DXGI_FORMAT values changed");
+// DxPipelineStateDescriptor.VERTEX_BUFFER_SLOT_COUNT (Java) and
+// Pipeline::MAX_VERTEX_BUFFER_SLOTS must both be D3D11's real input-slot
+// count -- the vertex-stride array crosses JNI with that exact width.
+static_assert(D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT == 32, "D3D11 input slot count changed");
 
 namespace {
 
@@ -129,7 +138,8 @@ extern "C" JNIEXPORT jlong JNICALL
 Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_createPipelineNative(
 	JNIEnv* env, jclass,
 	jbyteArray vertexBytecode, jbyteArray pixelBytecode, jbyteArray geometryBytecode,
-	jintArray attributeFormats, jintArray attributeOffsets, jint vertexStride,
+	jintArray attributeFormats, jintArray attributeOffsets, jintArray attributeSlots, jintArray attributeStepRates,
+	jintArray vertexStrides,
 	jintArray state, jfloatArray floatState
 ) {
 	if (g_activeDevice == nullptr) {
@@ -142,6 +152,9 @@ Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_createPipelineNative(
 	ScopedByteArray gs(env, geometryBytecode); // null array = no geometry stage
 	ScopedIntArray formats(env, attributeFormats);
 	ScopedIntArray offsets(env, attributeOffsets);
+	ScopedIntArray slots(env, attributeSlots);
+	ScopedIntArray stepRates(env, attributeStepRates);
+	ScopedIntArray strides(env, vertexStrides);
 	ScopedIntArray st(env, state);
 
 	if (vs.data == nullptr || vs.length <= 0 || ps.data == nullptr || ps.length <= 0) {
@@ -152,9 +165,28 @@ Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_createPipelineNative(
 		ThrowIllegalState(env, "createPipelineNative: state arrays have the wrong length (Java/native STATE_* out of sync).");
 		return 0;
 	}
-	if (formats.length != offsets.length || vertexStride < 0 || (formats.length > 0 && vertexStride == 0)) {
-		ThrowIllegalState(env, "createPipelineNative: attribute format/offset arrays must match; vertexStride must be non-negative and positive when attributes exist.");
+	if (formats.length != offsets.length
+		|| formats.length != slots.length
+		|| formats.length != stepRates.length
+		|| strides.length != Pipeline::MAX_VERTEX_BUFFER_SLOTS) {
+		ThrowIllegalState(env, "createPipelineNative: attribute format/offset/slot/rate arrays must match, and one stride per D3D11 input slot is required (Java/native ABI out of sync).");
 		return 0;
+	}
+	for (jsize i = 0; i < formats.length; i++) {
+		if (slots.data[i] < 0 || slots.data[i] >= D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT || stepRates.data[i] < 0) {
+			ThrowIllegalState(env, "createPipelineNative: an attribute names a slot or step rate out of range.");
+			return 0;
+		}
+		if (strides.data[slots.data[i]] <= 0) {
+			ThrowIllegalState(env, "createPipelineNative: attributes read from a slot with no vertex-buffer binding (stride 0).");
+			return 0;
+		}
+	}
+	for (jsize slot = 0; slot < strides.length; slot++) {
+		if (strides.data[slot] < 0) {
+			ThrowIllegalState(env, "createPipelineNative: a vertex stride is negative.");
+			return 0;
+		}
 	}
 
 	jfloat fs[FSTATE_COUNT] = {};
@@ -192,9 +224,12 @@ Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_createPipelineNative(
 	}
 
 	// Input layout: one element per VertexFormat element, semantic
-	// TEXCOORD<index>, slot 0, per-vertex. A pipeline with no vertex inputs
-	// (fullscreen triangle from SV_VertexID) legitimately has zero elements
-	// and no layout object.
+	// TEXCOORD<index>. The element reads from the input slot its AttribBinding
+	// names, at that slot's rate (per-vertex, or instanced with divisor
+	// stepRate > 0 -- the Renderpearl field the decompiled Vulkan backend maps
+	// straight onto D3D11's InstanceDataStepRate). A pipeline with no vertex
+	// inputs (fullscreen triangle from SV_VertexID) legitimately has zero
+	// elements and no layout object.
 	if (formats.length > 0) {
 		std::vector<D3D11_INPUT_ELEMENT_DESC> elements(static_cast<size_t>(formats.length));
 		for (jsize i = 0; i < formats.length; i++) {
@@ -202,10 +237,15 @@ Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_createPipelineNative(
 			e.SemanticName = "TEXCOORD";
 			e.SemanticIndex = static_cast<UINT>(i);
 			e.Format = static_cast<DXGI_FORMAT>(formats.data[i]);
-			e.InputSlot = 0;
+			e.InputSlot = static_cast<UINT>(slots.data[i]);
 			e.AlignedByteOffset = static_cast<UINT>(offsets.data[i]);
-			e.InputSlotClass = D3D11_INPUT_PER_VERTEX_DATA;
-			e.InstanceDataStepRate = 0;
+			if (stepRates.data[i] > 0) {
+				e.InputSlotClass = D3D11_INPUT_PER_INSTANCE_DATA;
+				e.InstanceDataStepRate = static_cast<UINT>(stepRates.data[i]);
+			} else {
+				e.InputSlotClass = D3D11_INPUT_PER_VERTEX_DATA;
+				e.InstanceDataStepRate = 0;
+			}
 		}
 		if (FAILED(g_activeDevice->CreateInputLayout(elements.data(), static_cast<UINT>(elements.size()),
 			vs.data, static_cast<SIZE_T>(vs.length), &pipeline->inputLayout))) {
@@ -264,7 +304,9 @@ Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_createPipelineNative(
 	}
 
 	pipeline->topology = static_cast<D3D_PRIMITIVE_TOPOLOGY>(st.data[STATE_TOPOLOGY]);
-	pipeline->vertexStride = static_cast<UINT>(vertexStride);
+	for (jsize slot = 0; slot < strides.length; slot++) {
+		pipeline->vertexStrides[slot] = static_cast<UINT>(strides.data[slot]);
+	}
 	return PointerToHandle(pipeline);
 }
 
@@ -312,8 +354,7 @@ Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_releasePipeline0(JNIEnv*, jcl
 
 extern "C" JNIEXPORT jlong JNICALL
 Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_createPipelineNative(
-	JNIEnv*, jclass, jbyteArray, jbyteArray, jbyteArray, jintArray, jintArray, jint, jintArray, jfloatArray
-) {
+	JNIEnv*, jclass, jbyteArray, jbyteArray, jbyteArray, jintArray, jintArray, jintArray, jintArray, jintArray, jintArray, jfloatArray) {
 	return 0;
 }
 

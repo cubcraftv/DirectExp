@@ -81,8 +81,11 @@ class DxPipelineStateMappingTest {
 
 	@Test
 	void descriptorFlattensInTheOrderTheNativeSideExpects() {
+		int[] strides = new int[DxPipelineStateDescriptor.VERTEX_BUFFER_SLOT_COUNT];
+		strides[0] = 16;
 		DxPipelineStateDescriptor d = new DxPipelineStateDescriptor(
-			4, true, 5, 6, 1, 2, 6, 1, 15, true, false, 4, 3, 3, -1, 2.5F, new int[] {6, 0x1c}, new int[] {0, 12}, 16
+			4, true, 5, 6, 1, 2, 6, 1, 15, true, false, 4, 3, 3, -1, 2.5F,
+			new int[] {6, 0x1c}, new int[] {0, 12}, new int[] {0, 0}, new int[] {0, 0}, strides
 		);
 		int[] s = d.stateArray();
 		assertEquals(DxPipelineStateDescriptor.STATE_COUNT, s.length);

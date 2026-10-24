@@ -13,11 +13,11 @@
 // where a view/buffer/sampler is expected unbinds that slot.
 //
 // The one piece of native-side state is the "bound pipeline": bindPipeline0
-// records it so bindVertexBuffer0 can take the vertex stride from it (the
-// stride is a property of the pipeline's input layout, and keeping it here
-// avoids the client needing Blaze3D's vertex-size API). Pipelines call
-// ForgetBoundPipeline before they are deleted; releaseSurface0 calls
-// ResetDrawState.
+// records it so bindVertexBuffer0 can take the stride for whichever slot it
+// binds from the pipeline's per-slot stride table (the stride is a property
+// of the pipeline's input layout, and keeping it here avoids the client
+// needing Blaze3D's vertex-size API). Pipelines call ForgetBoundPipeline
+// before they are deleted; releaseSurface0 calls ResetDrawState.
 //
 // Geometry-shader pipelines (gl_PointSize point sprites): bindPipeline0 binds
 // the pipeline's viewport constants at b13 and rewrites them when the viewport
@@ -447,8 +447,18 @@ Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_bindVertexBuffer0(JNIEnv* env
 			ThrowIllegalState(env, "bindVertexBuffer0: the handle is not a live vertex buffer.");
 			return;
 		}
+		if (slot >= Pipeline::MAX_VERTEX_BUFFER_SLOTS) {
+			ThrowIllegalState(env, "bindVertexBuffer0: the slot is out of the pipeline's stride table range.");
+			return;
+		}
+		stride = g_boundPipeline->vertexStrides[slot];
+		if (stride == 0) {
+			// The pipeline's input layout declares no binding for this slot;
+			// binding the buffer anyway would mis-stride the fetch.
+			ThrowIllegalState(env, "bindVertexBuffer0: the bound pipeline declares no vertex stride for that slot.");
+			return;
+		}
 		buffer = wrapper->buffer;
-		stride = g_boundPipeline->vertexStride;
 	}
 	g_activeContext->IASetVertexBuffers(static_cast<UINT>(slot), 1, &buffer, &stride, &offset);
 }

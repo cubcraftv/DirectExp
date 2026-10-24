@@ -210,7 +210,8 @@ public final class NativeDxBridge implements DxBridge {
 	public long createPipeline(byte[] vertexBytecode, byte[] pixelBytecode, byte[] geometryBytecode, DxPipelineStateDescriptor state) {
 		return createPipelineNative(
 			vertexBytecode, pixelBytecode, geometryBytecode,
-			state.attributeFormats(), state.attributeOffsets(), state.vertexStride(),
+			state.attributeFormats(), state.attributeOffsets(), state.attributeSlots(), state.attributeStepRates(),
+			state.vertexStrides(),
 			state.stateArray(), state.floatStateArray()
 		);
 	}
@@ -740,7 +741,8 @@ public final class NativeDxBridge implements DxBridge {
 
 	private static native long createPipelineNative(
 		byte[] vertexBytecode, byte[] pixelBytecode, byte[] geometryBytecode,
-		int[] attributeFormats, int[] attributeOffsets, int vertexStride,
+		int[] attributeFormats, int[] attributeOffsets, int[] attributeSlots, int[] attributeStepRates,
+		int[] vertexStrides,
 		int[] state, float[] floatState
 	);
 
