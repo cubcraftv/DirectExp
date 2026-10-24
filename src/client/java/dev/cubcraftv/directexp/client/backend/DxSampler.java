@@ -25,7 +25,7 @@ import java.util.OptionalDouble;
  * only requests that when both min and mag are LINEAR (otherwise a NEAREST
  * sampler would silently become smooth). See the source-of-truth doc.
  */
-final class DxSampler implements GpuSampler {
+	final class DxSampler implements GpuSampler {
 	private static final double DEFAULT_MAX_LOD = 1000.0;
 	private static final double MIN_MAX_LOD = 0.25;
 
@@ -36,7 +36,13 @@ final class DxSampler implements GpuSampler {
 	private final FilterMode magFilter;
 	private final int maxAnisotropy;
 	private final OptionalDouble maxLod;
-	private final long nativeSamplerHandle;
+	// Created lazily on first use (on the render thread, from the draw path's
+	// texture binding): creation is a real D3D11 object per sampler, and the
+	// frontend manufactures samplers eagerly for parameter sets it rarely
+	// ever binds. Failure is cached as well so a once-failed sampler never
+	// retries on every draw.
+	private long nativeSamplerHandle;
+	private boolean handleCreationFailed;
 	private boolean closed;
 
 	DxSampler(DxBridge dxBridge, AddressMode addressModeU, AddressMode addressModeV, FilterMode minFilter, FilterMode magFilter, int maxAnisotropy, OptionalDouble maxLod) {
@@ -47,7 +53,6 @@ final class DxSampler implements GpuSampler {
 		this.magFilter = magFilter;
 		this.maxAnisotropy = maxAnisotropy;
 		this.maxLod = maxLod == null ? OptionalDouble.empty() : maxLod;
-		this.nativeSamplerHandle = createNativeSamplerHandle();
 	}
 
 	static int nativeAddressMode(AddressMode mode) {
@@ -70,8 +75,18 @@ final class DxSampler implements GpuSampler {
 		return minFilter == FilterMode.LINEAR && magFilter == FilterMode.LINEAR ? Math.max(1, maxAnisotropy) : 1;
 	}
 
-	private long createNativeSamplerHandle() {
+	/**
+	 * Creates the native `ID3D11SamplerState` on first use, once. Called only
+	 * from the render thread's draw path (see the field comment); the lock is
+	 * belt-and-braces for the native-call-before-release ordering.
+	 */
+	private synchronized long ensureNativeSamplerHandle() {
+		if (this.nativeSamplerHandle != 0L || this.handleCreationFailed || this.closed) {
+			return this.nativeSamplerHandle;
+		}
+
 		if (this.dxBridge == null) {
+			this.handleCreationFailed = true;
 			return 0L;
 		}
 
@@ -87,20 +102,22 @@ final class DxSampler implements GpuSampler {
 			);
 			if (handle != 0L) {
 				DxNativeResourceLog.nativeActive("sampler", this.minFilter + "/" + this.magFilter + ", aniso " + this.maxAnisotropy);
+				this.nativeSamplerHandle = handle;
+				return handle;
 			}
-			return handle;
 		} catch (UnsupportedOperationException | IllegalStateException error) {
 			DxNativeResourceLog.fallback("sampler", error.getMessage());
-			return 0L;
 		}
+		this.handleCreationFailed = true;
+		return 0L;
 	}
 
 	long nativeSamplerHandle() {
-		return this.nativeSamplerHandle;
+		return ensureNativeSamplerHandle();
 	}
 
 	boolean hasNativeSamplerHandle() {
-		return this.nativeSamplerHandle != 0L;
+		return ensureNativeSamplerHandle() != 0L;
 	}
 
 	@Override
@@ -145,8 +162,14 @@ final class DxSampler implements GpuSampler {
 		}
 
 		this.closed = true;
-		if (this.nativeSamplerHandle != 0L && this.dxBridge != null) {
-			this.dxBridge.releaseSampler(this.nativeSamplerHandle);
+		// ensureNativeSamplerHandle() takes the same lock: if it is mid-creation,
+		// it finishes first and this then releases what it created; if close
+		// wins the lock, no sampler is ever created for this object.
+		synchronized (this) {
+			if (this.nativeSamplerHandle != 0L && this.dxBridge != null) {
+				this.dxBridge.releaseSampler(this.nativeSamplerHandle);
+				this.nativeSamplerHandle = 0L;
+			}
 		}
 	}
 }
