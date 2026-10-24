@@ -1,6 +1,6 @@
 package dev.cubcraftv.directexp.client.backend;
 
-import com.mojang.blaze3d.buffers.GpuFence;
+import com.mojang.renderpearl.api.commands.GpuFence;
 
 final class DxFence implements GpuFence {
 	private boolean closed;

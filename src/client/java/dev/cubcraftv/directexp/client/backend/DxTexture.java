@@ -1,7 +1,7 @@
 package dev.cubcraftv.directexp.client.backend;
 
-import com.mojang.blaze3d.GpuFormat;
-import com.mojang.blaze3d.textures.GpuTexture;
+import com.mojang.renderpearl.api.GpuFormat;
+import com.mojang.renderpearl.backend.common.BaseGpuTexture;
 import dev.cubcraftv.directexp.DirectExpMod;
 import dev.cubcraftv.directexp.bridge.DxBridge;
 
@@ -23,7 +23,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * failing outright -- the direct ByteBuffer storage below is always kept
  * populated and correct regardless of whether the native handle exists.
  */
-final class DxTexture extends GpuTexture {
+final class DxTexture extends BaseGpuTexture {
 	private final DxBridge dxBridge;
 	private final ByteBuffer[] mipStorage;
 	private final int layerCount;

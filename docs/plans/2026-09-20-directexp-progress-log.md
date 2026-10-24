@@ -855,3 +855,9 @@ not a bug in what's implemented so far).
   Minecraft dependencies, compiling/linking the native DLL, and running the Java test suite.
   **Not done:** any run on a D3D11 device. G1-G4 and G6 runtime behavior remains unverified;
   exercise the push-constant and indexed-draw trace flags with Sodium on Windows.
+
+- **2026-10-23 -- 26.3 port written (unbuilt).** Version bump, renderpearl package move, SDL window/HWND, new backend contracts, SPIR-V-first pipeline compile. See the 26.3 migration note; nothing was built or run.
+  metadata and docs point at Minecraft 26.3 / Fabric API `0.161.0+26.3`, and
+  Blaze3D GPU imports were rewritten to `com.mojang.renderpearl`. Nothing was
+  compiled or run. Remaining work is listed in
+  [the 26.3 migration note](./2026-10-23-directexp-minecraft-26.3-migration.md).

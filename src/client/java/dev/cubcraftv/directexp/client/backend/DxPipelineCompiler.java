@@ -1,150 +1,129 @@
 package dev.cubcraftv.directexp.client.backend;
 
-import com.mojang.blaze3d.pipeline.RenderPipeline;
-import com.mojang.blaze3d.shaders.ShaderSource;
+import com.mojang.renderpearl.api.pipeline.ShaderType;
+import com.mojang.renderpearl.backend.api.BackendRenderPipeline;
+import com.mojang.renderpearl.backend.api.SpvModule;
+import dev.cubcraftv.directexp.DirectExpMod;
 import dev.cubcraftv.directexp.bridge.DxBridge;
-import com.mojang.blaze3d.vertex.VertexFormat;
-import dev.cubcraftv.directexp.bridge.DxHlslCompilationResult;
 import dev.cubcraftv.directexp.bridge.DxPipelineStateDescriptor;
-import dev.cubcraftv.directexp.bridge.DxShaderStageKind;
 import dev.cubcraftv.directexp.client.shader.DxHlslCompilationStage;
 import dev.cubcraftv.directexp.client.shader.DxHlslCompilationStageResult;
-import dev.cubcraftv.directexp.client.shader.DxIrCompilationStage;
-import dev.cubcraftv.directexp.client.shader.DxIrCompilationStageResult;
 import dev.cubcraftv.directexp.client.shader.DxPipelineResourceDeclarations;
-import dev.cubcraftv.directexp.client.shader.DxPointSizeRewriter;
-import dev.cubcraftv.directexp.client.shader.DxPointSpriteGeometryShader;
-import dev.cubcraftv.directexp.client.shader.DxPreprocessedShaderPipelineSource;
-import dev.cubcraftv.directexp.client.shader.DxPreprocessedShaderSource;
 import dev.cubcraftv.directexp.client.shader.DxReflectionStage;
 import dev.cubcraftv.directexp.client.shader.DxReflectionStageResult;
 import dev.cubcraftv.directexp.client.shader.DxResourceLayout;
 import dev.cubcraftv.directexp.client.shader.DxResourceLayoutBuilder;
-import dev.cubcraftv.directexp.client.shader.DxShaderInterfaceException;
-import dev.cubcraftv.directexp.client.shader.DxShaderInterfaceLayout;
-import dev.cubcraftv.directexp.client.shader.DxShaderSourceStage;
-import dev.cubcraftv.directexp.client.shader.DxShaderSourceStageResult;
-import dev.cubcraftv.directexp.client.shader.DxSpirvCache;
+import dev.cubcraftv.directexp.client.shader.DxSpirvModule;
+import dev.cubcraftv.directexp.client.shader.DxSpirvPipelineModules;
+import net.minecraft.resources.Identifier;
+
+import java.nio.ByteBuffer;
+import java.util.List;
 
 /**
- * Chains Milestone 4.1-4.5's stages into one pipeline compile and finishes
- * with 4.6's native object assembly:
- * source (4.2) -> interface layout (4.6) -> SPIR-V (4.3) -> reflection (4.4)
- * -> resource layout (4.4) -> HLSL + bytecode (4.5) -> {@link DxBridge#createPipeline}.
+ * Turns a Renderpearl {@link BackendRenderPipeline.CreateInfo} into a native
+ * D3D11 pipeline. Since 26.3 the frontend has already done the GLSL work
+ * (Shaderc to SPIR-V, location/binding assignment, vertex/varying checks), so
+ * the chain here starts at SPIR-V:
+ * reflection (4.4) -> resource layout (4.4) -> HLSL + bytecode (4.5) ->
+ * {@link DxBridge#createPipeline}.
  *
- * <p>The interface-layout step ({@link DxShaderInterfaceLayout}) gives every
- * vertex input / varying / uniform block / sampler an explicit location or
- * binding before {@code shaderc} sees the text, the equivalent of what the
- * Vulkan backend's {@code GlslCompiler} does; without it every vanilla
- * pipeline fails to compile.
- *
- * <p>{@code gl_PointSize}: SPIR-V's PointSize builtin has no HLSL output, so
- * {@link DxPointSizeRewriter} turns it into an ordinary vertex output before
- * shaderc, and for {@code POINTS} pipelines {@link DxPointSpriteGeometryShader}
- * generates a geometry shader that expands each point to a quad of that many
- * pixels. {@code TRIANGLE_FAN} needs nothing here: the pipeline is a plain
- * triangle list and the draw path expands the indices
- * ({@link DxTriangleFanExpander}).
- *
- * <p>Never throws: every failure (a stage reporting non-READY, a mapping
- * that D3D11 can't express, a native exception, or anything unexpected)
- * becomes an invalid {@link DxRenderPipeline} whose reason names the stage,
- * so one bad pipeline can't take the whole device down.
+ * <p>Never throws: every failure is logged and returns {@code null}, which is
+ * what {@code BackendRenderPipeline.Pending.finishCompile} reports to the
+ * frontend for a pipeline that cannot be built.
  */
 final class DxPipelineCompiler {
 	private DxPipelineCompiler() {
 	}
 
-	static DxRenderPipeline compile(RenderPipeline pipeline, ShaderSource shaderSource, DxBridge bridge, DxSpirvCache spirvCache) {
-		if (bridge == null) {
-			return DxRenderPipeline.invalid(pipeline, "no DirectX bridge");
+	/**
+	 * Copies the SPIR-V out of the create info. Must run before the frontend
+	 * closes its modules (it does so right after {@code finishCompile}), and is
+	 * cheap, so the device backend calls it on the compile thread.
+	 */
+	static DxSpirvPipelineModules copySpirv(BackendRenderPipeline.CreateInfo info) {
+		DxSpirvModule vertex = null;
+		DxSpirvModule fragment = null;
+		for (BackendRenderPipeline.CreateInfo.Shader shader : info.shaders()) {
+			SpvModule module = shader.module();
+			DxSpirvModule copy = new DxSpirvModule(identifierOf(shader.name()), module.type(), toBytes(module.spv()));
+			if (module.type() == ShaderType.VERTEX) {
+				vertex = copy;
+			} else if (module.type() == ShaderType.FRAGMENT) {
+				fragment = copy;
+			}
 		}
+		if (vertex == null || fragment == null) {
+			throw new UnsupportedOperationException("a pipeline needs a vertex and a fragment shader");
+		}
+		return new DxSpirvPipelineModules(info.name(), vertex, fragment);
+	}
 
+	static DxRenderPipeline compile(BackendRenderPipeline.CreateInfo info, DxSpirvPipelineModules spirv, DxBridge bridge) {
+		String name = info.name();
 		try {
-			DxShaderSourceStageResult source = DxShaderSourceStage.load(pipeline, shaderSource);
-			if (!source.isReady()) {
-				return DxRenderPipeline.invalid(pipeline, "shader source: " + source.status() + " (" + source.detail() + ")");
-			}
-
-			// Vertex input location = element index in the vertex format (as the
-			// input layout in createPipeline and the Vulkan backend both assume).
-			DxPointSizeRewriter.Result pointSize = DxPointSizeRewriter.rewrite(source.source().vertex().preprocessedSource());
-			DxPreprocessedShaderPipelineSource layoutInput = source.source();
-			if (pointSize.usesPointSize()) {
-				DxPreprocessedShaderSource vertex = layoutInput.vertex();
-				layoutInput = new DxPreprocessedShaderPipelineSource(
-					layoutInput.pipelineDebugLabel(),
-					new DxPreprocessedShaderSource(vertex.id(), vertex.type(), vertex.rawSource(), pointSize.source()),
-					layoutInput.fragment()
-				);
-			}
-
-			DxPreprocessedShaderPipelineSource laidOut;
-			try {
-				VertexFormat vertexFormat = pipeline.getVertexFormatBinding(0);
-				laidOut = DxShaderInterfaceLayout.apply(
-					layoutInput,
-					vertexFormat == null ? java.util.List.of() : vertexFormat.getElements().stream().map(element -> element.name()).toList()
-				);
-			} catch (DxShaderInterfaceException error) {
-				return DxRenderPipeline.invalid(pipeline, "shader interface: " + error.getMessage());
-			}
-
-			DxIrCompilationStageResult spirv = DxIrCompilationStage.compile(laidOut, bridge, spirvCache);
-			if (!spirv.isReady()) {
-				return DxRenderPipeline.invalid(pipeline, "GLSL->SPIR-V: " + spirv.status() + " (" + spirv.detail() + ")");
-			}
-
-			DxReflectionStageResult reflection = DxReflectionStage.reflect(spirv.modules(), bridge);
+			DxReflectionStageResult reflection = DxReflectionStage.reflect(spirv, bridge);
 			if (!reflection.isReady()) {
-				return DxRenderPipeline.invalid(pipeline, "reflection: " + reflection.status() + " (" + reflection.detail() + ")");
+				return fail(name, "reflection: " + reflection.status() + " (" + reflection.detail() + ")");
 			}
 
-			DxResourceLayout layout = DxResourceLayoutBuilder.build(reflection.reflection(), DxPipelineResourceDeclarations.of(pipeline));
+			DxResourceLayout layout = DxResourceLayoutBuilder.build(reflection.reflection(), declarationsOf(info));
 
-			DxHlslCompilationStageResult hlsl = DxHlslCompilationStage.compile(spirv.modules(), layout, bridge);
+			DxHlslCompilationStageResult hlsl = DxHlslCompilationStage.compile(spirv, layout, bridge);
 			if (!hlsl.isReady()) {
-				return DxRenderPipeline.invalid(pipeline, "HLSL: " + hlsl.status() + " (" + hlsl.detail() + ")");
+				return fail(name, "HLSL: " + hlsl.status() + " (" + hlsl.detail() + ")");
 			}
 
-			dumpHlslForDiagnostics(pipeline, hlsl);
+			dumpHlslForDiagnostics(name, hlsl);
 
-			byte[] geometryBytecode = null;
-			if (pointSize.usesPointSize() && pipeline.getPrimitiveTopology() == com.mojang.blaze3d.PrimitiveTopology.POINTS) {
-				String geometryHlsl;
-				try {
-					geometryHlsl = DxPointSpriteGeometryShader.generate(hlsl.modules().vertex().hlsl(), DxBridge.GEOMETRY_VIEWPORT_CBUFFER_SLOT);
-				} catch (DxShaderInterfaceException error) {
-					return DxRenderPipeline.invalid(pipeline, "point size geometry shader: " + error.getMessage());
-				}
-
-				DxHlslCompilationResult geometry = bridge.compileHlsl(pipeline.getLocation() + "/GEOMETRY/point_sprite", geometryHlsl, DxShaderStageKind.GEOMETRY);
-				if (!geometry.isReady()) {
-					return DxRenderPipeline.invalid(pipeline, "point size geometry shader: " + geometry.status() + " (" + geometry.detail() + ")");
-				}
-				geometryBytecode = geometry.bytecode();
-			}
-
-			DxPipelineStateDescriptor state = DxPipelineStateMapping.describe(pipeline);
-			long handle = bridge.createPipeline(hlsl.modules().vertex().bytecode(), hlsl.modules().fragment().bytecode(), geometryBytecode, state);
-			return DxRenderPipeline.valid(pipeline, bridge, handle, layout, geometryBytecode != null);
+			DxPipelineStateDescriptor state = DxPipelineStateMapping.describe(info);
+			long handle = bridge.createPipeline(hlsl.modules().vertex().bytecode(), hlsl.modules().fragment().bytecode(), state);
+			return new DxRenderPipeline(name, bridge, handle, layout, info.primitiveTopology(), info.uniforms());
 		} catch (UnsupportedOperationException | IllegalStateException error) {
-			return DxRenderPipeline.invalid(pipeline, "pipeline objects: " + error.getMessage());
+			return fail(name, "pipeline objects: " + error.getMessage());
 		} catch (RuntimeException | LinkageError error) {
-			// A stage misbehaving must not escape into Blaze3D's pipeline precompile.
-			return DxRenderPipeline.invalid(pipeline, "unexpected " + error.getClass().getSimpleName() + ": " + error.getMessage());
+			return fail(name, "unexpected " + error.getClass().getSimpleName() + ": " + error.getMessage());
 		}
 	}
 
+	private static DxPipelineResourceDeclarations declarationsOf(BackendRenderPipeline.CreateInfo info) {
+		List<String> samplers = info.uniforms().stream()
+			.filter(uniform -> uniform.type() == com.mojang.renderpearl.api.pipeline.UniformType.COMBINED_IMAGE_SAMPLER
+				|| uniform.type() == com.mojang.renderpearl.api.pipeline.UniformType.TEXEL_BUFFER)
+			.map(com.mojang.renderpearl.api.pipeline.BindGroupLayout.UniformDescription::name)
+			.toList();
+		List<String> uniformBlocks = info.uniforms().stream()
+			.filter(uniform -> uniform.type() == com.mojang.renderpearl.api.pipeline.UniformType.UNIFORM_BUFFER)
+			.map(com.mojang.renderpearl.api.pipeline.BindGroupLayout.UniformDescription::name)
+			.toList();
+		return new DxPipelineResourceDeclarations(samplers, uniformBlocks);
+	}
+
+	private static Identifier identifierOf(String name) {
+		Identifier parsed = Identifier.tryParse(name);
+		return parsed != null ? parsed : Identifier.fromNamespaceAndPath("directexp", "shader");
+	}
+
+	private static byte[] toBytes(ByteBuffer spv) {
+		ByteBuffer copy = spv.duplicate();
+		byte[] bytes = new byte[copy.remaining()];
+		copy.get(bytes);
+		return bytes;
+	}
+
+	private static DxRenderPipeline fail(String pipelineName, String reason) {
+		DirectExpMod.LOGGER.warn("DirectExp: pipeline {} is invalid: {}", pipelineName, reason);
+		return null;
+	}
+
 	/** Diagnostics: writes the generated HLSL of the sprite-atlas blit and terrain pipelines to ./directexp-hlsl/. */
-	private static void dumpHlslForDiagnostics(RenderPipeline pipeline, DxHlslCompilationStageResult hlsl) {
-		String name = String.valueOf(pipeline.getLocation());
+	private static void dumpHlslForDiagnostics(String name, DxHlslCompilationStageResult hlsl) {
 		if (!(name.contains("animate_sprite") || name.contains("solid_terrain"))) {
 			return;
 		}
 		if (name.contains("animate_sprite_blit")) {
-			dev.cubcraftv.directexp.DirectExpMod.LOGGER.info("DirectExp HLSL DUMP {} VERTEX:\n{}", name, hlsl.modules().vertex().hlsl());
-			dev.cubcraftv.directexp.DirectExpMod.LOGGER.info("DirectExp HLSL DUMP {} FRAGMENT:\n{}", name, hlsl.modules().fragment().hlsl());
+			DirectExpMod.LOGGER.info("DirectExp HLSL DUMP {} VERTEX:\n{}", name, hlsl.modules().vertex().hlsl());
+			DirectExpMod.LOGGER.info("DirectExp HLSL DUMP {} FRAGMENT:\n{}", name, hlsl.modules().fragment().hlsl());
 		}
 		try {
 			java.nio.file.Path directory = java.nio.file.Path.of("directexp-hlsl");
@@ -153,7 +132,7 @@ final class DxPipelineCompiler {
 			java.nio.file.Files.writeString(directory.resolve(base + ".vs.hlsl"), hlsl.modules().vertex().hlsl());
 			java.nio.file.Files.writeString(directory.resolve(base + ".ps.hlsl"), hlsl.modules().fragment().hlsl());
 		} catch (java.io.IOException | RuntimeException error) {
-			dev.cubcraftv.directexp.DirectExpMod.LOGGER.warn("DirectExp: could not dump diagnostic HLSL for pipeline {}.", name, error);
+			DirectExpMod.LOGGER.warn("DirectExp: could not dump diagnostic HLSL for pipeline {}.", name, error);
 		}
 	}
 }

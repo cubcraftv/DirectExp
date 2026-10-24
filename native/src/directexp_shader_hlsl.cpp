@@ -128,6 +128,23 @@ void ApplyResourceBindings(
 		compiler.add_hlsl_resource_binding(binding);
 	};
 
+	// Push constants: SPIRV-Cross binds the block through the dedicated
+	// push-constant (desc_set, binding) pair rather than decorations. The
+	// reflection stage reports it as the constant buffer "DxPushConstants".
+	for (const spirv_cross::Resource& resource : resources.push_constant_buffers) {
+		(void)resource;
+		const HlslResourceSlotAssignment* assignment = FindAssignment(assignments, "DxPushConstants", SpirvResourceKind::ConstantBuffer);
+		if (assignment == nullptr) {
+			continue;
+		}
+		spirv_cross::HLSLResourceBinding binding;
+		binding.stage = stage;
+		binding.desc_set = spirv_cross::ResourceBindingPushConstantDescriptorSet;
+		binding.binding = spirv_cross::ResourceBindingPushConstantBinding;
+		binding.cbv.register_binding = assignment->slot;
+		compiler.add_hlsl_resource_binding(binding);
+	}
+
 	for (const spirv_cross::Resource& resource : resources.uniform_buffers) {
 		forceRegister(resource, SpirvResourceKind::ConstantBuffer, [](spirv_cross::HLSLResourceBinding& binding, uint32_t slot) {
 			binding.cbv.register_binding = slot;
@@ -208,6 +225,8 @@ std::string EmitHlsl(
 	// Must agree with ToD3DCompileTarget's vs_5_0/vs_4_1 choice below --
 	// see that function's comment for why this can't be hardcoded to 50.
 	options.shader_model = (g_activeFeatureLevel >= D3D_FEATURE_LEVEL_11_0) ? 50 : 41;
+	// gl_PointSize has no HLSL equivalent; ignore it instead of failing the shader (debug points draw 1px).
+	options.point_size_compat = true;
 	compiler.set_hlsl_options(options);
 
 	// Vulkan-orientation emulation. Blaze3D renders for Vulkan's convention:

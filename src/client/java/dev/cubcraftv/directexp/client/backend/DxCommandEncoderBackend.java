@@ -1,32 +1,38 @@
 package dev.cubcraftv.directexp.client.backend;
 
-import com.mojang.blaze3d.buffers.GpuBuffer;
-import com.mojang.blaze3d.buffers.GpuBufferSlice;
-import com.mojang.blaze3d.buffers.GpuFence;
-import com.mojang.blaze3d.systems.CommandEncoderBackend;
-import com.mojang.blaze3d.systems.GpuQueryPool;
-import com.mojang.blaze3d.systems.RenderPassBackend;
-import com.mojang.blaze3d.systems.RenderPassDescriptor;
-import com.mojang.blaze3d.systems.TransientMemory;
-import com.mojang.blaze3d.textures.GpuTexture;
+import com.mojang.renderpearl.api.buffers.GpuBuffer;
+import com.mojang.renderpearl.api.buffers.GpuBufferSlice;
+import com.mojang.renderpearl.api.commands.GpuFence;
+import com.mojang.renderpearl.backend.api.CommandEncoderBackend;
+import com.mojang.renderpearl.api.commands.GpuQueryPool;
+import com.mojang.renderpearl.backend.api.RenderPassBackend;
+import com.mojang.renderpearl.api.commands.RenderPassDescriptor;
+import com.mojang.renderpearl.api.buffers.TransientMemory;
+import com.mojang.renderpearl.api.textures.GpuTexture;
+import dev.cubcraftv.directexp.bridge.DxBridge;
 import org.joml.Vector4fc;
 
 import java.nio.ByteBuffer;
+import java.util.function.Supplier;
 
 final class DxCommandEncoderBackend implements CommandEncoderBackend {
-	private final DxSurfaceLease surfaceLease;
+	private final Supplier<DxSurfaceLease> surfaceLeaseSupplier;
 	private final DxDrawContext drawContext;
 	private final DxTransientMemory transientMemory;
 
-	DxCommandEncoderBackend(DxSurfaceLease surfaceLease, DxDrawContext drawContext) {
-		this.surfaceLease = surfaceLease;
+	DxCommandEncoderBackend(
+		DxBridge dxBridge,
+		Supplier<DxSurfaceLease> surfaceLeaseSupplier,
+		DxDrawContext drawContext
+	) {
+		this.surfaceLeaseSupplier = surfaceLeaseSupplier;
 		this.drawContext = drawContext;
-		this.transientMemory = new DxTransientMemory(surfaceLease.dxBridge());
+		this.transientMemory = new DxTransientMemory(dxBridge);
 	}
 
 	@Override
 	public void submit() {
-		this.surfaceLease.submitPendingCommands();
+		this.surfaceLease().submitPendingCommands();
 		this.transientMemory.reset();
 	}
 
@@ -56,8 +62,8 @@ final class DxCommandEncoderBackend implements CommandEncoderBackend {
 	}
 
 	@Override
-	public void clearColorAndDepthTextures(GpuTexture gpuTexture, Vector4fc clearColor, GpuTexture depthTexture, double depth, int x, int y, int width, int height) {
-		((DxTexture) gpuTexture).fillRegion(0, x, y, width, height, DxClearColor.packArgb(clearColor));
+	public void clearColorAndDepthTextures(GpuTexture gpuTexture, Vector4fc clearColor, GpuTexture depthTexture, double depth, int x, int y, int width, int height, int mipLevel) {
+		((DxTexture) gpuTexture).fillRegion(mipLevel, x, y, width, height, DxClearColor.packArgb(clearColor));
 		if (x == 0 && y == 0 && width >= depthTexture.getWidth(0) && height >= depthTexture.getHeight(0)) {
 			clearDepthTexture(depthTexture, depth);
 		} else if (depthTexture instanceof DxTexture dxDepth && dxDepth.hasNativeDepthTarget()) {
@@ -144,6 +150,10 @@ final class DxCommandEncoderBackend implements CommandEncoderBackend {
 	}
 
 	long commandContextHandle() {
-		return this.surfaceLease.acquirePendingCommandContext();
+		return this.surfaceLease().acquirePendingCommandContext();
+	}
+
+	private DxSurfaceLease surfaceLease() {
+		return this.surfaceLeaseSupplier.get();
 	}
 }

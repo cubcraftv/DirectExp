@@ -1,8 +1,8 @@
 package dev.cubcraftv.directexp.client.backend;
 
-import com.mojang.blaze3d.textures.AddressMode;
-import com.mojang.blaze3d.textures.FilterMode;
-import com.mojang.blaze3d.textures.GpuSampler;
+import com.mojang.renderpearl.api.textures.AddressMode;
+import com.mojang.renderpearl.api.textures.FilterMode;
+import com.mojang.renderpearl.api.textures.GpuSampler;
 import dev.cubcraftv.directexp.bridge.DxBridge;
 
 import java.util.OptionalDouble;
@@ -25,7 +25,7 @@ import java.util.OptionalDouble;
  * only requests that when both min and mag are LINEAR (otherwise a NEAREST
  * sampler would silently become smooth). See the source-of-truth doc.
  */
-final class DxSampler extends GpuSampler {
+final class DxSampler implements GpuSampler {
 	private static final double DEFAULT_MAX_LOD = 1000.0;
 	private static final double MIN_MAX_LOD = 0.25;
 
@@ -131,6 +131,11 @@ final class DxSampler extends GpuSampler {
 	@Override
 	public OptionalDouble getMaxLod() {
 		return this.maxLod;
+	}
+
+	@Override
+	public boolean isClosed() {
+		return this.closed;
 	}
 
 	@Override

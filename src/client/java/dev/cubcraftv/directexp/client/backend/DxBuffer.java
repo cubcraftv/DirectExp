@@ -1,7 +1,8 @@
 package dev.cubcraftv.directexp.client.backend;
 
-import com.mojang.blaze3d.buffers.GpuBuffer;
-import com.mojang.blaze3d.buffers.GpuBufferSlice;
+import com.mojang.renderpearl.api.buffers.GpuBuffer;
+import com.mojang.renderpearl.api.buffers.GpuBufferSlice;
+import com.mojang.renderpearl.backend.common.BaseGpuBuffer;
 import dev.cubcraftv.directexp.bridge.DxBridge;
 import dev.cubcraftv.directexp.bridge.DxTexelFormat;
 
@@ -41,7 +42,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * typed-buffer shader resource views ({@link #texelBufferShaderResourceView}),
  * cached per (format, range) and released with the buffer.
  */
-final class DxBuffer extends GpuBuffer {
+final class DxBuffer extends BaseGpuBuffer {
 	/** More distinct (format, range) views than this on one buffer are not expected; the cache is flushed instead of growing. */
 	private static final int MAX_CACHED_TEXEL_VIEWS = 8;
 	/** Heap sources are staged through a per-thread direct buffer up to this size; larger one-off uploads allocate. */

@@ -13,7 +13,7 @@ graphics-API setting and startup backend negotiation, and provides the
 
 | Area | Target |
 |---|---|
-| Minecraft | Versions newer than `26.2` |
+| Minecraft | Versions newer than `26.3` |
 | Platform | Windows desktop with a window that exposes a Win32 `HWND` |
 | Graphics API | Native Direct3D 11 / DXGI |
 | Device support | D3D feature level `10_1` or higher; lower feature levels are rejected |

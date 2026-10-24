@@ -1,12 +1,12 @@
 package dev.cubcraftv.directexp.client.backend;
 
-import com.mojang.blaze3d.GpuFormat;
-import com.mojang.blaze3d.systems.CommandEncoderBackend;
-import com.mojang.blaze3d.systems.GpuSurface;
-import com.mojang.blaze3d.systems.GpuSurfaceBackend;
-import com.mojang.blaze3d.systems.SurfaceException;
-import com.mojang.blaze3d.systems.GpuSurface.PresentMode;
-import com.mojang.blaze3d.textures.GpuTextureView;
+import com.mojang.renderpearl.api.GpuFormat;
+import com.mojang.renderpearl.backend.api.CommandEncoderBackend;
+import com.mojang.renderpearl.api.device.GpuSurface;
+import com.mojang.renderpearl.backend.api.GpuSurfaceBackend;
+import com.mojang.renderpearl.api.device.SurfaceException;
+import com.mojang.renderpearl.api.device.GpuSurface.PresentMode;
+import com.mojang.renderpearl.api.textures.GpuTextureView;
 
 import java.nio.ByteBuffer;
 import java.util.Objects;

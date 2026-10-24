@@ -1,8 +1,8 @@
 package dev.cubcraftv.directexp.client.backend;
 
-import com.mojang.blaze3d.GpuFormat;
-import com.mojang.blaze3d.vertex.VertexFormat;
-import com.mojang.blaze3d.vertex.VertexFormatElement;
+import com.mojang.renderpearl.api.GpuFormat;
+import com.mojang.renderpearl.api.vertex.VertexFormat;
+import com.mojang.renderpearl.api.vertex.VertexFormatElement;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;

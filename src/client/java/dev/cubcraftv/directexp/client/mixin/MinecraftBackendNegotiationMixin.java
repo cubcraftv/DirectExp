@@ -1,6 +1,6 @@
 package dev.cubcraftv.directexp.client.mixin;
 
-import com.mojang.blaze3d.systems.GpuBackend;
+import com.mojang.renderpearl.api.device.GpuBackend;
 import dev.cubcraftv.directexp.DirectExpMod;
 import dev.cubcraftv.directexp.bootstrap.BackendNegotiationResolver;
 import dev.cubcraftv.directexp.bootstrap.BootstrapState;
@@ -19,7 +19,7 @@ public abstract class MinecraftBackendNegotiationMixin {
 		method = "<init>",
 		at = @At(
 			value = "INVOKE",
-			target = "Lnet/minecraft/client/PreferredGraphicsApi;getBackendsToTry()[Lcom/mojang/blaze3d/systems/GpuBackend;"
+			target = "Lnet/minecraft/client/PreferredGraphicsApi;getBackendsToTry()[Lcom/mojang/renderpearl/api/device/GpuBackend;"
 		)
 	)
 	private GpuBackend[] directExp$overrideBackendTryOrder(PreferredGraphicsApi preferredGraphicsApi) {

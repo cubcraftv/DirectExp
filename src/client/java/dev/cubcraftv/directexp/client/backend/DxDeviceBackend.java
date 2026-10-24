@@ -1,37 +1,35 @@
 package dev.cubcraftv.directexp.client.backend;
 
-import com.mojang.blaze3d.GpuFormat;
-import com.mojang.blaze3d.buffers.GpuBuffer;
-import com.mojang.blaze3d.pipeline.CompiledRenderPipeline;
-import com.mojang.blaze3d.pipeline.RenderPipeline;
-import com.mojang.blaze3d.shaders.ShaderSource;
-import com.mojang.blaze3d.systems.CommandEncoderBackend;
-import com.mojang.blaze3d.systems.DeviceInfo;
-import com.mojang.blaze3d.systems.DeviceLimits;
-import com.mojang.blaze3d.systems.DeviceFeatures;
-import com.mojang.blaze3d.systems.DeviceType;
-import com.mojang.blaze3d.systems.GpuDeviceBackend;
-import com.mojang.blaze3d.systems.GpuQueryPool;
-import com.mojang.blaze3d.systems.GpuSurfaceBackend;
-import com.mojang.blaze3d.systems.HintsAndWorkarounds;
-import com.mojang.blaze3d.textures.AddressMode;
-import com.mojang.blaze3d.textures.FilterMode;
-import com.mojang.blaze3d.textures.GpuSampler;
-import com.mojang.blaze3d.textures.GpuTexture;
-import com.mojang.blaze3d.textures.GpuTextureView;
+import com.mojang.renderpearl.api.GpuFormat;
+import com.mojang.renderpearl.api.buffers.GpuBuffer;
+import com.mojang.renderpearl.backend.api.BackendRenderPipeline;
+import com.mojang.renderpearl.backend.api.CommandEncoderBackend;
+import com.mojang.renderpearl.api.device.BackendCreationException;
+import com.mojang.renderpearl.api.device.DeviceInfo;
+import com.mojang.renderpearl.api.device.DeviceLimits;
+import com.mojang.renderpearl.api.device.DeviceFeatures;
+import com.mojang.renderpearl.api.device.DeviceType;
+import com.mojang.renderpearl.backend.api.GpuDeviceBackend;
+import com.mojang.renderpearl.api.commands.GpuQueryPool;
+import com.mojang.renderpearl.backend.api.GpuSurfaceBackend;
+import com.mojang.renderpearl.api.device.HintsAndWorkarounds;
+import com.mojang.renderpearl.api.textures.AddressMode;
+import com.mojang.renderpearl.api.textures.FilterMode;
+import com.mojang.renderpearl.api.textures.GpuSampler;
+import com.mojang.renderpearl.api.textures.GpuTexture;
+import com.mojang.renderpearl.api.textures.GpuTextureView;
 import dev.cubcraftv.directexp.DirectExpMod;
 import dev.cubcraftv.directexp.bridge.DxBridge;
-import dev.cubcraftv.directexp.client.shader.DxSpirvCache;
+import dev.cubcraftv.directexp.client.shader.DxSpirvPipelineModules;
+import org.jspecify.annotations.Nullable;
 
 import java.nio.ByteBuffer;
-import java.util.Collections;
-import java.util.IdentityHashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.Objects;
 import java.util.OptionalDouble;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.BooleanSupplier;
 import java.util.function.Supplier;
 
 /**
@@ -51,7 +49,7 @@ final class DxDeviceBackend implements GpuDeviceBackend {
 	 */
 	static final int MAX_MULTI_DRAW_DIRECT_INTERLEAVED_DRAW_COUNT = 65536;
 
-	static final DeviceLimits DEFAULT_LIMITS = new DeviceLimits(16, 256, 16384, Long.MAX_VALUE, MAX_MULTI_DRAW_DIRECT_INTERLEAVED_DRAW_COUNT, 1);
+	static final DeviceLimits DEFAULT_LIMITS = new DeviceLimits(16, 256, 16384, Long.MAX_VALUE, MAX_MULTI_DRAW_DIRECT_INTERLEAVED_DRAW_COUNT, 1, 0);
 
 	/**
 	 * Only {@code multiDrawDirectInterleaved} is on: {@link DxRenderPassBackend}
@@ -66,37 +64,21 @@ final class DxDeviceBackend implements GpuDeviceBackend {
 	 * Sodium therefore stays on its {@code writeToBuffer} staging path rather
 	 * than one that casts to OpenGL classes.
 	 */
-	static final DeviceFeatures FEATURES = new DeviceFeatures(false, true, false, false, false, false, false);
+	static final DeviceFeatures FEATURES = new DeviceFeatures(true, false, true, false, false, false, false, false);
 
-	private final DxSurfaceLease surfaceLease;
+	private final DxBridge dxBridge;
+	private final Win32HostSurfaceResolver win32HostSurfaceResolver;
+	private DxSurfaceLease surfaceLease;
 	private final DeviceInfo deviceInfo;
-	private final Map<RenderPipeline, DxRenderPipeline> pipelineCache = new IdentityHashMap<>();
-	private final Map<RenderPipeline, DxRenderPipeline> deferredSourcePipelines = new IdentityHashMap<>();
-	private final Set<RenderPipeline> loggedMissingShaderSources = Collections.newSetFromMap(new IdentityHashMap<>());
-	private final DxSpirvCache spirvCache = new DxSpirvCache();
 	private final AtomicBoolean loggedFirstValidPipeline = new AtomicBoolean(false);
 	private final DxDrawDiagnostics drawDiagnostics = (key, message) -> DxNativeResourceLog.drawProblem(key, message);
 	private final DxDrawScratch drawScratch;
-	private final ShaderSource defaultShaderSource;
 	private boolean closed;
 
-	DxDeviceBackend(DxBridge dxBridge, DxSurfaceDescriptor surfaceDescriptor) {
-		this(new DxSurfaceLease(dxBridge, surfaceDescriptor), (ShaderSource) null);
-	}
-
-	DxDeviceBackend(DxSurfaceLease surfaceLease) {
-		this(surfaceLease, (ShaderSource) null);
-	}
-
-	/**
-	 * @param defaultShaderSource what Blaze3D handed {@code GpuBackend.createDevice}; used to compile a pipeline
-	 *                            on first use when it never went through {@link #precompilePipeline}
-	 *                            (the Vulkan backend's {@code getOrCompilePipeline} does the same). May be null in tests.
-	 */
-	DxDeviceBackend(DxSurfaceLease surfaceLease, ShaderSource defaultShaderSource) {
-		this.surfaceLease = Objects.requireNonNull(surfaceLease, "surfaceLease");
-		this.defaultShaderSource = defaultShaderSource;
-		this.drawScratch = new DxDrawScratch(surfaceLease.dxBridge(), this.drawDiagnostics);
+	DxDeviceBackend(DxBridge dxBridge, Win32HostSurfaceResolver win32HostSurfaceResolver) {
+		this.dxBridge = Objects.requireNonNull(dxBridge, "dxBridge");
+		this.win32HostSurfaceResolver = Objects.requireNonNull(win32HostSurfaceResolver, "win32HostSurfaceResolver");
+		this.drawScratch = new DxDrawScratch(dxBridge, this.drawDiagnostics);
 		this.deviceInfo = new DeviceInfo(
 			"DirectX 11 Bootstrap Device",
 			"cubcraftv",
@@ -107,23 +89,31 @@ final class DxDeviceBackend implements GpuDeviceBackend {
 			DEFAULT_LIMITS,
 			FEATURES,
 			Set.of(),
-			new HintsAndWorkarounds(false, false),
+			new HintsAndWorkarounds(false, false, false, false),
 			DeviceType.OTHER
 		);
 	}
 
-	DxSurfaceDescriptor surfaceDescriptor() {
-		return this.surfaceLease.descriptor();
-	}
-
-	DxSurfaceLease surfaceLease() {
-		return this.surfaceLease;
-	}
-
 	@Override
-	public GpuSurfaceBackend createSurface(long window) {
+	public GpuSurfaceBackend createSurface(long windowHandle, BooleanSupplier isIconified) {
 		if (this.closed) {
 			throw new IllegalStateException("DirectX device backend is closed.");
+		}
+
+		if (this.surfaceLease != null) {
+			throw new IllegalStateException("DirectX device backend already has a surface.");
+		}
+
+		try {
+			try (DxBackendBootstrapContext bootstrapContext = DxBackendBootstrapContext.bootstrap(
+				this.dxBridge,
+				this.win32HostSurfaceResolver,
+				windowHandle
+			)) {
+				this.surfaceLease = bootstrapContext.detachSurfaceLease();
+			}
+		} catch (BackendCreationException error) {
+			throw new IllegalStateException("Failed to initialize the DirectX surface: " + error.getMessage(), error);
 		}
 
 		return new DxSurfaceBackend(this.surfaceLease);
@@ -132,59 +122,40 @@ final class DxDeviceBackend implements GpuDeviceBackend {
 	@Override
 	public CommandEncoderBackend createCommandEncoder() {
 		return new DxCommandEncoderBackend(
-			this.surfaceLease,
-			new DxDrawContext(this.surfaceLease.dxBridge(), this.drawScratch, this::getOrCompilePipeline, this.drawDiagnostics)
+			this.dxBridge,
+			() -> {
+				if (this.surfaceLease == null) {
+					throw new IllegalStateException("DirectX surface has not been created yet.");
+				}
+				return this.surfaceLease;
+			},
+			new DxDrawContext(this.dxBridge, this.drawScratch, this.drawDiagnostics)
 		);
-	}
-
-	/** The pipeline for {@code renderPipeline}, compiled now with the default shader source if it was never precompiled; null only if there is no default source. */
-	private DxRenderPipeline getOrCompilePipeline(RenderPipeline renderPipeline) {
-		synchronized (this.pipelineCache) {
-			DxRenderPipeline cached = this.pipelineCache.get(renderPipeline);
-			if (cached != null) {
-				return cached;
-			}
-			DxRenderPipeline deferred = this.deferredSourcePipelines.get(renderPipeline);
-			if (deferred != null || this.defaultShaderSource == null) {
-				return deferred;
-			}
-			return compileAndCache(renderPipeline, this.defaultShaderSource, true);
-		}
 	}
 
 	@Override
 	public GpuSampler createSampler(AddressMode addressModeU, AddressMode addressModeV, FilterMode minFilter, FilterMode magFilter, int maxAnisotropy, OptionalDouble maxLod) {
-		return new DxSampler(this.surfaceLease.dxBridge(), addressModeU, addressModeV, minFilter, magFilter, maxAnisotropy, maxLod);
+		return new DxSampler(this.dxBridge, addressModeU, addressModeV, minFilter, magFilter, maxAnisotropy, maxLod);
 	}
 
 	@Override
-	public GpuTexture createTexture(Supplier<String> label, int usage, GpuFormat format, int width, int height, int depthOrLayers, int mipLevels) {
-		return new DxTexture(this.surfaceLease.dxBridge(), usage, label.get(), format, width, height, depthOrLayers, mipLevels);
-	}
-
-	@Override
-	public GpuTexture createTexture(String label, int usage, GpuFormat format, int width, int height, int depthOrLayers, int mipLevels) {
-		return new DxTexture(this.surfaceLease.dxBridge(), usage, label, format, width, height, depthOrLayers, mipLevels);
-	}
-
-	@Override
-	public GpuTextureView createTextureView(GpuTexture gpuTexture) {
-		return new DxTextureView(this.surfaceLease.dxBridge(), gpuTexture, 0, gpuTexture.getMipLevels());
+	public GpuTexture createTexture(@Nullable String label, int usage, GpuFormat format, int width, int height, int depthOrLayers, int mipLevels) {
+		return new DxTexture(this.dxBridge, usage, label == null ? "" : label, format, width, height, depthOrLayers, mipLevels);
 	}
 
 	@Override
 	public GpuTextureView createTextureView(GpuTexture gpuTexture, int baseMipLevel, int mipLevels) {
-		return new DxTextureView(this.surfaceLease.dxBridge(), gpuTexture, baseMipLevel, mipLevels);
+		return new DxTextureView(this.dxBridge, gpuTexture, baseMipLevel, mipLevels);
 	}
 
 	@Override
-	public GpuBuffer createBuffer(Supplier<String> label, int usage, long size) {
-		return new DxBuffer(this.surfaceLease.dxBridge(), usage, size);
+	public GpuBuffer createBuffer(@Nullable Supplier<String> label, int usage, long size) {
+		return new DxBuffer(this.dxBridge, usage, size);
 	}
 
 	@Override
-	public GpuBuffer createBuffer(Supplier<String> label, int usage, ByteBuffer data) {
-		DxBuffer buffer = new DxBuffer(this.surfaceLease.dxBridge(), usage, data.remaining());
+	public GpuBuffer createBuffer(@Nullable Supplier<String> label, int usage, ByteBuffer data) {
+		DxBuffer buffer = new DxBuffer(this.dxBridge, usage, data.remaining());
 		buffer.write(0L, data.duplicate());
 		return buffer;
 	}
@@ -199,67 +170,40 @@ final class DxDeviceBackend implements GpuDeviceBackend {
 		return false;
 	}
 
+	/**
+	 * Called on the frontend's compile executor. Only the SPIR-V is copied out
+	 * here; the native work (reflection, HLSL, D3D11 objects) runs in
+	 * {@code finishCompile}, which the frontend calls on the render thread, so
+	 * the native toolchain and device are never touched from two threads.
+	 */
 	@Override
-	public CompiledRenderPipeline precompilePipeline(RenderPipeline renderPipeline, ShaderSource customShaderSource) {
-		ShaderSource shaderSource = customShaderSource == null ? this.defaultShaderSource : customShaderSource;
-		// Keyed on the RenderPipeline instance itself, like the Vulkan backend:
-		// an instance already encodes the full render state. Invalid results are
-		// cached too, so a broken pipeline is reported once rather than every frame.
-		synchronized (this.pipelineCache) {
-			DxRenderPipeline cached = this.pipelineCache.get(renderPipeline);
-			if (cached != null) {
-				return cached;
-			}
-			DxRenderPipeline deferred = this.deferredSourcePipelines.get(renderPipeline);
-			if (deferred != null) {
-				return deferred;
-			}
-
-			return compileAndCache(renderPipeline, shaderSource, false);
+	public BackendRenderPipeline.Pending compilePipeline(BackendRenderPipeline.CreateInfo pipelineCreateInfo) {
+		DxSpirvPipelineModules spirv;
+		try {
+			spirv = DxPipelineCompiler.copySpirv(pipelineCreateInfo);
+		} catch (RuntimeException error) {
+			DirectExpMod.LOGGER.warn("DirectExp: pipeline {} is invalid: {}", pipelineCreateInfo.name(), error.getMessage());
+			return BackendRenderPipeline.Pending.NULL;
 		}
-	}
-
-	/** Caller holds the {@code pipelineCache} lock. */
-	private DxRenderPipeline compileAndCache(RenderPipeline renderPipeline, ShaderSource shaderSource, boolean deferMissingSource) {
-		DxRenderPipeline compiled = DxPipelineCompiler.compile(renderPipeline, shaderSource, this.surfaceLease.dxBridge(), this.spirvCache);
-		if (compiled.isValid()) {
-			this.pipelineCache.put(renderPipeline, compiled);
-			this.deferredSourcePipelines.remove(renderPipeline);
-			this.loggedMissingShaderSources.remove(renderPipeline);
-			if (this.loggedFirstValidPipeline.compareAndSet(false, true)) {
-				DirectExpMod.LOGGER.info("DirectExp: first native render pipeline assembled ({}).", renderPipeline.getLocation());
+		return () -> {
+			if (this.closed) {
+				return null;
 			}
-		} else if (deferMissingSource && compiled.failureReason().startsWith("shader source: ")) {
-			this.deferredSourcePipelines.put(renderPipeline, compiled);
-			if (this.loggedMissingShaderSources.add(renderPipeline)) {
-				DirectExpMod.LOGGER.warn(
-					"DirectExp: shader source is not available yet for pipeline {}; it will retry after resource reload.",
-					renderPipeline.getLocation()
-				);
+			DxRenderPipeline compiled = DxPipelineCompiler.compile(pipelineCreateInfo, spirv, this.dxBridge);
+			if (compiled != null && this.loggedFirstValidPipeline.compareAndSet(false, true)) {
+				DirectExpMod.LOGGER.info("DirectExp: first native render pipeline assembled ({}).", pipelineCreateInfo.name());
 			}
-		} else {
-			this.pipelineCache.put(renderPipeline, compiled);
-			DirectExpMod.LOGGER.warn("DirectExp: pipeline {} is invalid: {}", renderPipeline.getLocation(), compiled.failureReason());
-		}
-		return compiled;
-	}
-
-	@Override
-	public void clearPipelineCache() {
-		synchronized (this.pipelineCache) {
-			this.pipelineCache.values().forEach(DxRenderPipeline::close);
-			this.pipelineCache.clear();
-			this.deferredSourcePipelines.clear();
-		}
-		this.spirvCache.clear();
+			return compiled;
+		};
 	}
 
 	@Override
 	public void close() {
-		clearPipelineCache();
 		this.drawScratch.close();
-		this.surfaceLease.close();
 		this.closed = true;
+		if (this.surfaceLease != null) {
+			this.surfaceLease.close();
+		}
 	}
 
 	@Override
@@ -268,7 +212,7 @@ final class DxDeviceBackend implements GpuDeviceBackend {
 	}
 
 	@Override
-	public long getTimestampNow() {
+	public long getTimestampCalibrationOffset() {
 		return 0L;
 	}
 

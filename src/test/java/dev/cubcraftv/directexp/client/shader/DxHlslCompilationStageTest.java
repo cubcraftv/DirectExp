@@ -1,6 +1,6 @@
 package dev.cubcraftv.directexp.client.shader;
 
-import com.mojang.blaze3d.shaders.ShaderType;
+import com.mojang.renderpearl.api.pipeline.ShaderType;
 import dev.cubcraftv.directexp.bridge.DxBridge;
 import dev.cubcraftv.directexp.bridge.DxBridgeProbe;
 import dev.cubcraftv.directexp.bridge.DxHlslCompilationResult;

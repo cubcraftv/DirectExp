@@ -1,10 +1,8 @@
 package dev.cubcraftv.directexp.client.backend;
 
-import com.mojang.blaze3d.pipeline.RenderPipeline;
 import dev.cubcraftv.directexp.bridge.DxBridge;
 
 import java.util.Objects;
-import java.util.function.Function;
 
 /**
  * What a command encoder hands every render pass it creates: the bridge, the
@@ -15,13 +13,11 @@ import java.util.function.Function;
 record DxDrawContext(
 	DxBridge dxBridge,
 	DxDrawScratch scratch,
-	Function<RenderPipeline, DxRenderPipeline> pipelineLookup,
 	DxDrawDiagnostics diagnostics
 ) {
 	DxDrawContext {
 		Objects.requireNonNull(dxBridge, "dxBridge");
 		Objects.requireNonNull(scratch, "scratch");
-		Objects.requireNonNull(pipelineLookup, "pipelineLookup");
 		Objects.requireNonNull(diagnostics, "diagnostics");
 	}
 }

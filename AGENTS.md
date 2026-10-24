@@ -8,7 +8,7 @@ It applies to the repository root and all git worktrees created from it.
 
 `DirectExp` is not a lightweight tweak mod. It is an experimental Fabric-delivered
 backend program whose goal is to add a real native DirectX 11 backend to
-Minecraft versions newer than 26.2 on Windows desktop, with a window that
+Minecraft versions newer than 26.3 on Windows desktop, with a window that
 provides a Win32 `HWND` and D3D11 devices at feature level 10.1 or higher.
 The current Gradle dependency versions are build inputs, not the support target.
 

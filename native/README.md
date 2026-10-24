@@ -6,7 +6,7 @@ Win32, DXGI, and D3D11 backend. It resolves the GLFW host window to an
 resources and pipelines, and exposes shader/draw operations to the Java
 backend.
 
-The project compatibility target is Minecraft versions newer than 26.2 on
+The project compatibility target is Minecraft versions newer than 26.3 on
 Windows desktop with a window-backed surface and D3D feature level 10.1 or
 higher. Minecraft/Fabric/Loom coordinates in Gradle are pinned development
 dependencies, not a fixed product target.

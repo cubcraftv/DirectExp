@@ -5,7 +5,6 @@ import dev.cubcraftv.directexp.bridge.DxBridge;
 import dev.cubcraftv.directexp.bridge.DxResourceKind;
 import dev.cubcraftv.directexp.client.shader.DxResourceLayout;
 import dev.cubcraftv.directexp.client.shader.DxResourceLayoutEntry;
-import dev.cubcraftv.directexp.client.shader.DxShaderInterfaceLayout;
 
 import java.nio.ByteBuffer;
 import java.util.Objects;
@@ -73,13 +72,13 @@ final class DxResourceBinder {
 
 			ByteBuffer bytes = source.uniformBytes(entry.name());
 			if (bytes == null) {
-				String hint = entry.name().equals(DxShaderInterfaceLayout.PUSH_CONSTANT_BLOCK_NAME) ? " (its push constants; see DxPushConstants.setPushConstants)" : "";
+				String hint = entry.name().equals(DxResourceLayout.PUSH_CONSTANT_BLOCK_NAME) ? " (its push constants; see DxPushConstants.setPushConstants)" : "";
 				this.diagnostics.reportOnce("uniform-unset:" + entry.name(), "pipeline " + layout.pipelineDebugLabel() + " uses uniform '" + entry.name() + "'" + hint + " but the render pass never set it");
 				complete = false;
 				continue;
 			}
 
-			if (entry.name().equals(DxShaderInterfaceLayout.PUSH_CONSTANT_BLOCK_NAME) && DxPushConstantTrace.shouldTrace()) {
+			if (entry.name().equals(DxResourceLayout.PUSH_CONSTANT_BLOCK_NAME) && DxPushConstantTrace.shouldTrace()) {
 				DirectExpMod.LOGGER.info("DirectExp: {}", DxPushConstantTrace.describe(layout.pipelineDebugLabel(), entry.slot(), entry.sizeBytes(), bytes));
 			}
 			long handle = this.scratch.stageConstants(entry.slot(), bytes);

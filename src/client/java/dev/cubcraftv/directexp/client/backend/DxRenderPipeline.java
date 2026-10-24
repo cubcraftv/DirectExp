@@ -1,56 +1,75 @@
 package dev.cubcraftv.directexp.client.backend;
 
-import com.mojang.blaze3d.pipeline.CompiledRenderPipeline;
-import com.mojang.blaze3d.pipeline.RenderPipeline;
+import com.mojang.renderpearl.api.pipeline.BindGroupLayout;
+import com.mojang.renderpearl.api.pipeline.PrimitiveTopology;
+import com.mojang.renderpearl.api.pipeline.UniformType;
+import com.mojang.renderpearl.backend.api.BackendRenderPipeline;
 import dev.cubcraftv.directexp.bridge.DxBridge;
+import dev.cubcraftv.directexp.bridge.DxTexelFormat;
 import dev.cubcraftv.directexp.client.shader.DxResourceLayout;
 
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 
 /**
- * The compiled form of one {@link RenderPipeline}: the native D3D11 pipeline
+ * The backend form of one Renderpearl pipeline: the native D3D11 pipeline
  * objects plus the resource layout the draw path needs to bind uniforms,
  * textures and samplers into the registers the HLSL was compiled against.
- * An invalid instance (any stage failed) carries the reason and no native
- * handle -- permanent failures are cached so a broken pipeline is reported
- * once, not recompiled every frame. A missing shader source can be temporary
- * during resource reload and is retried by the device backend.
+ *
+ * <p>26.3 hands the backend a {@code CreateInfo} (already compiled to SPIR-V,
+ * with uniform bindings assigned) and expects {@code null} from
+ * {@code finishCompile} when it cannot be built, so unlike earlier versions
+ * there is no "invalid pipeline" object: failures are logged by
+ * {@link DxPipelineCompiler} and never reach the draw path.
  */
-final class DxRenderPipeline implements CompiledRenderPipeline {
-	private final RenderPipeline pipeline;
+final class DxRenderPipeline implements BackendRenderPipeline {
+	private final String name;
 	private final DxBridge dxBridge;
 	private final long nativePipelineHandle;
 	private final DxResourceLayout layout;
-	private final boolean hasGeometryStage;
-	private final String failureReason;
+	private final PrimitiveTopology topology;
+	private final List<BindGroupLayout.UniformDescription> uniforms;
+	private final Map<String, DxTexelFormat> texelBufferFormats;
 	private boolean closed;
 
-	private DxRenderPipeline(RenderPipeline pipeline, DxBridge dxBridge, long nativePipelineHandle, DxResourceLayout layout, boolean hasGeometryStage, String failureReason) {
-		this.pipeline = Objects.requireNonNull(pipeline, "pipeline");
-		this.dxBridge = dxBridge;
-		this.nativePipelineHandle = nativePipelineHandle;
-		this.layout = layout;
-		this.hasGeometryStage = hasGeometryStage;
-		this.failureReason = failureReason;
-	}
-
-	static DxRenderPipeline valid(RenderPipeline pipeline, DxBridge dxBridge, long nativePipelineHandle, DxResourceLayout layout) {
-		return valid(pipeline, dxBridge, nativePipelineHandle, layout, false);
-	}
-
-	static DxRenderPipeline valid(RenderPipeline pipeline, DxBridge dxBridge, long nativePipelineHandle, DxResourceLayout layout, boolean hasGeometryStage) {
+	DxRenderPipeline(
+		String name,
+		DxBridge dxBridge,
+		long nativePipelineHandle,
+		DxResourceLayout layout,
+		PrimitiveTopology topology,
+		List<BindGroupLayout.UniformDescription> uniforms
+	) {
 		if (nativePipelineHandle == 0L) {
-			throw new IllegalArgumentException("A valid pipeline needs a non-zero native handle.");
+			throw new IllegalArgumentException("A pipeline needs a non-zero native handle.");
 		}
-		return new DxRenderPipeline(pipeline, dxBridge, nativePipelineHandle, Objects.requireNonNull(layout, "layout"), hasGeometryStage, null);
+		this.name = Objects.requireNonNull(name, "name");
+		this.dxBridge = Objects.requireNonNull(dxBridge, "dxBridge");
+		this.nativePipelineHandle = nativePipelineHandle;
+		this.layout = Objects.requireNonNull(layout, "layout");
+		this.topology = Objects.requireNonNull(topology, "topology");
+		this.uniforms = List.copyOf(uniforms);
+		this.texelBufferFormats = texelBufferFormatsOf(this.uniforms);
 	}
 
-	static DxRenderPipeline invalid(RenderPipeline pipeline, String reason) {
-		return new DxRenderPipeline(pipeline, null, 0L, null, false, Objects.requireNonNull(reason, "reason"));
+	private static Map<String, DxTexelFormat> texelBufferFormatsOf(List<BindGroupLayout.UniformDescription> uniforms) {
+		Map<String, DxTexelFormat> formats = new HashMap<>();
+		for (BindGroupLayout.UniformDescription uniform : uniforms) {
+			if (uniform.type() != UniformType.TEXEL_BUFFER || uniform.gpuFormat() == null) {
+				continue;
+			}
+			DxTexelFormat format = DxTexelFormat.fromGpuFormatName(uniform.gpuFormat().name());
+			if (format != null) {
+				formats.put(uniform.name(), format);
+			}
+		}
+		return Map.copyOf(formats);
 	}
 
-	RenderPipeline pipeline() {
-		return this.pipeline;
+	String name() {
+		return this.name;
 	}
 
 	long nativePipelineHandle() {
@@ -61,32 +80,31 @@ final class DxRenderPipeline implements CompiledRenderPipeline {
 		return this.layout;
 	}
 
-	/**
-	 * True for point-sprite pipelines: the draw path must bind the geometry
-	 * shader and its viewport constants (DxBridge.GEOMETRY_VIEWPORT_CBUFFER_SLOT),
-	 * updating them with DxBridge.setPipelineViewport when the viewport changes.
-	 */
-	boolean hasGeometryStage() {
-		return this.hasGeometryStage;
+	PrimitiveTopology topology() {
+		return this.topology;
 	}
 
-	String failureReason() {
-		return this.failureReason;
+	/** Uniform names in binding order: the index {@code RenderPassBackend.setUniform} is called with. */
+	String uniformName(int index) {
+		return index >= 0 && index < this.uniforms.size() ? this.uniforms.get(index).name() : null;
+	}
+
+	Map<String, DxTexelFormat> texelBufferFormats() {
+		return this.texelBufferFormats;
 	}
 
 	@Override
-	public boolean isValid() {
-		return this.nativePipelineHandle != 0L && !this.closed;
+	public boolean isClosed() {
+		return this.closed;
 	}
 
-	void close() {
+	@Override
+	public void close() {
 		if (this.closed) {
 			return;
 		}
 
 		this.closed = true;
-		if (this.nativePipelineHandle != 0L && this.dxBridge != null) {
-			this.dxBridge.releasePipeline(this.nativePipelineHandle);
-		}
+		this.dxBridge.releasePipeline(this.nativePipelineHandle);
 	}
 }

@@ -413,7 +413,7 @@ public interface DxBridge {
 
 	/**
 	 * Milestone 4.3 (IR Stage): compiles preprocessed GLSL source (as
-	 * produced by Milestone 4.2's {@code DxShaderSourceStage}) to SPIR-V
+	 * produced by Milestone 4.2's DxShaderSourceStage) to SPIR-V
 	 * via {@code shaderc}, real and JNI-exposed rather than the 4.1 smoke
 	 * test's hardcoded string.
 	 *

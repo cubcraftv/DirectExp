@@ -1,7 +1,7 @@
 package dev.cubcraftv.directexp.client.backend;
 
 import dev.cubcraftv.directexp.bridge.DxBridge;
-import com.mojang.blaze3d.buffers.GpuBufferSlice;
+import com.mojang.renderpearl.api.buffers.GpuBufferSlice;
 import org.junit.jupiter.api.Test;
 
 import java.nio.ByteBuffer;

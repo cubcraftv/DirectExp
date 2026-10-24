@@ -1,7 +1,7 @@
 package dev.cubcraftv.directexp.client.backend;
 
-import com.mojang.blaze3d.textures.GpuTexture;
-import com.mojang.blaze3d.textures.GpuTextureView;
+import com.mojang.renderpearl.api.textures.GpuTexture;
+import com.mojang.renderpearl.backend.common.BaseGpuTextureView;
 import dev.cubcraftv.directexp.bridge.DxBridge;
 
 /**
@@ -17,7 +17,7 @@ import dev.cubcraftv.directexp.bridge.DxBridge;
  * <p>The native SRV holds its own reference on the underlying D3D11 texture,
  * so closing/releasing the texture before the view is not a use-after-free.
  */
-final class DxTextureView extends GpuTextureView {
+final class DxTextureView extends BaseGpuTextureView {
 	private final DxBridge dxBridge;
 	private final DxTexture texture; // null when the texture isn't a DxTexture
 	private final long nativeViewHandle;

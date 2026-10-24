@@ -1,6 +1,6 @@
 package dev.cubcraftv.directexp.client.shader;
 
-import com.mojang.blaze3d.shaders.ShaderType;
+import com.mojang.renderpearl.api.pipeline.ShaderType;
 import dev.cubcraftv.directexp.bridge.DxReflectedResource;
 import net.minecraft.resources.Identifier;
 
@@ -13,7 +13,7 @@ import java.util.Objects;
  * {@link DxSpirvModule}'s own shape ({@code id}/{@code type} carried
  * alongside the payload) so {@link DxResourceLayoutBuilder} can report
  * which stage(s) a given engine resource is used in, the same tagging
- * convention {@link DxPreprocessedShaderSource} and {@link DxSpirvModule}
+ * convention {@code DxPreprocessedShaderSource} and {@link DxSpirvModule}
  * already use for their own stages.
  */
 public record DxReflectedShaderResources(

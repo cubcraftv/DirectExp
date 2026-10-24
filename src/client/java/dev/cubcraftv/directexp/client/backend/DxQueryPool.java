@@ -1,6 +1,6 @@
 package dev.cubcraftv.directexp.client.backend;
 
-import com.mojang.blaze3d.systems.GpuQueryPool;
+import com.mojang.renderpearl.api.commands.GpuQueryPool;
 
 import java.util.OptionalLong;
 

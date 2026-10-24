@@ -1,22 +1,20 @@
 package dev.cubcraftv.directexp.client.backend;
 
-import com.mojang.blaze3d.GpuFormat;
-import com.mojang.blaze3d.PrimitiveTopology;
-import com.mojang.blaze3d.pipeline.BlendFunction;
-import com.mojang.blaze3d.pipeline.ColorTargetState;
-import com.mojang.blaze3d.pipeline.RenderPipeline;
-import com.mojang.blaze3d.platform.BlendFactor;
-import com.mojang.blaze3d.platform.BlendOp;
-import com.mojang.blaze3d.platform.CompareOp;
-import com.mojang.blaze3d.platform.PolygonMode;
-import com.mojang.blaze3d.vertex.VertexFormat;
-import com.mojang.blaze3d.vertex.VertexFormatElement;
+import com.mojang.renderpearl.api.GpuFormat;
+import com.mojang.renderpearl.api.pipeline.PrimitiveTopology;
+import com.mojang.renderpearl.api.pipeline.BlendFunction;
+import com.mojang.renderpearl.api.pipeline.ColorTargetState;
+import com.mojang.renderpearl.api.pipeline.DepthStencilState;
+import com.mojang.renderpearl.backend.api.BackendRenderPipeline;
+import com.mojang.renderpearl.api.pipeline.BlendFactor;
+import com.mojang.renderpearl.api.pipeline.BlendOp;
+import com.mojang.renderpearl.api.pipeline.CompareOp;
+import com.mojang.renderpearl.api.pipeline.PolygonMode;
 import dev.cubcraftv.directexp.bridge.DxPipelineStateDescriptor;
 
-import java.util.List;
 
 /**
- * Blaze3D {@code RenderPipeline} state -> {@link DxPipelineStateDescriptor}
+ * Renderpearl backend {@code BackendRenderPipeline.CreateInfo} state -> {@link DxPipelineStateDescriptor}
  * (D3D11/DXGI ABI numbers, pinned to the real headers by static_asserts in
  * {@code directexp_bridge_pipeline.cpp}). The rules mirror the decompiled
  * Vulkan backend's {@code VulkanRenderPipeline}/{@code VulkanConst}:
@@ -86,6 +84,8 @@ final class DxPipelineStateMapping {
 	static final int TOPOLOGY_TRIANGLELIST = 4;
 	static final int TOPOLOGY_TRIANGLESTRIP = 5;
 
+	static final int DXGI_FORMAT_R32_FLOAT = 0x29;
+
 	static final int WRITE_RED = 1;
 	static final int WRITE_GREEN = 2;
 	static final int WRITE_BLUE = 4;
@@ -95,30 +95,46 @@ final class DxPipelineStateMapping {
 	}
 
 	/**
-	 * Builds the descriptor for a pipeline. Throws {@link UnsupportedOperationException}
+	 * Builds the descriptor for a pipeline from the backend create info the
+	 * 26.3 frontend hands over. Throws {@link UnsupportedOperationException}
 	 * (with a message naming the offending feature) for state D3D11 cannot
 	 * express yet -- the caller marks that one pipeline invalid rather than failing.
+	 *
+	 * <p>Vertex input element index == shader location (the native input layout
+	 * names each element {@code TEXCOORD<index>}, as SPIRV-Cross does). The
+	 * frontend only reports attributes the vertex shader actually reads, at the
+	 * locations the shader declares, so locations the shader skips are filled
+	 * with an unused 32-bit float element, which D3D11 accepts in an input layout
+	 * that is a superset of the shader's inputs.
 	 */
-	static DxPipelineStateDescriptor describe(RenderPipeline pipeline) {
-		VertexFormat vertexFormat = pipeline.getVertexFormatBinding(0);
-		VertexFormat[] bindings = pipeline.getVertexFormatBindings();
-		if (bindings != null) {
-			for (int binding = 1; binding < bindings.length; binding++) {
-				if (bindings[binding] != null) {
-					throw new UnsupportedOperationException("multiple vertex-buffer bindings are not supported yet");
-				}
+	static DxPipelineStateDescriptor describe(BackendRenderPipeline.CreateInfo info) {
+		int vertexStride = 0;
+		for (BackendRenderPipeline.CreateInfo.VertexBuffer vertexBuffer : info.vertexBuffers()) {
+			if (vertexBuffer.bufferSlot() != 0) {
+				throw new UnsupportedOperationException("multiple vertex-buffer bindings are not supported yet");
 			}
-		}
-		List<VertexFormatElement> elements = vertexFormat == null ? List.of() : vertexFormat.getElements();
-		int[] formats = new int[elements.size()];
-		int[] offsets = new int[elements.size()];
-		for (int i = 0; i < elements.size(); i++) {
-			VertexFormatElement element = elements.get(i);
-			formats[i] = vertexAttributeFormat(element.format());
-			offsets[i] = element.offset();
+			if (vertexBuffer.stepRate() != 0) {
+				throw new UnsupportedOperationException("instanced vertex buffers are not supported yet");
+			}
+			vertexStride = vertexBuffer.stride();
 		}
 
-		var depthStencil = pipeline.getDepthStencilState();
+		int elementCount = 0;
+		for (BackendRenderPipeline.CreateInfo.AttribBinding attrib : info.attribBindings()) {
+			elementCount = Math.max(elementCount, attrib.location() + 1);
+		}
+		int[] formats = new int[elementCount];
+		int[] offsets = new int[elementCount];
+		java.util.Arrays.fill(formats, DXGI_FORMAT_R32_FLOAT);
+		for (BackendRenderPipeline.CreateInfo.AttribBinding attrib : info.attribBindings()) {
+			formats[attrib.location()] = vertexAttributeFormat(attrib.format());
+			offsets[attrib.location()] = attrib.offset();
+		}
+		if (elementCount > 0 && vertexStride == 0) {
+			throw new UnsupportedOperationException("vertex attributes without a vertex buffer binding");
+		}
+
+		DepthStencilState depthStencil = info.depthStencilState();
 		boolean depthTest = depthStencil != null;
 		boolean depthWrite = depthTest && depthStencil.writeDepth();
 		int depthFunc = depthTest ? compareFunc(depthStencil.depthTest()) : CMP_ALWAYS;
@@ -126,8 +142,24 @@ final class DxPipelineStateMapping {
 		float biasScale = depthTest ? depthStencil.depthBiasScaleFactor() : 0.0F;
 		boolean biasEnabled = biasConstant != 0.0F && biasScale != 0.0F;
 
-		ColorTargetState colorTarget = pipeline.getColorTargetState();
-		BlendFunction blend = colorTarget.blendFunction().orElse(null);
+		// The native pipeline has one render target; the first used color target
+		// decides blend/write mask. (Multi-target pipelines only exist for the
+		// order-independent transparency path, which this device does not offer.)
+		ColorTargetState colorTarget = null;
+		int usedTargets = 0;
+		for (ColorTargetState state : info.colorTargetStates()) {
+			if (state != null) {
+				usedTargets++;
+				if (colorTarget == null) {
+					colorTarget = state;
+				}
+			}
+		}
+		if (usedTargets > 1) {
+			throw new UnsupportedOperationException("multiple color targets are not supported yet");
+		}
+		BlendFunction blend = colorTarget == null ? null : colorTarget.blendFunction().orElse(null);
+		int writeMask = colorTarget == null ? 0 : colorWriteMask(colorTarget.writeRed(), colorTarget.writeGreen(), colorTarget.writeBlue(), colorTarget.writeAlpha());
 		int[] colorFactors = {BLEND_ONE, BLEND_ZERO};
 		int[] alphaFactors = {BLEND_ONE, BLEND_ZERO};
 		int colorOp = OP_ADD;
@@ -140,17 +172,17 @@ final class DxPipelineStateMapping {
 		}
 
 		return new DxPipelineStateDescriptor(
-			topology(pipeline.getPrimitiveTopology()),
+			topology(info.primitiveTopology()),
 			blend != null,
 			colorFactors[0], colorFactors[1], colorOp,
 			alphaFactors[0], alphaFactors[1], alphaOp,
-			colorWriteMask(colorTarget.writeRed(), colorTarget.writeGreen(), colorTarget.writeBlue(), colorTarget.writeAlpha()),
+			writeMask,
 			depthTest, depthWrite, depthFunc,
-			pipeline.isCull() ? CULL_BACK : CULL_NONE,
-			fillMode(pipeline.getPolygonMode()),
+			info.cull() ? CULL_BACK : CULL_NONE,
+			fillMode(info.polygonMode()),
 			biasEnabled ? Math.round(biasConstant) : 0,
 			biasEnabled ? biasScale : 0.0F,
-			formats, offsets, vertexFormat == null ? 0 : vertexFormat.getVertexSize()
+			formats, offsets, vertexStride
 		);
 	}
 

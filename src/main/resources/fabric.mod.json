@@ -3,7 +3,7 @@
 	"id": "${mod_id}",
 	"version": "${version}",
 	"name": "${mod_name}",
-	"description": "Experimental Fabric-delivered backend project for bringing a native DirectX 11 renderer (feature level 10.1 minimum) to Minecraft 26.2 on Windows.",
+	"description": "Experimental Fabric-delivered backend project for bringing a native DirectX 11 renderer (feature level 10.1 minimum) to Minecraft 26.3 on Windows.",
 	"authors": [
 		"cubcraftv"
 	],
@@ -31,7 +31,7 @@
 	],
 	"depends": {
 		"fabricloader": ">=0.19.5",
-		"minecraft": "26.2",
+		"minecraft": "26.3",
 		"java": ">=25",
 		"fabric-api": "*"
 	}

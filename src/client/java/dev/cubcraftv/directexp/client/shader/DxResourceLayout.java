@@ -24,6 +24,9 @@ public record DxResourceLayout(
 	String pipelineDebugLabel,
 	List<DxResourceLayoutEntry> entries
 ) {
+	/** Engine name of the constant buffer standing in for a Vulkan push-constant block (see native reflection). */
+	public static final String PUSH_CONSTANT_BLOCK_NAME = "DxPushConstants";
+
 	public DxResourceLayout {
 		Objects.requireNonNull(entries, "entries");
 		entries = List.copyOf(entries);

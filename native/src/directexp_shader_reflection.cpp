@@ -58,6 +58,18 @@ SpirvReflectionResult ReflectSpirv(const std::vector<uint32_t>& spirv) {
 		ClassifyAndCollect(compiler, resources.uniform_buffers, SpirvResourceKind::ConstantBuffer, true, result.resources);
 		ClassifyAndCollect(compiler, resources.storage_buffers, SpirvResourceKind::StructuredBuffer, true, result.resources);
 
+		// 26.3 hands the backend SPIR-V that still contains Vulkan push-constant
+		// blocks. D3D11 has none, so each becomes an ordinary constant buffer under
+		// the fixed engine name below (the Java side fills it from
+		// RenderPassBackend.pushConstants).
+		for (const spirv_cross::Resource& pushConstants : resources.push_constant_buffers) {
+			SpirvResource entry;
+			entry.name = "DxPushConstants";
+			entry.kind = SpirvResourceKind::ConstantBuffer;
+			entry.sizeBytes = static_cast<uint32_t>(compiler.get_declared_struct_size(compiler.get_type(pushConstants.base_type_id)));
+			result.resources.push_back(std::move(entry));
+		}
+
 		// GLSL's combined `sampler2D` (the form Mojang's shaders use, not
 		// the GL_ARB_separate_shader_objects-style separate
 		// texture/sampler declarations) reflects as a single

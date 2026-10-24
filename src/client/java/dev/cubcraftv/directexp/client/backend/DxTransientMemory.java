@@ -1,8 +1,8 @@
 package dev.cubcraftv.directexp.client.backend;
 
-import com.mojang.blaze3d.buffers.GpuBuffer;
-import com.mojang.blaze3d.buffers.GpuBufferSlice;
-import com.mojang.blaze3d.systems.TransientMemory;
+import com.mojang.renderpearl.api.buffers.GpuBuffer;
+import com.mojang.renderpearl.api.buffers.GpuBufferSlice;
+import com.mojang.renderpearl.api.buffers.TransientMemory;
 import dev.cubcraftv.directexp.bridge.DxBridge;
 import org.lwjgl.system.MemoryUtil;
 

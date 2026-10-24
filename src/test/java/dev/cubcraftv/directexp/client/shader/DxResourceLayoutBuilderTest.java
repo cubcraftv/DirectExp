@@ -1,6 +1,6 @@
 package dev.cubcraftv.directexp.client.shader;
 
-import com.mojang.blaze3d.shaders.ShaderType;
+import com.mojang.renderpearl.api.pipeline.ShaderType;
 import dev.cubcraftv.directexp.bridge.DxReflectedResource;
 import dev.cubcraftv.directexp.bridge.DxResourceKind;
 import net.minecraft.resources.Identifier;

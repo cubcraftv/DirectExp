@@ -1,6 +1,6 @@
 package dev.cubcraftv.directexp.client.backend;
 
-import com.mojang.blaze3d.GpuFormat;
+import com.mojang.renderpearl.api.GpuFormat;
 import dev.cubcraftv.directexp.bridge.DxBridge;
 import org.junit.jupiter.api.Test;
 

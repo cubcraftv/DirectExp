@@ -1,11 +1,11 @@
 package dev.cubcraftv.directexp.client.backend;
 
-import com.mojang.blaze3d.GpuFormat;
-import com.mojang.blaze3d.PrimitiveTopology;
-import com.mojang.blaze3d.platform.BlendFactor;
-import com.mojang.blaze3d.platform.BlendOp;
-import com.mojang.blaze3d.platform.CompareOp;
-import com.mojang.blaze3d.platform.PolygonMode;
+import com.mojang.renderpearl.api.GpuFormat;
+import com.mojang.renderpearl.api.pipeline.PrimitiveTopology;
+import com.mojang.renderpearl.api.pipeline.BlendFactor;
+import com.mojang.renderpearl.api.pipeline.BlendOp;
+import com.mojang.renderpearl.api.pipeline.CompareOp;
+import com.mojang.renderpearl.api.pipeline.PolygonMode;
 import dev.cubcraftv.directexp.bridge.DxPipelineStateDescriptor;
 import org.junit.jupiter.api.Test;
 
