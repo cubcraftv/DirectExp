@@ -253,6 +253,11 @@ public final class NativeDxBridge implements DxBridge {
 	}
 
 	@Override
+	public void clearColorTexture(long nativeTextureHandle, float red, float green, float blue, float alpha) {
+		clearColorTexture0(nativeTextureHandle, red, green, blue, alpha);
+	}
+
+	@Override
 	public void clearDepthRegion(long nativeTextureHandle, int x, int y, int width, int height, float depth) {
 		clearDepthRegion0(nativeTextureHandle, x, y, width, height, depth);
 	}
@@ -771,6 +776,8 @@ public final class NativeDxBridge implements DxBridge {
 	private static native void clearDepthStencil0(long depthViewHandle, float depth);
 
 	private static native void clearDepthTexture0(long nativeTextureHandle, float depth);
+
+	private static native void clearColorTexture0(long nativeTextureHandle, float red, float green, float blue, float alpha);
 
 	private static native void clearDepthRegion0(long nativeTextureHandle, int x, int y, int width, int height, float depth);
 

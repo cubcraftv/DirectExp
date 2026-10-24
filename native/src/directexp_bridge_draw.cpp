@@ -295,6 +295,39 @@ Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_clearDepthTexture0(JNIEnv* en
 	transient->Release();
 }
 
+// Whole-texture color clear through the texture handle itself: the frontend
+// clears the order-independent-transparency targets (RGBA16/32_FLOAT, which
+// have no CPU upload path) via the texture, not through a render pass. Uses a
+// whole-first-subresource RTV cached on the texture (CreateRenderTargetView
+// with a null descriptor = mip 0 of array layer 0, the only subresource the
+// frontend clears this way); D3D11 keeps an internal cache of equal view
+// descriptors, so repeated clear-with-create churn stays cheap even without it.
+extern "C" JNIEXPORT void JNICALL
+Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_clearColorTexture0(JNIEnv* env, jclass, jlong nativeTextureHandle, jfloat red, jfloat green, jfloat blue, jfloat alpha) {
+	if (!RequireContext(env, "clearColorTexture0")) {
+		return;
+	}
+	Texture* texture = HandleToPointer<Texture>(nativeTextureHandle);
+	if (texture == nullptr || texture->texture == nullptr || (texture->bindFlags & D3D11_BIND_RENDER_TARGET) == 0) {
+		ThrowIllegalState(env, "clearColorTexture0: the handle is not a live render-target color texture.");
+		return;
+	}
+	TextureFormatInfo info = {};
+	if (!ResolveTextureFormat(texture->formatCode, info) || info.depth) {
+		ThrowIllegalState(env, "clearColorTexture0: the texture has no color format.");
+		return;
+	}
+	if (texture->clearColorView == nullptr
+		&& FAILED(g_activeDevice->CreateRenderTargetView(texture->texture, nullptr, &texture->clearColorView))) {
+		texture->clearColorView = nullptr;
+		ThrowIllegalState(env, "clearColorTexture0: ID3D11Device::CreateRenderTargetView failed for the texture's own clear view.");
+		return;
+	}
+
+	const FLOAT components[4] = { red, green, blue, alpha };
+	g_activeContext->ClearRenderTargetView(texture->clearColorView, components);
+}
+
 extern "C" JNIEXPORT void JNICALL
 Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_clearDepthRegion0(
 	JNIEnv* env, jclass, jlong nativeTextureHandle, jint x, jint y, jint width, jint height, jfloat depth
@@ -656,6 +689,10 @@ Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_clearDepthStencil0(JNIEnv*, j
 
 extern "C" JNIEXPORT void JNICALL
 Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_clearDepthTexture0(JNIEnv*, jclass, jlong, jfloat) {
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_clearColorTexture0(JNIEnv*, jclass, jlong, jfloat, jfloat, jfloat, jfloat) {
 }
 
 extern "C" JNIEXPORT void JNICALL

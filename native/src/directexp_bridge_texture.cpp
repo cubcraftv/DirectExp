@@ -159,6 +159,9 @@ Java_dev_cubcraftv_directexp_bridge_NativeDxBridge_releaseTexture0(JNIEnv*, jcla
 		return;
 	}
 
+	if (wrapper->clearColorView != nullptr) {
+		wrapper->clearColorView->Release();
+	}
 	if (wrapper->texture != nullptr) {
 		wrapper->texture->Release();
 	}

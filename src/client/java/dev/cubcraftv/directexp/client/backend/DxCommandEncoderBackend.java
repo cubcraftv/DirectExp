@@ -1,5 +1,6 @@
 package dev.cubcraftv.directexp.client.backend;
 
+import com.mojang.renderpearl.api.GpuFormat;
 import com.mojang.renderpearl.api.buffers.GpuBuffer;
 import com.mojang.renderpearl.api.buffers.GpuBufferSlice;
 import com.mojang.renderpearl.api.commands.GpuFence;
@@ -52,7 +53,9 @@ final class DxCommandEncoderBackend implements CommandEncoderBackend {
 
 	@Override
 	public void clearColorTexture(GpuTexture gpuTexture, Vector4fc clearColor) {
-		((DxTexture) gpuTexture).fillRegion(0, 0, 0, gpuTexture.getWidth(0), gpuTexture.getHeight(0), DxClearColor.packArgb(clearColor));
+		if (!clearIntoNative(gpuTexture, 0, clearColor, 0, 0, gpuTexture.getWidth(0), gpuTexture.getHeight(0))) {
+			((DxTexture) gpuTexture).fillRegion(0, 0, 0, gpuTexture.getWidth(0), gpuTexture.getHeight(0), DxClearColor.packArgb(clearColor));
+		}
 	}
 
 	@Override
@@ -63,7 +66,9 @@ final class DxCommandEncoderBackend implements CommandEncoderBackend {
 
 	@Override
 	public void clearColorAndDepthTextures(GpuTexture gpuTexture, Vector4fc clearColor, GpuTexture depthTexture, double depth, int x, int y, int width, int height, int mipLevel) {
-		((DxTexture) gpuTexture).fillRegion(mipLevel, x, y, width, height, DxClearColor.packArgb(clearColor));
+		if (!clearIntoNative(gpuTexture, mipLevel, clearColor, x, y, width, height)) {
+			((DxTexture) gpuTexture).fillRegion(mipLevel, x, y, width, height, DxClearColor.packArgb(clearColor));
+		}
 		if (x == 0 && y == 0 && width >= depthTexture.getWidth(0) && height >= depthTexture.getHeight(0)) {
 			clearDepthTexture(depthTexture, depth);
 		} else if (depthTexture instanceof DxTexture dxDepth && dxDepth.hasNativeDepthTarget()) {
@@ -88,6 +93,38 @@ final class DxCommandEncoderBackend implements CommandEncoderBackend {
 		} catch (UnsupportedOperationException | IllegalStateException error) {
 			this.drawContext.diagnostics().reportOnce("clear-depth-texture", "could not clear a depth texture: " + error.getMessage());
 		}
+	}
+
+	/**
+	 * GPU-side whole-color clear for native textures without a CPU upload path
+	 * (RGBA16/32_FLOAT -- the OIT pass targets, which the frame graph clears
+	 * through the texture handle every frame): {@link DxTexture#fillRegion}
+	 * writes the CPU mirror but syncs it to the D3D11 texture only for RGBA8,
+	 * so a CPU-side clear would never reach the GPU there and OIT content
+	 * would accumulate across frames. Returns false when the CPU path applies.
+	 */
+	private boolean clearIntoNative(GpuTexture gpuTexture, int mipLevel, Vector4fc clearColor, int x, int y, int width, int height) {
+		if (!(gpuTexture instanceof DxTexture dxTexture)
+			|| !dxTexture.hasNativeTextureHandle()
+			|| mipLevel != 0
+			|| dxTexture.getFormat() == GpuFormat.RGBA8_UNORM) {
+			return false;
+		}
+		if (x != 0 || y != 0 || width < gpuTexture.getWidth(0) || height < gpuTexture.getHeight(0)) {
+			this.drawContext.diagnostics().reportOnce(
+				"partial-color-clear",
+				"a partial-rectangle clear of a non-RGBA8 texture was skipped (only whole-texture GPU clears are supported): " + dxTexture.getLabel()
+			);
+			return true;
+		}
+
+		try {
+			this.drawContext.dxBridge().clearColorTexture(
+				dxTexture.nativeTextureHandle(), clearColor.x(), clearColor.y(), clearColor.z(), clearColor.w()
+			);		} catch (UnsupportedOperationException | IllegalStateException error) {
+			this.drawContext.diagnostics().reportOnce("clear-color-texture", "could not clear a color texture natively: " + error.getMessage());
+		}
+		return true;
 	}
 
 	@Override

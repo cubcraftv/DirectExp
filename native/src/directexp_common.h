@@ -120,6 +120,9 @@ struct Texture {
 	// which views (SRV / RTV / DSV) it can and must create.
 	UINT bindFlags = 0;
 	jint formatCode = TEXTURE_FORMAT_RGBA8_UNORM;
+	// Lazily created whole-first-subresource RTV for clearColorTexture0
+	// (clearColorTexture via the texture handle); released with the texture.
+	ID3D11RenderTargetView* clearColorView = nullptr;
 };
 
 // Bind-purpose mask for createBufferNative. Keep in sync with

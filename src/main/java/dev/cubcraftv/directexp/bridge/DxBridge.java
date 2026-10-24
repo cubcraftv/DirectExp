@@ -333,6 +333,17 @@ public interface DxBridge {
 		throw new UnsupportedOperationException("DirectX depth texture clear is not implemented by this bridge yet.");
 	}
 
+	/**
+	 * Texture-level whole-color clear ({@code ClearRenderTargetView} through a
+	 * view created on the fly), for color textures with no CPU upload path but
+	 * a RENDER_TARGET bind purpose -- the order-independent-transparency
+	 * pass's RGBA16/32_FLOAT targets, which get cleared through the texture
+	 * handle every frame. RGBA8 textures keep their CPU-mirror clear path.
+	 */
+	default void clearColorTexture(long nativeTextureHandle, float red, float green, float blue, float alpha) {
+		throw new UnsupportedOperationException("DirectX color texture clear is not implemented by this bridge yet.");
+	}
+
 	/** Clears depth to {@code depth} inside {@code [x,x+width) x [y,y+height)} of a native depth texture (mip 0); the rest is untouched. */
 	default void clearDepthRegion(long nativeTextureHandle, int x, int y, int width, int height, float depth) {
 		throw new UnsupportedOperationException("DirectX rectangle depth clear is not implemented by this bridge yet.");
