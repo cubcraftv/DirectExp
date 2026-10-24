@@ -113,6 +113,22 @@ ShaderCompilationResult CompileSpirvToD3DBytecode(
 	const std::vector<HlslResourceSlotAssignment>& assignments
 );
 
+// Removes a vertex stage's `gl_PointSize` output from a SPIR-V module
+// (the `BuiltIn PointSize` output variable, its decorations, its stores, and
+// its OpEntryPoint interface entries). SPIR-V builtins are not directly
+// representable in HLSL, and SPIRV-Cross's `point_size_compat` option does
+// not cover this module: 26.3's `debug_point` pipeline still fails emission
+// through `emit_builtin_variables`' throw path, so the frontend-compiled
+// module is rewritten back to what the emitted HLSL can actually express.
+// The rewritten module compiles to a 1 px point (the documented 4.6
+// behaviour; real point sizes go through the geometry-shader plumbing).
+// Returns `spirv` unchanged when there is no such output and whenever a
+// reference to the variable is found that this removal would break (loads,
+// access chains, etc.) -- the caller's existing error/compat paths then
+// apply, never worse than before. Exported for the native diagnostic test
+// (native/tests/directexp_point_size_strip_test.cpp).
+std::vector<uint32_t> StripPointSizeOutput(const std::vector<uint32_t>& spirv);
+
 // Compiles already-written HLSL text (no SPIRV-Cross step) to D3D11 bytecode
 // via `D3DCompile`, entry point `main`, profile chosen like
 // CompileSpirvToD3DBytecode's (`gs_5_0`/`gs_4_1` for Geometry). Used for the

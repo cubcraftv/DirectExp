@@ -190,4 +190,38 @@ if(WIN32)
 		WIN32_LEAN_AND_MEAN
 		NOMINMAX
 	)
+
+	# --- Native diagnostic test (directexp_point_size_strip_test.cpp) -------
+	# A small Windows-only executable exercising StripPointSizeOutput directly
+	# (see the test file's header for what it covers). Built alongside the
+	# real DLL on every native build, but never shipped or invoked by gradle:
+	# run it manually from the CMake build tree
+	# (.gradle/native/directexp_point_size_strip_test.exe, with
+	# C:\msys64\ucrt64\bin on PATH for the spirv-cross DLLs).
+	add_executable(directexp_point_size_strip_test
+		tests/directexp_point_size_strip_test.cpp
+		src/directexp_common.cpp
+		src/directexp_shader_hlsl.cpp
+	)
+	target_include_directories(directexp_point_size_strip_test PRIVATE
+		${JNI_INCLUDE_DIRS}
+		src
+	)
+	target_compile_features(directexp_point_size_strip_test PRIVATE cxx_std_17)
+	# No shaderc: the test hand-assembles its own SPIR-V modules, so it links
+	# only what directexp_shader_hlsl.cpp / directexp_common.cpp themselves
+	# need (the common source carries the D3D11 device probe).
+	target_link_libraries(directexp_point_size_strip_test PRIVATE
+		d3d11
+		dxgi
+		d3dcompiler
+		spirv-cross-hlsl
+		spirv-cross-glsl
+		spirv-cross-core
+	)
+	target_compile_definitions(directexp_point_size_strip_test PRIVATE
+		WIN32_LEAN_AND_MEAN
+		NOMINMAX
+	)
+	# -------------------------------------------------------------------------
 endif()

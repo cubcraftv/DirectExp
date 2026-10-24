@@ -14,6 +14,7 @@
 #include <d3dcompiler.h>
 
 #include <cstdio>
+#include <cstdlib>
 #include <string>
 #include <vector>
 
@@ -82,6 +83,72 @@ const HlslResourceSlotAssignment* FindAssignment(
 	}
 	return nullptr;
 }
+
+// SPIR-V core opcodes/fields used here; only PointSize stripping needs to
+// read instructions this closely, so the handful of literals stay local
+// instead of growing a general enum table. Values must stay in sync with
+// spirv.hpp/spirv.coreGrammar (verified against the UCRT64 spirv-cross
+// package's headers).
+constexpr uint32_t kSpirvMagic = 0x07230203;
+constexpr uint32_t kOpName = 5;
+constexpr uint32_t kOpEntryPoint = 15;
+constexpr uint32_t kOpVariable = 59;
+constexpr uint32_t kOpStore = 62;
+constexpr uint32_t kOpDecorate = 71;
+constexpr uint32_t kDecorationBuiltIn = 11;
+constexpr uint32_t kBuiltInPointSize = 1;
+constexpr uint32_t kStorageClassOutput = 3;
+
+// Names for the SPIR-V builtins D3DCompile's HLSL cannot express; used so a
+// failure says WHICH builtin failed (SPIRV-Cross's own message is only
+// "Unsupported builtin in HLSL: 1", the raw enum value). Enum values must
+// stay in sync with spirv.hpp's BuiltIn (verified against the UCRT64
+// spirv-cross package's headers). Non-exhaustive: the common vertex/fragment
+// builtins first (this project's shaders are vertex/fragment only), then
+// nullptr (message left as-is).
+const char* NameSpirvBuiltin(uint32_t builtin) {
+	switch (builtin) {
+		case 0: return "Position";
+		case 1: return "PointSize";
+		case 3: return "ClipDistance";
+		case 4: return "CullDistance";
+		case 5: return "VertexId";
+		case 6: return "InstanceId";
+		case 7: return "PrimitiveId";
+		case 15: return "FragCoord";
+		case 16: return "PointCoord";
+		case 17: return "FrontFacing";
+		case 18: return "SampleId";
+		case 19: return "SamplePosition";
+		case 41: return "SubgroupLocalInvocationId";
+		default: return nullptr;
+	}
+}
+
+// Appends `builtin`'s name to a "Unsupported builtin in HLSL: N" message.
+std::string DescribeUnsupportedBuiltin(std::string message) {
+	const std::string prefix = "Unsupported builtin in HLSL: ";
+	size_t at = message.find(prefix);
+	if (at == std::string::npos) {
+		return message;
+	}
+	size_t digits = 0;
+	while (at + prefix.size() + digits < message.size()
+		&& message[at + prefix.size() + digits] >= '0'
+		&& message[at + prefix.size() + digits] <= '9') {
+		digits++;
+	}
+	if (digits == 0) {
+		return message;
+	}
+	uint32_t builtin = static_cast<uint32_t>(std::strtoul(message.c_str() + at + prefix.size(), nullptr, 10));
+	const char* name = NameSpirvBuiltin(builtin);
+	if (name == nullptr) {
+		return message;
+	}
+	return message.insert(at + prefix.size() + digits, std::string(" (") + name + ")");
+}
+
 
 // Forces each resource named in `assignments` to the exact register the
 // engine-owned layout model (Milestone 4.4) assigned it, via SPIRV-Cross's
@@ -315,6 +382,187 @@ void CompileHlslToBytecode(
 
 } // namespace
 
+// Word encoding for the PointSize strip pass below. SPIR-V instructions are
+// [opcode | word-count<<16, operands...]; the word count includes this
+// two-word pair, so an instruction occupies exactly `wordCount` words.
+constexpr size_t kSpirvHeaderSize = 5;
+
+bool PeekInstruction(const std::vector<uint32_t>& spirv, size_t word, size_t& wordCount) {
+	uint32_t count = spirv[word] >> 16;
+	if (count < 1 || word + count > spirv.size()) {
+		return false;
+	}
+	wordCount = count;
+	return true;
+}
+
+bool ContainsZeroByte(uint32_t word) {
+	return (word & 0xFF) == 0
+		|| ((word >> 8) & 0xFF) == 0
+		|| ((word >> 16) & 0xFF) == 0
+		|| ((word >> 24) & 0xFF) == 0;
+}
+
+bool IdVectorContains(const std::vector<uint32_t>& ids, uint32_t id) {
+	for (uint32_t known : ids) {
+		if (known == id) {
+			return true;
+		}
+	}
+	return false;
+}
+
+// Removes a vertex stage's `BuiltIn PointSize` output from a SPIR-V module
+// (what the header comment on StripPointSizeOutput above describes). Two
+// word-level passes so the stripping stays a local, self-contained rewrite
+// rather than a dependency on SPIRV-Cross internals (its own parser offers
+// no module-rewriting API for this): the first classifies (finds the output
+// variable's id), the second rebuilds (drops the OpVariable, its stores and
+// decorations, and its OpEntryPoint interface entries).
+std::vector<uint32_t> StripPointSizeOutput(const std::vector<uint32_t>& spirv) {
+	if (spirv.size() <= kSpirvHeaderSize || spirv[0] != kSpirvMagic) {
+		return spirv;
+	}
+
+	// Pass 1: locate the candidate -- the output-storage variable decorated
+	// BuiltIn PointSize. Anything unexpected (a builtin-1 target that is not
+	// an output variable, more than one candidate, a malformed instruction)
+	// leaves the module untouched: SPIRV-Cross's `point_size_compat` and this
+	// file's unsupported-builtin diagnostics then still apply, so stripping
+	// can only make emission more reliable, never worse.
+	std::vector<uint32_t> outputVariables;
+	std::vector<uint32_t> pointSizeTargets;
+	size_t wordCount;
+	for (size_t word = kSpirvHeaderSize; word < spirv.size(); word += wordCount) {
+		if (!PeekInstruction(spirv, word, wordCount)) {
+			return spirv;
+		}
+		uint32_t opcode = spirv[word] & 0xFFFF;
+		const uint32_t* operands = spirv.data() + word + 1;
+		size_t operandCount = wordCount - 1;
+
+		if (opcode == kOpVariable) {
+			// [result_type, result_id, storage_class, initializers...]
+			if (operandCount < 3) {
+				return spirv;
+			}
+			if (operands[2] == kStorageClassOutput) {
+				outputVariables.push_back(operands[1]);
+			}
+		} else if (opcode == kOpDecorate) {
+			// [target, decoration, literals...]
+			if (operandCount < 2) {
+				return spirv;
+			}
+			if (operands[1] == kDecorationBuiltIn) {
+				if (operandCount < 3) {
+					return spirv;
+				}
+				if (operands[2] == kBuiltInPointSize) {
+					pointSizeTargets.push_back(operands[0]);
+				}
+			}
+		}
+	}
+
+	std::vector<uint32_t> candidates;
+	for (uint32_t output : outputVariables) {
+		if (IdVectorContains(pointSizeTargets, output)) {
+			candidates.push_back(output);
+		}
+	}
+	if (candidates.size() != 1) {
+		return spirv; // nothing to strip, or ambiguous -- leave as-is
+	}
+	uint32_t candidate = candidates[0];
+
+	// Pass 2: rebuild without the candidate's instructions. Exactly one
+	// candidate was confirmed above, so verification happens per instruction
+	// here: any reference to the candidate outside the removal set aborts.
+	std::vector<uint32_t> stripped;
+	stripped.reserve(spirv.size());
+	stripped.insert(stripped.end(), spirv.begin(), spirv.begin() + kSpirvHeaderSize);
+
+	for (size_t word = kSpirvHeaderSize; word < spirv.size(); word += wordCount) {
+		if (!PeekInstruction(spirv, word, wordCount)) {
+			return spirv; // unreachable (pass 1 verified), kept for safety
+		}
+		uint32_t opcode = spirv[word] & 0xFFFF;
+		const uint32_t* operands = spirv.data() + word + 1;
+		size_t operandCount = wordCount - 1;
+
+		if (opcode == kOpVariable && operands[1] == candidate) {
+			continue;
+		}
+
+		// OpStore is [pointer, value]; only the pointer identifies the
+		// candidate (the value operand may never be the builtin variable --
+		// builtin outputs are written, not loaded).
+		if (opcode == kOpStore && operandCount >= 1 && operands[0] == candidate) {
+			continue;
+		}
+
+		// All of the candidate's decorations go (BuiltIn, plus whatever else
+		// SPIRV-Cross decorated the variable with, e.g. its pointer type).
+		if (opcode == kOpDecorate && operands[0] == candidate) {
+			continue;
+		}
+		if (opcode == kOpName && operandCount >= 1 && operands[0] == candidate) {
+			continue;
+		}
+
+		if (opcode == kOpEntryPoint) {
+			// [execution_model, entry_point_id, name string words..., interface ids...]
+			// The name is a literal string: it starts at operands[2] and ends
+			// at the first word containing a NUL byte. Keep the name whole and
+			// rebuild the header word count after dropping candidate entries
+			// from the interface list -- an OpEntryPoint without the removed
+			// id must stay a valid, self-consistent instruction.
+			if (operandCount < 3) {
+				return spirv;
+			}
+			size_t nameEnd = 2;
+			while (nameEnd < operandCount && !ContainsZeroByte(operands[nameEnd])) {
+				nameEnd++;
+			}
+			if (nameEnd == operandCount) {
+				return spirv; // unterminated name -- leave the module untouched
+			}
+			size_t entryStart = stripped.size();
+			stripped.push_back(spirv[word]); // header word, word count patched below
+			stripped.push_back(operands[0]); // execution model
+			stripped.push_back(operands[1]); // entry point id
+			for (size_t nameWord = 2; nameWord <= nameEnd; nameWord++) {
+				stripped.push_back(operands[nameWord]);
+			}
+			for (size_t index = nameEnd + 1; index < operandCount; index++) {
+				if (operands[index] != candidate) {
+					stripped.push_back(operands[index]);
+				}
+			}
+			uint32_t newWordCount = static_cast<uint32_t>(stripped.size() - entryStart);
+			stripped[entryStart] = (newWordCount << 16) | kOpEntryPoint;
+			continue;
+		}
+
+		// Any other instruction must not reference the candidate at all (an
+		// OpLoad/OpAccessChain reading the output back would, e.g.) -- being
+		// permissive there is exactly how modules get corrupted.
+		for (size_t index = 0; index < operandCount; index++) {
+			if (operands[index] == candidate) {
+				return spirv;
+			}
+		}
+		stripped.push_back(spirv[word]);
+		for (size_t index = 0; index < operandCount; index++) {
+			stripped.push_back(operands[index]);
+		}
+	}
+
+	stripped.shrink_to_fit();
+	return stripped;
+}
+
 ShaderCompilationResult CompileSpirvToD3DBytecode(
 	const std::vector<uint32_t>& spirv,
 	ShaderExecutionStage stage,
@@ -324,11 +572,11 @@ ShaderCompilationResult CompileSpirvToD3DBytecode(
 	ShaderCompilationResult result;
 
 	try {
-		result.hlsl = EmitHlsl(spirv, stage, assignments);
+		result.hlsl = EmitHlsl(stage == ShaderExecutionStage::Vertex ? StripPointSizeOutput(spirv) : spirv, stage, assignments);
 		result.emissionSucceeded = true;
 	} catch (const std::exception& error) {
 		result.emissionSucceeded = false;
-		result.errorMessage = error.what();
+		result.errorMessage = DescribeUnsupportedBuiltin(error.what());
 		if (result.errorMessage.empty()) {
 			result.errorMessage = "SPIRV-Cross SPIR-V -> HLSL translation failed with no further detail.";
 		}

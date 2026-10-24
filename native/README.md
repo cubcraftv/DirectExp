@@ -85,6 +85,29 @@ abstracts compiler invocation and library-naming differences between these
 toolchains (see the "bare library names" comment in `CMakeLists.txt`), so
 contributors get normal CMake diagnostics instead of hardcoded-path failures.
 
+## Native diagnostic test
+
+`native/tests/directexp_point_size_strip_test.cpp` exercises
+`StripPointSizeOutput` (see `directexp_shader_hlsl.h`) directly: it
+hand-assembles minimal SPIR-V modules and checks both the unit-level word
+accounting (removal, survivor preservation, OpEntryPoint interface
+renumbering, no-strip and abort paths, malformed modules) and the real
+end-to-end `CompileSpirvToD3DBytecode` path on the stripped module.
+
+It's a CMake executable target (not bundled into the mod, but built
+automatically alongside the DLL on every native build):
+
+```
+./gradlew.bat buildNativeWindowsBridge      # or: cmake --build .gradle\native --config Release
+# MSYS2 UCRT64 toolchain only: put the spirv-cross DLL directory on PATH first
+$env:PATH = "C:\msys64\ucrt64\bin;$env:PATH"
+.gradle\native\directexp_point_size_strip_test.exe
+```
+
+On the MSVC-toolchain path the MSYS2 `PATH` line is unnecessary; on MSYS2 it
+is (the test links the same MSYS2 `spirv-cross` DLLs the bridge does). Exit
+code `0` / "ALL TESTS PASSED" means everything held.
+
 ## Known toolchain-specific caveats
 
 - **MinGW-w64 / UCRT64**: `d3dcompiler` is now linked (Milestone 4.1) the
