@@ -176,10 +176,17 @@ final class DxPipelineStateMapping {
 		// Per-target blend/write state: the list index is the D3D11 render-target
 		// slot (the decompiled Vulkan backend orders attachments the same way).
 		// A null entry (depth-only pipelines) becomes a target that writes
-		// nothing; more than D3D11 supports stays an explicit rejection.
-		int targetCount = info.colorTargetStates().size();
-		if (targetCount < 1 || targetCount > DxPipelineStateDescriptor.MAX_COLOR_TARGETS) {
-			throw new UnsupportedOperationException("a render pipeline needs 1.." + DxPipelineStateDescriptor.MAX_COLOR_TARGETS + " color targets (D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT), not " + targetCount);
+		// nothing, and so does an empty list (a pipeline with no color target at
+		// all, e.g. "integrate_depth"): D3D11 has no pipeline-state render-target
+		// count, only a blend state, so one non-writing slot is valid against a
+		// pass that binds zero render-target views. More than D3D11 supports
+		// stays an explicit rejection.
+		java.util.List<ColorTargetState> colorTargetStates = info.colorTargetStates().isEmpty()
+			? java.util.Arrays.asList((ColorTargetState) null)
+			: info.colorTargetStates();
+		int targetCount = colorTargetStates.size();
+		if (targetCount > DxPipelineStateDescriptor.MAX_COLOR_TARGETS) {
+			throw new UnsupportedOperationException("a render pipeline supports at most " + DxPipelineStateDescriptor.MAX_COLOR_TARGETS + " color targets (D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT), not " + targetCount);
 		}
 		int[] targetBlendEnable = new int[targetCount];
 		int[] targetSrcColor = new int[targetCount];
@@ -190,7 +197,7 @@ final class DxPipelineStateMapping {
 		int[] targetAlphaOp = new int[targetCount];
 		int[] targetWriteMask = new int[targetCount];
 		for (int target = 0; target < targetCount; target++) {
-			ColorTargetState colorTarget = info.colorTargetStates().get(target);
+			ColorTargetState colorTarget = colorTargetStates.get(target);
 			targetBlendEnable[target] = 0;
 			targetSrcColor[target] = BLEND_ONE;
 			targetDstColor[target] = BLEND_ZERO;

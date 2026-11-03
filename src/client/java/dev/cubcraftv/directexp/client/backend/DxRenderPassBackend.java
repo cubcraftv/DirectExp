@@ -70,7 +70,11 @@ final class DxRenderPassBackend implements RenderPassBackend, DxPushConstants {
 	/** D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT (pinned natively by static_assert). */
 	private static final int MAX_COLOR_ATTACHMENTS = 8;
 
-	/** The color attachments, in D3D11 render-target slot order; view 0 decides the pass size. */
+	/**
+	 * The color attachments, in D3D11 render-target slot order; view 0 decides the pass size.
+	 * Empty for a depth-only pass (Blaze3D allows these, e.g. "Integrate always on top depth"),
+	 * in which case the depth view decides the pass size.
+	 */
 	private final DxTextureView[] colorViews;
 	private final DxTexture[] colorTargets;
 	private final int[] colorTargetMipLevels;
@@ -116,8 +120,12 @@ final class DxRenderPassBackend implements RenderPassBackend, DxPushConstants {
 		this.dxBridge = drawContext == null ? null : drawContext.dxBridge();
 		this.resourceBinder = drawContext == null ? null : new DxResourceBinder(drawContext.dxBridge(), drawContext.scratch(), drawContext.diagnostics());
 
-		if (descriptor.colorAttachments().size() < 1 || descriptor.colorAttachments().size() > MAX_COLOR_ATTACHMENTS) {
-			throw new IllegalArgumentException("DirectX render passes support 1.." + MAX_COLOR_ATTACHMENTS + " color attachments (D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT).");
+		int colorCount = descriptor.colorAttachments().size();
+		if (colorCount > MAX_COLOR_ATTACHMENTS) {
+			throw new IllegalArgumentException("DirectX render passes support 0.." + MAX_COLOR_ATTACHMENTS + " color attachments (D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT).");
+		}
+		if (colorCount == 0 && descriptor.depthAttachment() == null) {
+			throw new IllegalArgumentException("A DirectX render pass needs at least one color or depth attachment.");
 		}
 		for (RenderPassDescriptor.Attachment<Optional<Vector4fc>> attachment : descriptor.colorAttachments()) {
 			if (attachment == null || attachment.textureView() == null || attachment.textureView().isClosed()) {
@@ -125,27 +133,37 @@ final class DxRenderPassBackend implements RenderPassBackend, DxPushConstants {
 			}
 		}
 		List<RenderPassDescriptor.Attachment<Optional<Vector4fc>>> colorAttachments = descriptor.colorAttachments();
-		RenderPassDescriptor.Attachment<Optional<Vector4fc>> firstAttachment = colorAttachments.get(0);
-		GpuTextureView firstColorTextureView = firstAttachment.textureView();
 		RenderPassDescriptor.Attachment<OptionalDouble> depthAttachment = descriptor.depthAttachment();
 		GpuTextureView depthTextureView = depthAttachment == null ? null : depthAttachment.textureView();
-		Optional<Vector4fc> clearColor = firstAttachment.clearValue();
 		OptionalDouble clearDepth = depthAttachment == null ? OptionalDouble.empty() : depthAttachment.clearValue();
 		RenderPass.RenderArea renderArea = descriptor.renderArea();
 		if (renderArea == null) {
 			throw new IllegalArgumentException("DirectX render pass requires an explicit render area.");
 		}
 
-		if (!(firstColorTextureView.texture() instanceof DxTexture dxTexture)) {
-			throw new IllegalArgumentException("DirectX render pass requires a DirectX texture view.");
-		}
+		// The view that decides the pass size: color attachment 0, or the depth
+		// attachment for a depth-only pass.
+		GpuTextureView sizeTextureView;
+		GpuFormat colorFormat = null;
+		if (colorCount > 0) {
+			GpuTextureView firstColorTextureView = colorAttachments.get(0).textureView();
+			if (!(firstColorTextureView.texture() instanceof DxTexture dxTexture)) {
+				throw new IllegalArgumentException("DirectX render pass requires a DirectX texture view.");
+			}
 
-		// Formats the native createTexture path can hold a render-target view
-		// for: the standard color target, plus the float formats the
-		// order-independent-transparency passes render into (RGBA16/32_FLOAT).
-		GpuFormat colorFormat = dxTexture.getFormat();
-		if (colorFormat != GpuFormat.RGBA8_UNORM && colorFormat != GpuFormat.RGBA16_FLOAT && colorFormat != GpuFormat.RGBA32_FLOAT) {
-			throw new IllegalArgumentException("DirectX render pass currently only supports RGBA8/RGBA16_FLOAT/RGBA32_FLOAT color targets, not " + colorFormat + ".");
+			// Formats the native createTexture path can hold a render-target view
+			// for: the standard color target, plus the float formats the
+			// order-independent-transparency passes render into (RGBA16/32_FLOAT).
+			colorFormat = dxTexture.getFormat();
+			if (colorFormat != GpuFormat.RGBA8_UNORM && colorFormat != GpuFormat.RGBA16_FLOAT && colorFormat != GpuFormat.RGBA32_FLOAT) {
+				throw new IllegalArgumentException("DirectX render pass currently only supports RGBA8/RGBA16_FLOAT/RGBA32_FLOAT color targets, not " + colorFormat + ".");
+			}
+			sizeTextureView = firstColorTextureView;
+		} else {
+			if (depthTextureView == null || depthTextureView.isClosed() || !(depthTextureView.texture() instanceof DxTexture)) {
+				throw new IllegalArgumentException("A depth-only DirectX render pass requires a live DirectX depth texture view.");
+			}
+			sizeTextureView = depthTextureView;
 		}
 
 		this.colorTargets = new DxTexture[colorAttachments.size()];
@@ -165,11 +183,14 @@ final class DxRenderPassBackend implements RenderPassBackend, DxPushConstants {
 			this.colorClears.add(colorAttachments.get(index).clearValue());
 		}
 		this.depthView = depthTextureView instanceof DxTextureView dxDepthView && !dxDepthView.isClosed() ? dxDepthView : null;
-		this.targetWidth = firstColorTextureView.getWidth(0);
-		this.targetHeight = firstColorTextureView.getHeight(0);
+		this.targetWidth = sizeTextureView.getWidth(0);
+		this.targetHeight = sizeTextureView.getHeight(0);
 		this.fullRenderArea = renderArea.x() == 0 && renderArea.y() == 0
 			&& renderArea.width() == this.targetWidth && renderArea.height() == this.targetHeight;
 		this.nativeTargetsBound = beginNativePass(this.colorClears, clearDepth, renderArea);
+		if (this.nativeTargetsBound && this.colorViews.length == 0) {
+			DxNativeResourceLog.firstUse("depth-only-pass", "native depth-only render pass path active (first depth-only pass bound: no color targets, depth " + this.targetWidth + "x" + this.targetHeight + ").");
+		}
 		if (!this.fullRenderArea) {
 			this.scissorEnabled = true;
 			this.scissorX = renderArea.x();
@@ -199,6 +220,10 @@ final class DxRenderPassBackend implements RenderPassBackend, DxPushConstants {
 		boolean hasDepthTarget = this.depthView != null && this.depthView.hasNativeDepthStencilView();
 		if (this.depthView != null && !hasDepthTarget) {
 			report("pass-no-native-depth", "a render pass depth target has no native depth-stencil view; the pass runs without depth");
+		}
+		if (this.colorViews.length == 0 && !hasDepthTarget) {
+			report("pass-no-native-depth-only", "a depth-only render pass has no native depth-stencil view, so it has nothing to render into; its draws are skipped");
+			return false;
 		}
 
 		try {
@@ -561,14 +586,6 @@ final class DxRenderPassBackend implements RenderPassBackend, DxPushConstants {
 
 	DxTriangleFanExpander fanExpander() {
 		return this.fanExpander;
-	}
-
-	DxTexture colorTarget() {
-		return this.colorTargets[0];
-	}
-
-	int colorTargetMipLevel() {
-		return this.colorTargetMipLevels[0];
 	}
 
 	private GpuTextureView boundTextureView(String name) {

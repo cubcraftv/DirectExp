@@ -114,4 +114,12 @@ final class DxPipelineStateMappingCreateInfoTest {
 		assertArrayEquals(new int[] {0}, state.targetBlendEnable());
 		assertArrayEquals(new int[] {0}, state.targetWriteMask());
 	}
+
+	@Test
+	void pipelineWithNoColorTargetsMapsToOneNonWritingSlot() {
+		DxPipelineStateDescriptor state = DxPipelineStateMapping.describe(info(List.of(), List.of(), List.of()));
+		assertEquals(1, state.colorTargetCount());
+		assertArrayEquals(new int[] {0}, state.targetBlendEnable());
+		assertArrayEquals(new int[] {0}, state.targetWriteMask());
+	}
 }

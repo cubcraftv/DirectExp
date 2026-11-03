@@ -861,3 +861,31 @@ not a bug in what's implemented so far).
   Blaze3D GPU imports were rewritten to `com.mojang.renderpearl`. Nothing was
   compiled or run. Remaining work is listed in
   [the 26.3 migration note](./2026-10-23-directexp-minecraft-26.3-migration.md).
+
+- **2026-10-31 -- Depth-only render passes (unit-tested and ran on a device).** MaLiLib's
+  `MixinGameRenderer` makes vanilla's `consistentDepthRequired` always true, so every frame runs
+  `LevelRenderer.executeAlwaysOnTop`, which creates the "Integrate always on top depth" pass:
+  a depth attachment and **zero** color attachments. `DxRenderPassBackend` rejected that with
+  `DirectX render passes support 1..8 color attachments`, crashing the first frame in a world
+  with Litematica installed (removing MaLiLib/Litematica avoided the crash). Now a pass may have
+  0..8 color attachments as long as it has a color or a depth attachment; with no color the pass
+  size comes from the depth view, `setRenderTargets` gets an empty color array (native
+  `setRenderTargets0` already accepted 0..8 and a null depth view, so no native change), and a
+  depth-only pass without a native depth-stencil view is skipped with a once-only diagnostic
+  instead of throwing. `DxPipelineStateMapping.describe` maps an empty color target list to one
+  non-writing slot (D3D11 has no pipeline render-target count), so `integrate_depth`,
+  `blit_depth` and `oit_water_mask` are no longer rejected for "0 color targets". The unused
+  `colorTarget()`/`colorTargetMipLevel()` accessors were removed.
+  A one-time log line, `native depth-only render pass path active`, confirms the first depth-only
+  pass bound natively. A static review of the follow-up risks (shader output, SRV hazard,
+  `oit_water_mask`, Litematica/MaLiLib pipeline state) is recorded in the plan; no further code
+  changes were needed.
+  Plan: [depth-only render passes](./2026-10-31-directexp-depth-only-render-passes.md).
+  **Verification:** `DxRenderPassBackendDepthOnlyTest` (8 cases) and two new/updated cases in
+  `DxPipelineStateMappingCreateInfoTest` were compiled against the reference sources and run on
+  Linux with a JUnit shim; the four depth-only cases fail on the previous `DxRenderPassBackend`
+  with the exact crash message and pass now. **Done:** `./gradlew test` / `build`, any run on
+  Windows or a D3D11 device. Still unverified: that the SPIRV-Cross HLSL for depth-only fragment
+  shaders compiles (no `SV_Target`), that `oit_water_mask` has no other unsupported state, and
+  Litematica's Sodium/OIT paths against DirectExp's `multiDrawIndirect=false` feature set.
+

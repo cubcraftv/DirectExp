@@ -307,8 +307,11 @@ public interface DxBridge {
 	 * the depth-stencil view of a texture-view handle; then sets the viewport
 	 * to {@code (0, 0, width, height)}, depth 0..1. The depth handle, and
 	 * individual color handles too, may be 0 (no depth target / no view in
-	 * that slot). Throws {@link IllegalStateException} if a non-zero handle
-	 * carries no render-target / depth-stencil view.
+	 * that slot). The color array may be empty: a depth-only pass (for example
+	 * vanilla's "Integrate always on top depth") binds
+	 * {@code OMSetRenderTargets(0, NULL, dsv)}. Throws
+	 * {@link IllegalStateException} if a non-zero handle carries no
+	 * render-target / depth-stencil view.
 	 */
 	default void setRenderTargets(long[] colorViewHandles, long depthViewHandle, int width, int height) {
 		throw new UnsupportedOperationException("DirectX render target binding is not implemented by this bridge yet.");

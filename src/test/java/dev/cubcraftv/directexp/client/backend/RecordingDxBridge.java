@@ -157,4 +157,19 @@ final class RecordingDxBridge implements DxBridge {
 	public void releaseTextureView(long handle) {
 		this.calls.add("releaseTextureView(" + handle + ")");
 	}
+
+	@Override
+	public void setRenderTargets(long[] colorViewHandles, long depthViewHandle, int width, int height) {
+		this.calls.add("setRenderTargets(colors=" + java.util.Arrays.toString(colorViewHandles) + ",depth=" + depthViewHandle + ",size=" + width + "x" + height + ")");
+	}
+
+	@Override
+	public void clearRenderTarget(long colorViewHandle, float red, float green, float blue, float alpha) {
+		this.calls.add("clearRenderTarget(" + colorViewHandle + ")");
+	}
+
+	@Override
+	public void clearDepthStencil(long depthViewHandle, float depth) {
+		this.calls.add("clearDepthStencil(" + depthViewHandle + "," + depth + ")");
+	}
 }

@@ -37,6 +37,13 @@ final class DxNativeResourceLog {
 		}
 	}
 
+	/** A one-time informational line for a capability that is used rarely and worth confirming in a log (for example the first depth-only render pass). */
+	static void firstUse(String key, String message) {
+		if (LOGGED.add("first:" + key)) {
+			DirectExpMod.LOGGER.info("DirectExp: {}", message);
+		}
+	}
+
 	static void syncFailure(String kind, String reason) {
 		if (LOGGED.add(kind + ":sync")) {
 			DirectExpMod.LOGGER.warn("DirectExp: native GPU {} upload failed; GPU copy may be stale ({}).", kind, reason);
